@@ -71,7 +71,7 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 - [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
   cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
   ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).
-  Both together on the 4G's Jetpack title (2026-10-25): flat, 29.7 → 29.4 Mcycles a frame; try a vCPU-bound 4G scene.
+  Both together on the 4G's Jetpack title (2026-10-25): flat, 29.7 → 29.4 Mcycles a frame. Epic Citadel's tour on the Poco (vCPU 95% busy, ABBAAB): 60.1 → 61.9 Mcycles a frame, no gain; the lead is closed for the 4G.
 - [ ] Assassin's Creed: Altair's Chronicles holds ~19–20 fps on the Pixel 10, which may be the game's
   own cap (as Asphalt 5's 25 is). The overlay shows the guest CPU at 50–60% while the engine reports
   95–100%: find where the engine time goes that the guest does not account for (frame inspector
