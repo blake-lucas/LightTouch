@@ -12,7 +12,7 @@ if [ "$(uname)" != Darwin ]; then
     remote=ltbench-build-$$
     ssh "$LT_MAC" "mkdir -p $remote"
     scp -q "$HERE"/ltbench.c "$HERE"/start.S "$HERE"/Info.plist "$HERE"/build.sh "$TOOLCHAIN"/machotool.c "$LT_MAC:$remote/"
-    ssh "$LT_MAC" "cd $remote && LTB_CFLAGS=$(printf %q "${LTB_CFLAGS:-}") QEMU_IOS=. MACHOTOOL_SRC=machotool.c PATH=/opt/homebrew/bin:\$PATH bash build.sh out"
+    ssh "$LT_MAC" "cd $remote && LTB_CFLAGS=$(printf %q "${LTB_CFLAGS:-}") QEMU_IOS=. MACHOTOOL_SRC=machotool.c PATH=/opt/homebrew/bin:\$PATH /usr/bin/caffeinate -i -s bash build.sh out"
     scp -q "$LT_MAC:$remote/out/LTBench.ipa" "$OUT/"
     ssh "$LT_MAC" "rm -rf $remote"
     echo "$OUT/LTBench.ipa"

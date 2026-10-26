@@ -242,7 +242,7 @@ build_guest_package() {
     rsync -az "$QEMU_IOS/include/hw/arm/" "$LT_MAC:$remote/src/include/hw/arm/"
     rsync -az "$QEMU_IOS/tests/guest-package" "$LT_MAC:$remote/src/tests/"
     ssh "$LT_MAC" "cd $remote/src && DEVELOPER_DIR=$LT_MAC_DEVELOPER_DIR IPAD_SDK=$LT_MAC_IPAD_SDK \
-        PATH=/opt/homebrew/bin:\$PATH bash contrib/guest-package/build.sh ~/$remote/out > ~/$remote/build.log 2>&1" ||
+        PATH=/opt/homebrew/bin:\$PATH /usr/bin/caffeinate -i -s bash contrib/guest-package/build.sh ~/$remote/out > ~/$remote/build.log 2>&1" ||
         { ssh "$LT_MAC" "tail -30 ~/$remote/build.log" >&2; exit 1; }
     mkdir -p "$OUT/guest-package"
     scp -q "$LT_MAC:$remote/out/armv6.itpack" "$LT_MAC:$remote/out/armv7.itpack" "$LT_MAC:$remote/build.log" "$OUT/guest-package/"
@@ -260,7 +260,7 @@ build_firmware_tools() {
     rsync -az --exclude=.git "$QEMU_IOS/contrib" "$LT_MAC:$remote/src/"
     rsync -az "$QEMU_IOS/include/hw/arm/" "$LT_MAC:$remote/src/include/hw/arm/"
     rsync -az "$QEMU_IOS/tests/guest-package" "$LT_MAC:$remote/src/tests/"
-    ssh "$LT_MAC" "zsh -lc 'cd $remote/src && DEVELOPER_DIR=$LT_MAC_DEVELOPER_DIR IPAD_SDK=$LT_MAC_IPAD_SDK \
+    ssh "$LT_MAC" "/usr/bin/caffeinate -i -s zsh -lc 'cd $remote/src && DEVELOPER_DIR=$LT_MAC_DEVELOPER_DIR IPAD_SDK=$LT_MAC_IPAD_SDK \
         ARMV6_SDK=$LT_MAC_ARMV6_SDK PATH=/opt/homebrew/bin:\$PATH \
         bash contrib/export-guest-artifacts.sh ~/$remote/out > ~/$remote/build.log 2>&1'" ||
         { ssh "$LT_MAC" "tail -30 ~/$remote/build.log" >&2; exit 1; }

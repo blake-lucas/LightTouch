@@ -169,19 +169,25 @@ step_macos() {
     [ -n "$LT_MAC" ] || { echo "the macOS build runs on a Mac: set LT_MAC=user@host" >&2; exit 1; }
     local m="$LT_MAC_ROOT/LightTouch-Release-$VER" app_rev engine_rev zip=LightTouch-$V-macOS-arm64.zip
     app_rev=$(rev "$R/app"); engine_rev=$(rev "$R/engine")
-    ssh "$LT_MAC" "set -e; rm -rf $m; mkdir -p $m; cd $m
-        git init -q app; git -C app fetch -q --depth 1 $GH_APP $app_rev; git -C app checkout -q --detach FETCH_HEAD
-        git init -q qemu; git -C qemu fetch -q --depth 1 $GH_ENGINE $engine_rev; git -C qemu checkout -q --detach FETCH_HEAD"
+    # Hold sleep assertions on the Mac for each remote job, including the full build/sign/package shell.
+    # caffeinate releases them when its command exits, including failures; no power settings are changed.
+    ssh "$LT_MAC" "/usr/bin/caffeinate -i -s /bin/bash -se" <<REMOTE
+        rm -rf "$m"; mkdir -p "$m"; cd "$m"
+        git init -q app; git -C app fetch -q --depth 1 "$GH_APP" "$app_rev"; git -C app checkout -q --detach FETCH_HEAD
+        git init -q qemu; git -C qemu fetch -q --depth 1 "$GH_ENGINE" "$engine_rev"; git -C qemu checkout -q --detach FETCH_HEAD
+REMOTE
     for p in $SUBPROJECTS; do rsync -a "$R/engine/subprojects/$p" "$LT_MAC:$m/qemu/subprojects/"; done
-    ssh "$LT_MAC" "export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
-        $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
-            --openssl-prefix $LT_MAC_OPENSSL --jobs 2 > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
-        /usr/bin/python3 -B app/macOS/build-shared.py --output \"\$PWD/LightTouch Shared Desktop.app\" --scratch \$PWD/scratch \
-            --engine \$PWD/engine/libqemu-arm.dylib --engine-revision $engine_rev \
-            --firmwarekit '$LT_MAC_VENDOR/MacOS/firmwarekit' --python-runtime $LT_MAC_PYTHON_RUNTIME \
-            --vendor-contents '$LT_MAC_VENDOR' --sdl3-runtime $LT_MAC_SDL3 > shared.log 2>&1 || { tail -30 shared.log; exit 1; }
+    ssh "$LT_MAC" "/usr/bin/caffeinate -i -s /bin/bash -se" <<REMOTE
+        export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd "$m"
+        "$LT_MAC_PYTHON" app/macOS/build-engine.py --qemu-source "\$PWD/qemu" --output "\$PWD/engine" --python "$LT_MAC_PYTHON" \
+            --openssl-prefix "$LT_MAC_OPENSSL" --jobs 2 > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
+        /usr/bin/python3 -B app/macOS/build-shared.py --output "\$PWD/LightTouch Shared Desktop.app" --scratch "\$PWD/scratch" \
+            --engine "\$PWD/engine/libqemu-arm.dylib" --engine-revision "$engine_rev" \
+            --firmwarekit "$LT_MAC_VENDOR/MacOS/firmwarekit" --python-runtime "$LT_MAC_PYTHON_RUNTIME" \
+            --vendor-contents "$LT_MAC_VENDOR" --sdl3-runtime "$LT_MAC_SDL3" > shared.log 2>&1 || { tail -30 shared.log; exit 1; }
         codesign --verify --deep --strict 'LightTouch Shared Desktop.app'
-        ditto -c -k --keepParent 'LightTouch Shared Desktop.app' $zip"
+        ditto -c -k --keepParent 'LightTouch Shared Desktop.app' "$zip"
+REMOTE
     scp -q "$LT_MAC:$m/$zip" "$LT_MAC:$m/LightTouch Shared Desktop.build-receipt.json" "$OUTD/"
     mv "$OUTD/LightTouch Shared Desktop.build-receipt.json" "$R/macOS-build-receipt.json"
     echo "$OUTD/$zip"

@@ -87,6 +87,12 @@ needs, where each piece came from, and what does not work: Xcode 27.1 (not Comma
 the iPhoneOS 3.1.3 and 3.2 SDKs, and `ldid`. LT Bench needs no SDK. The script copies the sources over
 with `rsync` (to `~/ltpkg-build` on the Mac), builds there, and copies the results back.
 
+Remote guest-package, firmware-tools and LT Bench builds, and the macOS release checkout/build,
+run under the Mac's `/usr/bin/caffeinate -i -s`. This prevents idle sleep and, on AC power, system
+sleep for the command's lifetime, including child compilers, signing and packaging. The assertions
+are released on success or failure; the scripts do not change persistent power settings or keep the
+display awake. Keep the Mac connected to power for release builds.
+
 The iPhoneOS 3.1.3 SDK (headers and link stubs for the guest link) also ships in Apple's original
 installer, which the Internet Archive keeps in its iOS Firmware Exhibit Collection:
 [`iphone_sdk_3.1.3_with_xcode_3.2.1__snow_leopard__10m2003a.dmg`](https://archive.org/download/iOS_Firmware_Exhibit_Collection/iphone_sdk_3.1.3_with_xcode_3.2.1__snow_leopard__10m2003a.dmg).
