@@ -2,12 +2,12 @@
 """Delivered guest fps over a window of live play: SurfaceFlinger timestats for the guest
 SurfaceView. usage: gamefps.py SECONDS [--series] (ANDROID_SERIAL set; the game must be on screen).
 --series prints one fps figure per second instead, to see a rate that swings."""
-import re, subprocess, sys, time
-PKG = "org.lighttouch.android"
+import os, re, subprocess, sys, time
+PKG = os.environ.get("LT_PKG", "org.lighttouch.android")  # LT_PKG: a side-by-side install
 def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 20
 def frames(out):
-    i = out.find("SurfaceView[" + PKG)
+    i = out.find("SurfaceView[" + PKG + "/")
     return int(re.search(r"totalFrames = (\d+)", out[i:]).group(1)) if i >= 0 else 0
 if "--series" in sys.argv:
     sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
@@ -23,7 +23,7 @@ sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
 time.sleep(secs)
 out = sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump")
 sh("dumpsys", "SurfaceFlinger", "--timestats", "-disable")
-i = out.find("SurfaceView[" + PKG)
+i = out.find("SurfaceView[" + PKG + "/")
 blk = out[i:out.find("layerName", i + 10)]
 m = re.search(r"(?:present2present|presentToPresent) histogram is as below:\n([^\n]*)", blk) if i >= 0 else None
 if not m:

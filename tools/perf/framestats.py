@@ -29,7 +29,7 @@ hitch with the vCPU halted is the guest waiting on something; one with the vCPU 
 work that did not fit in a refresh; one spent off-CPU is the host."""
 import os, subprocess, sys, time
 
-PKG = "org.lighttouch.android"
+PKG = os.environ.get("LT_PKG", "org.lighttouch.android")  # LT_PKG: a side-by-side install
 DEVICE_LOG = "files/frames.log"
 
 def pct(v, p):

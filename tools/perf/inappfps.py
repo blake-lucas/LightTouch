@@ -2,9 +2,9 @@
 """In-app delivered frame rate. Starts (or reuses) the guest in the installed app,
 unlocks, flings Home pages, and reads SurfaceFlinger's present timestamps for the
 guest SurfaceView. usage: inappfps.py [--no-start] [--swipes N] [--stop]"""
-import argparse, re, subprocess, sys, time, struct, statistics
+import argparse, os, re, subprocess, sys, time, struct, statistics
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-PKG = "org.lighttouch.android"
+PKG = os.environ.get("LT_PKG", "org.lighttouch.android")  # LT_PKG: a side-by-side install
 def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
 def ui():
     sh("uiautomator", "dump", "/sdcard/ui.xml")
@@ -119,7 +119,7 @@ def latency(name):
     return sorted(set(rows))
 ap = argparse.ArgumentParser(); ap.add_argument("--no-start", action="store_true"); ap.add_argument("--swipes", type=int, default=6)
 ap.add_argument("--stop", action="store_true"); ap.add_argument("--threads", action="store_true"); ap.add_argument("--boot-only", action="store_true"); ap.add_argument("--idle", type=int, default=0); a = ap.parse_args()
-sh("input", "keyevent", "KEYCODE_WAKEUP"); sh("am", "start", "-n", f"{PKG}/.MainActivity"); time.sleep(2)
+sh("input", "keyevent", "KEYCODE_WAKEUP"); sh("am", "start", "-n", f"{PKG}/org.lighttouch.android.MainActivity"); time.sleep(2)
 rect = guest_rect()
 if not a.no_start:
     st = state()
@@ -149,7 +149,7 @@ print("guest rect", [round(v) for v in rect], "lock" if is_lock(rect) else "home
 time.sleep(1)
 def timestats():
     out = sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump")
-    i = out.find("SurfaceView[" + PKG); 
+    i = out.find("SurfaceView[" + PKG + "/"); 
     if i < 0: return None
     blk = out[i:out.find("layerName", i+10)]
     hist = re.search(r"present2present histogram is as below:\n([^\n]*)", blk).group(1)
