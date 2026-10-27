@@ -350,6 +350,10 @@ fn performance_hint() {
         Some(total)
     }
     let Ok(android) = (unsafe { libloading::Library::new("libandroid.so") }) else { return };
+    // Never unloaded: asking for the manager starts libandroid's binder thread, and closing the library on the way
+    // out (no hint sessions, as on the Poco) destroyed a mutex that thread still locks, aborting the boot a second
+    // in ("pthread_mutex_lock called on a destroyed mutex"; "keybag boot: halted without the keybag").
+    let android: &'static libloading::Library = Box::leak(Box::new(android));
     let symbols = unsafe {
         (
             android.get::<GetManager>(b"APerformanceHint_getManager"),
