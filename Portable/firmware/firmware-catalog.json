@@ -1,4 +1,4 @@
-{"format": 1, "first_run": "k48ap-7B500", "bundled": {"n72ap-7E18": "Device/n72ap-7E18.itbase"}, "entries": [
+{"format": 1, "entries": [
  {
   "id": "k48ap-7B367",
   "board": "k48ap",

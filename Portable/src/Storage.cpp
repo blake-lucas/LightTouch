@@ -3,41 +3,49 @@
 #include <array>
 #include <fcntl.h>
 #include <fstream>
+#ifdef __linux__
 #include <linux/fs.h>
+#endif
 #include <memory>
 #include <map>
 #include <mutex>
 #include <set>
 #include <thread>
 #include <sstream>
-#include <sys/file.h>
+#include "NandDisk.hpp"
+#include "Os.hpp"
+#include <functional>
+#ifndef _WIN32
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
-#include <unistd.h>
+#endif
 #include <zlib.h>
+#ifdef __APPLE__
+#include <stdio.h>
+#include <sys/clonefile.h>
+#endif
 namespace lt {
 struct Fd {
     int n = -1;
     explicit Fd(int f) : n(f) {}
     ~Fd() {
         if (n >= 0)
-            close(n);
+            lt::os::close(n);
     }
     Fd(const Fd &) = delete;
 };
 static Fd open_read(const fs::path &p) {
-    int fd = open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = lt::os::open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     io(fd >= 0, "open " + p.string());
-    struct stat st {};
-    io(fstat(fd, &st) == 0, "fstat");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd, &st) == 0, "fstat");
     require(S_ISREG(st.st_mode), "not a regular file");
     return Fd(fd);
 }
 static void write_all(int fd, const void *p, size_t n) {
     auto *b = static_cast<const char *>(p);
     while (n) {
-        ssize_t k = write(fd, b, n);
+        ssize_t k = lt::os::write(fd, b, n);
         if (k < 0 && errno == EINTR)
             continue;
         io(k > 0, "write");
@@ -48,7 +56,7 @@ static void write_all(int fd, const void *p, size_t n) {
 static void read_all(int fd, void *p, size_t n) {
     auto *b = static_cast<char *>(p);
     while (n) {
-        ssize_t k = read(fd, b, n);
+        ssize_t k = lt::os::read(fd, b, n);
         if (k < 0 && errno == EINTR)
             continue;
         io(k > 0, "truncated input");
@@ -58,8 +66,8 @@ static void read_all(int fd, void *p, size_t n) {
 }
 std::string read_file(const fs::path &p, size_t limit) {
     auto fd = open_read(p);
-    struct stat st {};
-    io(fstat(fd.n, &st) == 0, "fstat");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd.n, &st) == 0, "fstat");
     require(st.st_size >= 0 && uint64_t(st.st_size) <= limit, "file exceeds bound");
     std::string s(size_t(st.st_size), '\0');
     read_all(fd.n, s.data(), s.size());
@@ -120,13 +128,13 @@ static std::string digest_fd(int fd, AdmissionProgress *progress = nullptr, uint
     std::array<char, 65536> b{};
     uint64_t consumed = 0;
     if (progress) {
-        struct stat st {};
-        io(fstat(fd, &st) == 0, "fstat admission asset");
+        lt::os::Stat st {};
+        io(lt::os::fstat(fd, &st) == 0, "fstat admission asset");
         require(st.st_size >= 0 && uint64_t(st.st_size) == planned_bytes, "admission asset size changed");
         progress->checkpoint();
     }
     for (;;) {
-        ssize_t n = read(fd, b.data(), b.size());
+        ssize_t n = lt::os::read(fd, b.data(), b.size());
         if (n < 0 && errno == EINTR)
             continue;
         io(n >= 0, "hash read");
@@ -150,23 +158,23 @@ std::string digest_file(const fs::path &p) {
     return digest_fd(fd.n);
 }
 void sync_dir(const fs::path &p) {
-    Fd fd(open(p.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    Fd fd(lt::os::open(p.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
     io(fd.n >= 0, "open directory");
-    io(fsync(fd.n) == 0, "sync directory");
+    io(lt::os::fsync(fd.n) == 0, "sync directory");
 }
 void atomic_write(const fs::path &p, const std::string &s) {
     std::string tmp = (p.parent_path() / ".lt-write-XXXXXX").string();
     std::vector<char> b(tmp.begin(), tmp.end());
     b.push_back(0);
-    Fd fd(mkstemp(b.data()));
+    Fd fd(lt::os::mkstemp(b.data()));
     io(fd.n >= 0, "create metadata");
     try {
         write_all(fd.n, s.data(), s.size());
-        io(fsync(fd.n) == 0, "sync metadata");
-        io(rename(b.data(), p.c_str()) == 0, "publish metadata");
+        io(lt::os::fsync(fd.n) == 0, "sync metadata");
+        io(lt::os::rename(b.data(), p.c_str()) == 0, "publish metadata");
         sync_dir(p.parent_path());
     } catch (...) {
-        unlink(b.data());
+        lt::os::unlink(b.data());
         throw;
     }
 }
@@ -200,8 +208,8 @@ static uint32_t little32(const unsigned char *p) {
 }
 static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, AdmissionProgress &events) {
     auto fd = open_read(path);
-    struct stat st {};
-    io(fstat(fd.n, &st) == 0, "stat packed NAND");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd.n, &st) == 0, "stat packed NAND");
     require(st.st_size >= 24, "truncated packed NAND header");
     std::array<unsigned char, 24> header{};
     read_all(fd.n, header.data(), header.size());
@@ -245,11 +253,15 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
 // A file keeps the digest it was verified with while it keeps its identity: device, inode, size and
 // modification and change times (every write, rename onto it or chmod moves the change time).
 using DigestCache = std::map<std::string, std::string>;
-static std::string file_identity(const fs::path &path, const struct stat &st) {
+static std::string file_identity(const fs::path &path, const lt::os::Stat &st) {
+#if defined(__APPLE__) && !defined(_WIN32)
+    const struct timespec &mtime = st.st_mtimespec, &ctime = st.st_ctimespec;
+#else
+    const struct timespec &mtime = st.st_mtim, &ctime = st.st_ctim;
+#endif
     return path.string() + "|" + std::to_string(st.st_dev) + "|" + std::to_string(st.st_ino) + "|" +
-           std::to_string(st.st_size) + "|" + std::to_string(st.st_mtim.tv_sec) + "." +
-           std::to_string(st.st_mtim.tv_nsec) + "|" + std::to_string(st.st_ctim.tv_sec) + "." +
-           std::to_string(st.st_ctim.tv_nsec);
+           std::to_string(st.st_size) + "|" + std::to_string(mtime.tv_sec) + "." + std::to_string(mtime.tv_nsec) +
+           "|" + std::to_string(ctime.tv_sec) + "." + std::to_string(ctime.tv_nsec);
 }
 static DigestCache read_digest_cache(const fs::path &path) {
     DigestCache cache;
@@ -356,8 +368,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
     std::vector<ListingCheck> listings;
     auto add_asset = [&](const fs::path &path) {
         events.checkpoint();
-        struct stat st {};
-        io(lstat(path.c_str(), &st) == 0, "stat admission asset");
+        lt::os::Stat st {};
+        io(lt::os::lstat(path.c_str(), &st) == 0, "stat admission asset");
         require(S_ISREG(st.st_mode) && st.st_size >= 0, "admission asset must be a regular file");
         assets.emplace(path, uint64_t(st.st_size));
         identities.emplace(path, file_identity(path, st));
@@ -451,8 +463,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
                 auto fd = open_read(asset.first);
                 // Identify the file as opened: a change during hashing moves its change time, so
                 // the next admission reads it again.
-                struct stat st {};
-                io(fstat(fd.n, &st) == 0, "fstat admission asset");
+                lt::os::Stat st {};
+                io(lt::os::fstat(fd.n, &st) == 0, "fstat admission asset");
                 const auto digest = digest_fd(fd.n, &events, asset.second);
                 std::lock_guard<std::mutex> lock(guard);
                 digests.emplace(asset.first, digest);
@@ -509,6 +521,8 @@ struct Stage {
     bool published = false;
     bool bulk_sync = false;
     bool cleanup_on_failure = true, flush_existing_files = false;
+    // Files this import wrote and hashed itself (a NAND container), by identity: verification takes them as read.
+    DigestCache known;
     explicit Stage(const char *dest, bool archive = false) {
 #if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
         // An archive may contain over 100,000 tiny NAND files. Flush the
@@ -527,7 +541,7 @@ struct Stage {
         std::string pattern = (parent / ".lt-import-XXXXXX").string();
         std::vector<char> b(pattern.begin(), pattern.end());
         b.push_back(0);
-        io(mkdtemp(b.data()) != nullptr, "create staging");
+        io(lt::os::mkdtemp(b.data()) != nullptr, "create staging");
         path = b.data();
     }
     Stage(const char *source, const char *dest) {
@@ -545,18 +559,17 @@ struct Stage {
         path = parent / input.filename();
         destination = parent / output.filename();
         require(!fs::exists(fs::symlink_status(destination)), "destination already exists");
-        struct stat st {};
-        io(lstat(parent.c_str(), &st) == 0, "stat import parent");
-        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && !(st.st_mode & 0022),
+        lt::os::Stat st {};
+        io(lt::os::lstat(parent.c_str(), &st) == 0, "stat import parent");
+        require(S_ISDIR(st.st_mode) && st.st_uid == lt::os::euid() && !(st.st_mode & 0022),
                 "import parent must be owned with no external writers");
-        io(lstat(path.c_str(), &st) == 0, "stat import stage");
-        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 0777) == 0700,
+        io(lt::os::lstat(path.c_str(), &st) == 0, "stat import stage");
+        require(S_ISDIR(st.st_mode) && st.st_uid == lt::os::euid() && (st.st_mode & 0777) == 0700,
                 "import stage must be an owned private 0700 directory");
-        // Reject aliases before integrity checking or changing permissions. In
-        // particular, chmod must never follow a caller-supplied symlink/hardlink.
+        // Reject aliases before integrity checking.
         for (const auto &entry : fs::recursive_directory_iterator(path)) {
-            io(lstat(entry.path().c_str(), &st) == 0, "stat import stage entry");
-            require(st.st_uid == geteuid() && !(st.st_mode & 0022) &&
+            io(lt::os::lstat(entry.path().c_str(), &st) == 0, "stat import stage entry");
+            require(st.st_uid == lt::os::euid() && !(st.st_mode & 0022) &&
                         (S_ISDIR(st.st_mode) || (S_ISREG(st.st_mode) && st.st_nlink == 1)),
                     "import stage entry must be owned and unaliased with no external writers");
         }
@@ -567,10 +580,6 @@ struct Stage {
     ~Stage() {
         if (!published && cleanup_on_failure) {
             std::error_code ec;
-            for (const auto &e : fs::recursive_directory_iterator(path, ec))
-                if (e.is_directory())
-                    chmod(e.path().c_str(), 0700);
-            chmod(path.c_str(), 0700);
             fs::remove_all(path, ec);
         }
     }
@@ -578,7 +587,7 @@ struct Stage {
         AdmissionProgress verify{ImportObservation::notify, observation};
         if (observation)
             observation->begin("verifying");
-        validate_base(path, observation ? &verify : nullptr);
+        validate_base(path, observation ? &verify : nullptr, {}, known.empty() ? nullptr : &known);
         std::vector<fs::path> dirs;
         for (const auto &e : fs::recursive_directory_iterator(path)) {
             if (observation)
@@ -588,9 +597,8 @@ struct Stage {
             else {
                 if (flush_existing_files && !bulk_sync) {
                     auto file = open_read(e.path());
-                    io(fsync(file.n) == 0, "sync staged import file");
+                    io(lt::os::fsync(file.n) == 0, "sync staged import file");
                 }
-                io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
             }
         }
         for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
@@ -598,18 +606,16 @@ struct Stage {
                 observation->checkpoint();
             if (!bulk_sync)
                 sync_dir(*it);
-            io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
         }
         if (!bulk_sync)
             sync_dir(path);
-        io(chmod(path.c_str(), 0500) == 0, "make base immutable");
         if (observation)
             observation->checkpoint();
 #if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
         if (bulk_sync) {
-            Fd stage_fd(open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+            Fd stage_fd(lt::os::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
             io(stage_fd.n >= 0, "open unpublished import for sync");
-            // All staged data, directory entries and final permissions must be
+            // All staged data and directory entries must be
             // durable BEFORE rename publishes the complete base. This flushes
             // the containing filesystem, so unrelated dirty writes can add time.
             if (syscall(SYS_syncfs, stage_fd.n) != 0) {
@@ -623,7 +629,7 @@ struct Stage {
                         observation->checkpoint();
                     if (entry.is_regular_file()) {
                         auto file = open_read(entry.path());
-                        io(fsync(file.n) == 0, "sync extracted file fallback");
+                        io(lt::os::fsync(file.n) == 0, "sync extracted file fallback");
                     }
                 }
                 for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
@@ -637,9 +643,13 @@ struct Stage {
 #ifdef SYS_renameat2
         io(syscall(SYS_renameat2, AT_FDCWD, path.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0,
            "publish base");
+#elif defined(__APPLE__)
+        io(renamex_np(path.c_str(), destination.c_str(), RENAME_EXCL) == 0, "publish base");
+#elif defined(_WIN32)
+        io(lt::os::rename_noreplace(path.c_str(), destination.c_str()) == 0, "publish base");
 #else
         require(!fs::exists(destination), "destination race");
-        io(rename(path.c_str(), destination.c_str()) == 0, "publish base");
+        io(lt::os::rename(path.c_str(), destination.c_str()) == 0, "publish base");
 #endif
         published = true;
         sync_dir(destination.parent_path());
@@ -652,8 +662,8 @@ static DigestCache lock_digests(const fs::path &base) {
     DigestCache cache;
     Json j = parse(read_file(base / "device.lock.json"));
     auto add = [&](const fs::path &path, const Json &sha) {
-        struct stat st {};
-        if (sha.kind == Json::String && sha.string().size() == 64 && lstat(path.c_str(), &st) == 0 &&
+        lt::os::Stat st {};
+        if (sha.kind == Json::String && sha.string().size() == 64 && lt::os::lstat(path.c_str(), &st) == 0 &&
             S_ISREG(st.st_mode))
             cache[file_identity(path, st)] = sha.string();
     };
@@ -692,13 +702,10 @@ void adopt_base(const fs::path &base, lt_import_phase_fn observer, void *opaque)
         }
         require(e.is_regular_file(), "special base file refused");
         auto file = open_read(e.path());
-        io(fsync(file.n) == 0, "sync adopted base file");
-        io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
+        io(lt::os::fsync(file.n) == 0, "sync adopted base file");
     }
-    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
+    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
         sync_dir(*it);
-        io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
-    }
 }
 void seed_admission(const fs::path &base_path, const fs::path &state) {
     const auto base = fs::canonical(base_path);  // as open_device_checked names the files
@@ -709,16 +716,14 @@ void seed_admission(const fs::path &base_path, const fs::path &state) {
 }
 static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
-        io(lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
+        io(lt::os::lseek(fd, int64_t(size), SEEK_CUR) >= 0, "seek zero archive span");
     else
         write_all(fd, bytes, size);
 }
 // n72 NAND arrives as ~110,000 4160-byte page files, nand/csN/N.page. Extracted one file each (with a
-// sync per file on Android) that took minutes; the importer packs them instead, as the desktop one
-// does, into one indexed ITNAND01 file that the engine maps directly: a 24-byte header, a slot
-// table of 4 x 524288 little-endian record numbers (0 = never written) and the records in order.
+// sync per file on Android) that took minutes; the importer streams them instead into the record's
+// NAND container (the Pages route below); packed_page names a page's slot, chip x 524288 + page.
 constexpr uint32_t packed_pages_per_cs = 524288, packed_record = 4160;
-constexpr uint64_t packed_index_bytes = 4ull * packed_pages_per_cs * 4, packed_records_at = 24 + packed_index_bytes;
 static bool packed_page(const std::string &name, uint32_t &slot) {
     if (name.size() < 15 || name.compare(0, 7, "nand/cs") || name[7] < '0' || name[7] > '3' || name[8] != '/' ||
         name.compare(name.size() - 5, 5, ".page"))
@@ -738,36 +743,72 @@ static void progress(const lt_import_config *c, uint64_t written, uint64_t total
     if (c->progress)
         require(c->progress(c->opaque, written, total) == 0, "import cancelled", LT_CANCELLED);
 }
+#ifdef _WIN32
+// Where a file's data is, as SEEK_DATA/SEEK_HOLE say elsewhere: a hole reads as zeros, so a NAND chip (2 GB, a few
+// hundred MB written) is copied without reading its holes. All of it where the filesystem can't say (FAT).
+static std::vector<std::pair<int64_t, int64_t>> allocated_ranges(int fd, int64_t size) {
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    FILE_ALLOCATED_RANGE_BUFFER query {}, found[256];
+    query.Length.QuadPart = size;
+    while (query.Length.QuadPart > 0) {
+        DWORD bytes = 0;
+        BOOL done = DeviceIoControl(lt::os::handle(fd), FSCTL_QUERY_ALLOCATED_RANGES, &query, sizeof query, found,
+                                    sizeof found, &bytes, nullptr);
+        if (!done && GetLastError() != ERROR_MORE_DATA)
+            return {{0, size}};
+        const DWORD n = bytes / sizeof found[0];
+        for (DWORD i = 0; i < n; ++i)
+            ranges.emplace_back(found[i].FileOffset.QuadPart, found[i].FileOffset.QuadPart + found[i].Length.QuadPart);
+        if (done || n == 0)
+            break;
+        query.FileOffset.QuadPart = ranges.back().second;
+        query.Length.QuadPart = size - ranges.back().second;
+    }
+    return ranges;
+}
+#endif
 static void clone_sparse(const fs::path &from, const fs::path &to) {
     auto in = open_read(from);
-    struct stat st {};
-    io(fstat(in.n, &st) == 0, "fstat");
-    Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+    lt::os::Stat st {};
+    io(lt::os::fstat(in.n, &st) == 0, "fstat");
+#ifdef __APPLE__
+    // APFS copies on write; the clone keeps holes. Falls through to copying on other filesystems.
+    if (fclonefileat(in.n, AT_FDCWD, to.c_str(), CLONE_NOFOLLOW) == 0) {
+        lt::os::chmod(to.c_str(), 0600);  // a clone keeps its source's mode; a copy is the device's to write
+        return;
+    }
+#endif
+    Fd out(lt::os::open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     io(out.n >= 0, "create " + to.string());
 #ifdef FICLONE
     if (ioctl(out.n, FICLONE, in.n) == 0)
         return;
 #endif
-    io(ftruncate(out.n, st.st_size) == 0, "size " + to.string());
+    io(lt::os::ftruncate(out.n, st.st_size) == 0, "size " + to.string());
     std::vector<uint8_t> buffer(1 << 20);
-    off_t at = 0;
+#ifdef _WIN32
+    const auto ranges = allocated_ranges(in.n, st.st_size);
+    for (auto [at, end] : ranges) {
+#else
+    int64_t at = 0;
     while (at < st.st_size) {
-        off_t end = st.st_size;
+        int64_t end = st.st_size;
 #ifdef SEEK_DATA
-        off_t data = lseek(in.n, at, SEEK_DATA);
+        int64_t data = lt::os::lseek(in.n, at, SEEK_DATA);
         if (data < 0)
             break;  // only a hole remains
         at = data;
-        end = lseek(in.n, data, SEEK_HOLE);
+        end = lt::os::lseek(in.n, data, SEEK_HOLE);
         io(end > 0, "seek hole " + from.string());
 #endif
+#endif
         while (at < end) {
-            const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
-            ssize_t n = pread(in.n, buffer.data(), want, at);
+            const size_t want = size_t(std::min<int64_t>(int64_t(buffer.size()), end - at));
+            ssize_t n = lt::os::pread(in.n, buffer.data(), want, at);
             io(n > 0, "read " + from.string());
             if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
                 for (ssize_t done = 0; done < n;) {
-                    ssize_t k = pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
+                    ssize_t k = lt::os::pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
                     io(k > 0, "write " + to.string());
                     done += k;
                 }
@@ -775,11 +816,187 @@ static void clone_sparse(const fs::path &from, const fs::path &to) {
             at += n;
         }
     }
-    io(fsync(out.n) == 0, "sync " + to.string());
+    io(lt::os::fsync(out.n) == 0, "sync " + to.string());
 }
 // Sparse: a prepared folder's NAND chips are mostly holes (an n81ap store is 17.7 GB, ~1.8 GB of data), and a
-// dense copy wrote all of it.
-static void copy_file(const fs::path &src, const fs::path &dst) { clone_sparse(src, dst); }
+// dense copy wrote all of it. The copy is a new file of this app's (0600), whatever the source's mode.
+void copy_contents(const fs::path &src, const fs::path &dst) { clone_sparse(src, dst); }
+// Where a file's data is: [start, end) ranges in order (a hole reads as zeros). All of it where the filesystem can't
+// say.
+static std::vector<std::pair<int64_t, int64_t>> data_ranges(int fd, int64_t size) {
+#ifdef _WIN32
+    return allocated_ranges(fd, size);
+#else
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+#ifdef SEEK_DATA
+    for (int64_t at = 0; at < size;) {
+        const int64_t start = lt::os::lseek(fd, at, SEEK_DATA);
+        if (start < 0)
+            break;  // only a hole remains (or no answer: ENXIO is the usual end)
+        const int64_t end = lt::os::lseek(fd, start, SEEK_HOLE);
+        io(end > start, "seek hole");
+        ranges.emplace_back(start, std::min(end, size));
+        at = end;
+    }
+#else
+    ranges.emplace_back(0, size);
+#endif
+    return ranges;
+#endif
+}
+static void hash_zeros(Sha256 &hash, uint64_t n) {
+    static const std::vector<uint8_t> zeros(1 << 20, 0);
+    while (n) {
+        const size_t k = size_t(std::min<uint64_t>(n, zeros.size()));
+        hash.update(zeros.data(), k);
+        n -= k;
+    }
+}
+// A NAND store arriving in an import becomes the record's container (NandDisk.hpp) as it comes: its chip files' bytes,
+// or the iPod touch 2G's page files, go into stage/nand/nand.qcow2 and nowhere else. The source lock's NAND listing is
+// checked against what arrived; the lock then names the container (the source's stays beside it as
+// source-device.lock.json).
+struct ContainerImport {
+    fs::path stage, nand;
+    nand_disk::Layout layout;
+    std::unique_ptr<nand_disk::Writer> writer;
+    std::string geometry;                         // the source's geometry.json
+    std::map<std::string, std::string> digests;   // each source NAND file as its listing names it -> sha256
+    std::vector<std::pair<fs::path, size_t>> staged;  // chip files extracted before geometry.json came, and their chip
+    explicit ContainerImport(const fs::path &stage_path) : stage(stage_path), nand(stage_path / "nand") {}
+    bool begun() const { return bool(writer); }
+    void begin(const std::string &geometry_text) {
+        geometry = geometry_text;
+        layout = nand_disk::Layout::of(parse(geometry));
+        fs::create_directories(nand);
+        writer = std::make_unique<nand_disk::Writer>(nand / nand_disk::file_name, layout.size());
+    }
+    // The chip a file of the store holds, by its name; -1 when it is not one.
+    static long chip_of(const nand_disk::Layout &layout, const std::string &name) {
+        const auto it = std::find(layout.names.begin(), layout.names.end(), name);
+        return it == layout.names.end() ? -1 : long(it - layout.names.begin());
+    }
+    // `n` bytes of chip `chip` at its file's offset `at`: split at erase blocks, each of which sits at its own place.
+    void put(size_t chip, uint64_t at, const uint8_t *p, size_t n) {
+        while (n) {
+            const size_t take = size_t(std::min<uint64_t>(n, layout.block_bytes() - at % layout.block_bytes()));
+            writer->put(layout.place(chip, at), p, take);
+            at += take;
+            p += take;
+            n -= take;
+        }
+    }
+    // One 2G page record, as its page file holds it.
+    void put_n72(uint32_t cs, uint32_t page, const uint8_t *record) {
+        std::array<uint8_t, nand_disk::n72_record> r{};
+        memcpy(r.data(), record, r.size());
+        nand_disk::n72_encode(r.data());
+        put(cs, uint64_t(page) * r.size(), r.data(), r.size());
+    }
+    // A chip file on disk: its data ranges put, and its digest (holes hash as the zeros they read as). `step` hears
+    // the file's bytes as they are covered.
+    std::string put_file(const fs::path &file, size_t chip, const std::function<void(uint64_t)> &step) {
+        auto in = open_read(file);
+        lt::os::Stat st {};
+        io(lt::os::fstat(in.n, &st) == 0, "stat NAND chip file");
+        require(uint64_t(st.st_size) == layout.chip_bytes(), file.filename().string() + ": not the geometry's chip size");
+        Sha256 hash;
+        std::vector<uint8_t> buffer(1 << 20);
+        int64_t at = 0;
+        for (auto [start, end] : data_ranges(in.n, st.st_size)) {
+            hash_zeros(hash, uint64_t(start - at));
+            step(uint64_t(start - at));
+            for (at = start; at < end;) {
+                const size_t want = size_t(std::min<int64_t>(int64_t(buffer.size()), end - at));
+                ssize_t n = lt::os::pread(in.n, buffer.data(), want, at);
+                if (n < 0 && errno == EINTR)
+                    continue;
+                io(n > 0, "read " + file.string());
+                hash.update(buffer.data(), size_t(n));
+                put(chip, uint64_t(at), buffer.data(), size_t(n));
+                at += n;
+                step(uint64_t(n));
+            }
+        }
+        hash_zeros(hash, uint64_t(st.st_size - at));
+        step(uint64_t(st.st_size - at));
+        return hash.finish();
+    }
+    // The container written, the source listing checked and the lock rewritten. Returns the container files'
+    // digests by identity, for the stage's verification to take as read.
+    DigestCache finish(ImportObservation &observation) {
+        observation.begin("packing");
+        for (const auto &[file, chip] : staged) {
+            put_file(file, chip, [&](uint64_t) { observation.checkpoint(); });
+            fs::remove(file);
+        }
+        writer->finish();
+        writer.reset();
+        {
+            const std::string text = layout.geometry(geometry);
+            Fd out(lt::os::open((nand / "geometry.json").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600));
+            io(out.n >= 0, "write NAND geometry");
+            write_all(out.n, text.data(), text.size());
+            io(lt::os::fsync(out.n) == 0, "sync NAND geometry");
+        }
+        auto lock = parse(read_file(stage / "device.lock.json"));
+        const Json &source = lock.at("outputs").at("nand");
+        require(source.at("path").string() == "nand", "invalid NAND output path");
+        Sha256 listing;
+        for (const auto &d : digests) {
+            const std::string line = d.first + " " + d.second + "\n";
+            listing.update(line.data(), line.size());
+        }
+        require(listing.finish() == source.at("listing_sha256").string(), "NAND listing checksum mismatch");
+        if (const Json *pages = source.find("pages"))
+            require(pages->integer() == digests.size(), "NAND page count mismatch");
+        DigestCache known;
+        Json files;
+        files.kind = Json::Object;
+        Sha256 container;
+        for (const char *name : {"geometry.json", nand_disk::file_name}) {
+            const fs::path path = nand / name;
+            auto in = open_read(path);
+            lt::os::Stat st {};
+            io(lt::os::fstat(in.n, &st) == 0, "stat NAND container");
+            observation.begin("verifying", uint64_t(st.st_size));
+            AdmissionProgress hashing{ImportObservation::notify, &observation};
+            hashing.total = uint64_t(st.st_size);
+            const std::string sha = digest_fd(in.n, &hashing, uint64_t(st.st_size));
+            known[file_identity(path, st)] = sha;
+            files.object.emplace(name, text_json(sha));
+            const std::string line = std::string(name) + " " + sha + "\n";
+            container.update(line.data(), line.size());
+        }
+        Json record;
+        record.kind = Json::Object;
+        record.object.emplace("path", text_json("nand"));
+        record.object.emplace("listing_sha256", text_json(container.finish()));
+        record.object.emplace("files", files);
+        record.object.emplace("source_listing_sha256", text_json(source.at("listing_sha256").string()));
+        io(lt::os::rename((stage / "device.lock.json").c_str(), (stage / "source-device.lock.json").c_str()) == 0,
+           "keep source device lock");
+        lock.object.at("outputs").object.at("nand") = record;
+        atomic_write(stage / "device.lock.json", dump(lock) + "\n");
+        return known;
+    }
+    static Json text_json(const std::string &value) {
+        Json j;
+        j.kind = Json::String;
+        j.text = value;
+        return j;
+    }
+};
+// The n72 page directory (nand/cs<N>/<page>.page) or chip-file store (geometry.json and its chip files) a source
+// folder's nand/ holds, by its file names; an empty layout for anything else (a container is copied as it is).
+static bool n72_page_name(const std::string &relative, uint32_t &cs, uint32_t &page) {
+    uint32_t slot = 0;
+    if (!packed_page("nand/" + relative, slot))
+        return false;
+    cs = slot / packed_pages_per_cs;
+    page = slot % packed_pages_per_cs;
+    return true;
+}
 std::string prepared_guest_package(lt_device *d) {
     const auto *outputs = d->lock.find("outputs");
     const auto *package = outputs ? outputs->find("guest_package") : nullptr;
@@ -813,11 +1030,10 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
     d->base = lt::fs::canonical(c->base_path);
     lt::fs::create_directories(c->state_path);
     d->state = lt::fs::canonical(c->state_path);
-    lt::io(chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
     lt::require(!lt::contained(d->base, d->state) && !lt::contained(d->state, d->base), "base/state overlap refused");
-    d->lease = open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    d->lease = lt::os::open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     lt::io(d->lease >= 0, "open device lease");
-    lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
+    lt::require(lt::os::lock_exclusive(d->lease) == 0, "device has another writer", LT_BUSY);
     AdmissionProgress events{observer, opaque};
     events.checkpoint();
     // Hashing a whole base (an iPod touch 4G NAND is 17 GB of mostly sparse pages) took over a minute
@@ -827,20 +1043,11 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
     lt::DigestCache cache = pinned ? lt::read_digest_cache(digest_cache_path) : lt::DigestCache{};
     const auto cached = cache;
     lt::validate_base(d->base, &events, extra_checks, &cache);
-    auto immutable = [](lt::fs::perms mode) {
-        return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
-               lt::fs::perms::none;
-    };
-    lt::require(immutable(lt::fs::status(d->base).permissions()),
-                "base root is writable: import into immutable storage first");
     events.checkpoint();
+    // A base is the lock's to vouch for (every file it names is hashed above), not its permissions'.
     for (const auto &entry : lt::fs::recursive_directory_iterator(d->base)) {
         events.checkpoint();
         lt::require(!entry.is_symlink(), "base symlink refused");
-        auto mode = entry.status().permissions();
-        lt::require((mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
-                        lt::fs::perms::none,
-                    "base is writable: import it into immutable storage first");
     }
     events.checkpoint();
     d->lock = lt::parse(lt::read_file(d->base / "device.lock.json"));
@@ -867,8 +1074,8 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
         auto staged = d->state / ".nor-import";
         std::error_code ec;
         lt::fs::remove(staged, ec);
-        lt::copy_file(d->base / "nor.bin", staged);
-        lt::io(rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
+        lt::copy_contents(d->base / "nor.bin", staged);
+        lt::io(lt::os::rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
         lt::sync_dir(d->state);
     }
     events.checkpoint();
@@ -911,14 +1118,14 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         lt::require(c->source && c->expected_sha256 && strlen(c->expected_sha256) == 64,
                     "archive requires expected SHA256");
         auto input = lt::open_read(c->source);
-        struct stat source_stat {};
-        lt::io(fstat(input.n, &source_stat) == 0 && source_stat.st_size >= 0, "stat archive");
+        lt::os::Stat source_stat {};
+        lt::io(lt::os::fstat(input.n, &source_stat) == 0 && source_stat.st_size >= 0, "stat archive");
         lt::ImportObservation observation{observer, opaque};
         observation.begin("hashing", uint64_t(source_stat.st_size));
         lt::AdmissionProgress hashing{lt::ImportObservation::notify, &observation};
         hashing.total = uint64_t(source_stat.st_size);
         lt::require(lt::digest_fd(input.n, &hashing, hashing.total) == c->expected_sha256, "archive SHA256 mismatch");
-        lt::io(lseek(input.n, 0, SEEK_SET) == 0, "rewind archive");
+        lt::io(lt::os::lseek(input.n, 0, SEEK_SET) == 0, "rewind archive");
         uint8_t h[12];
         lt::read_all(input.n, h, sizeof h);
         lt::require(memcmp(h, "ITPACK01", 8) == 0, "not an ITPACK01 prepared base");
@@ -946,32 +1153,37 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             for (size_t p = name.find('/'); p != std::string::npos; p = name.find('/', p + 1))
                 lt::require(!names.count(name.substr(0, p)), "file/directory conflict");
         }
-        // A NAND made only of full n72 pages is packed; the lock is checked once extracted. Anything
-        // else (n81's few large files) is extracted as it is.
-        bool pack = false;
-        for (const auto &entry : entries.array) {
-            const std::string name = entry.at("name").string();
-            uint32_t slot = 0;
-            if (name.rfind("nand/", 0) != 0)
-                continue;
-            if (!lt::packed_page(name, slot) || entry.at("size").integer() != lt::packed_record) {
-                pack = false;
-                break;
+        // A NAND of n72 page files (nand/csN/N.page, full 4160-byte records) or of chip files (nand/geometry.json and
+        // the chips it names) becomes the record's container as it streams (ContainerImport); anything else in nand/
+        // (a container already) is extracted as it is. Chip files only stream into the container once geometry.json
+        // has come (the archive writer sends it first); one that comes before it is extracted and packed at the end.
+        enum class Nand { Extract, Pages, Chips } route = Nand::Extract;
+        {
+            bool pages = false, chips = false, geometry = false, others = false;
+            for (const auto &entry : entries.array) {
+                const std::string name = entry.at("name").string();
+                uint32_t slot = 0;
+                if (name.rfind("nand/", 0) != 0)
+                    continue;
+                if (lt::packed_page(name, slot) && entry.at("size").integer() == lt::packed_record)
+                    pages = true;
+                else if (name == "nand/geometry.json")
+                    geometry = true;
+                else if (name.find('/', 5) == std::string::npos && name.size() > 11 &&
+                         name.compare(name.size() - 6, 6, ".pages") == 0)
+                    chips = true;  // checked against geometry.json as it streams
+                else
+                    others = true;
             }
-            pack = true;
+            if (pages && !geometry && !chips && !others)
+                route = Nand::Pages;
+            else if (geometry && chips && !pages && !others)
+                route = Nand::Chips;
         }
         lt::Stage stage(c->destination, true);
-        std::unique_ptr<lt::Fd> packed;
-        std::vector<uint8_t> slots;
-        std::map<std::string, std::string> page_digests;  // "csN/N.page" -> sha256, sorted like a listing
-        uint32_t records = 0;
-        if (pack) {
-            packed = std::make_unique<lt::Fd>(
-                open((stage.path / "nand").c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-            lt::io(packed->n >= 0, "create packed NAND");
-            slots.assign(lt::packed_index_bytes, 0);
-            lt::io(lseek(packed->n, off_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
-        }
+        lt::ContainerImport container(stage.path);
+        if (route == Nand::Pages)
+            container.begin(lt::nand_disk::n72_geometry());
         observation.begin("extracting", total);
         z_stream z{};
         lt::require(inflateInit(&z) == Z_OK, "inflate initialization failed", LT_IO);
@@ -983,24 +1195,35 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         int status = Z_OK;
         uint64_t written = 0;
         size_t next = 0;
-        uint64_t remaining = 0, target_size = 0;
+        uint64_t remaining = 0, target_size = 0, chip_at = 0;
         std::unique_ptr<lt::Fd> target;
-        std::string page_name;
-        uint32_t page_slot = 0;
-        lt::Sha256 page_hash;
+        std::string nand_name;   // the NAND entry streaming now, as its listing names it
+        long chip = -1;          // its chip, streaming into the container
+        bool geometry_entry = false;
+        std::array<uint8_t, lt::packed_record> page{};
+        lt::Sha256 nand_hash;
         auto finish_target = [&] {
-            if (!page_name.empty()) {
-                page_digests.emplace(page_name.substr(5), page_hash.finish());
-                ++records;
-                for (int byte = 0; byte < 4; ++byte)
-                    slots[size_t(page_slot) * 4 + byte] = uint8_t(records >> (8 * byte));
-                page_name.clear();
+            if (!nand_name.empty()) {
+                container.digests.emplace(nand_name, nand_hash.finish());
+                if (route == Nand::Pages) {
+                    uint32_t cs = 0, number = 0;
+                    lt::n72_page_name(nand_name, cs, number);
+                    container.put_n72(cs, number, page.data());
+                }
+                nand_name.clear();
+                chip = -1;
             }
             if (target) {
-                lt::io(ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
+                lt::io(lt::os::ftruncate(target->n, int64_t(target_size)) == 0, "size sparse archive entry");
                 if (!stage.bulk_sync)
-                    lt::io(fsync(target->n) == 0, "sync extracted file");
+                    lt::io(lt::os::fsync(target->n) == 0, "sync extracted file");
                 target.reset();
+                // A geometry.json that names no store (no known chips) leaves the NAND as it came.
+                if (geometry_entry && !lt::nand_disk::Layout::known(lt::read_file(stage.path / "nand/geometry.json", 1 << 16)))
+                    route = Nand::Extract;
+                else if (geometry_entry)
+                    container.begin(lt::read_file(stage.path / "nand/geometry.json", 1 << 16));
+                geometry_entry = false;
             }
         };
         auto advance = [&] {
@@ -1008,24 +1231,36 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 observation.checkpoint();
                 finish_target();
                 const auto &entry = entries.array[next++];
+                const std::string name = entry.at("name").string();
                 remaining = target_size = entry.at("size").integer();
-                if (pack && entry.at("name").string().rfind("nand/", 0) == 0) {
-                    page_name = entry.at("name").string();
-                    lt::packed_page(page_name, page_slot);
-                    page_hash = lt::Sha256();
-                    continue;
+                chip_at = 0;
+                if (route != Nand::Extract && name.rfind("nand/", 0) == 0) {
+                    nand_name = name.substr(5);
+                    nand_hash = lt::Sha256();
+                    if (route == Nand::Pages)
+                        continue;
+                    geometry_entry = nand_name == "geometry.json";
+                    if (!geometry_entry && container.begun()) {
+                        chip = lt::ContainerImport::chip_of(container.layout, nand_name);
+                        lt::require(chip >= 0 && target_size == container.layout.chip_bytes(),
+                                    "NAND file " + nand_name + " is not one of geometry.json's chips");
+                        continue;
+                    }
+                    // geometry.json, or a chip ahead of it: on disk, the chip to be packed at the end
                 }
-                auto path = stage.path / entry.at("name").string();
+                auto path = stage.path / name;
                 lt::fs::create_directories(path.parent_path());
                 target = std::make_unique<lt::Fd>(
-                    open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+                    lt::os::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
                 lt::io(target->n >= 0, "create archive entry");
+                if (route == Nand::Chips && !nand_name.empty() && !geometry_entry)
+                    container.staged.emplace_back(path, ~size_t(0));
             }
             return remaining > 0;
         };
         while (status != Z_STREAM_END) {
             if (z.avail_in == 0) {
-                ssize_t n = read(input.n, in.data(), in.size());
+                ssize_t n = lt::os::read(input.n, in.data(), in.size());
                 lt::io(n > 0, "truncated compressed stream");
                 z.next_in = in.data();
                 z.avail_in = uInt(n);
@@ -1040,9 +1275,16 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             while (offset < count) {
                 lt::require(advance(), "payload exceeds index");
                 size_t take = size_t(std::min<uint64_t>(remaining, count - offset));
-                if (!page_name.empty())
-                    page_hash.update(out.data() + offset, take);
-                lt::sparse_write(page_name.empty() ? target->n : packed->n, out.data() + offset, take);
+                const uint8_t *bytes = out.data() + offset;
+                if (!nand_name.empty())
+                    nand_hash.update(bytes, take);
+                if (route == Nand::Pages && !nand_name.empty())
+                    memcpy(page.data() + (lt::packed_record - remaining), bytes, take);
+                else if (chip >= 0)
+                    container.put(size_t(chip), chip_at, bytes, take);
+                else
+                    lt::sparse_write(target->n, bytes, take);
+                chip_at += take;
                 remaining -= take;
                 offset += take;
                 written += take;
@@ -1053,51 +1295,21 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         }
         lt::require(z.avail_in == 0, "trailing archive payload");
         char extra;
-        lt::require(read(input.n, &extra, 1) == 0, "trailing archive bytes");
+        lt::require(lt::os::read(input.n, &extra, 1) == 0, "trailing archive bytes");
         lt::require(!advance() && written == total, "payload shorter than index");
         finish_target();
         lt::progress(c, total, total);
-        if (pack) {
-            auto lock = lt::parse(lt::read_file(stage.path / "device.lock.json"));
-            lt::require(lock.at("board").string() == "n72ap", "packed NAND pages on a board other than n72");
-            const auto &source = lock.at("outputs").at("nand");
-            lt::require(source.at("path").string() == "nand" && source.at("pages").integer() == records,
-                        "NAND page count mismatch");
-            lt::Sha256 listing;
-            for (const auto &page : page_digests) {
-                const std::string line = page.first + " " + page.second + "\n";
-                listing.update(line.data(), line.size());
+        if (route != Nand::Extract) {
+            lt::require(container.begun(), "NAND chips without geometry.json");
+            for (auto &[file, index] : container.staged) {
+                const long k = lt::ContainerImport::chip_of(container.layout, file.filename().string());
+                lt::require(k >= 0, "NAND file " + file.filename().string() + " is not one of geometry.json's chips");
+                index = size_t(k);
             }
-            lt::require(listing.finish() == source.at("listing_sha256").string(), "NAND listing checksum mismatch");
-            uint8_t header[24] = {'I', 'T', 'N', 'A', 'N', 'D', '0', '1'};
-            const uint32_t geometry[4] = {4096, 64, 4, lt::packed_pages_per_cs};
-            for (int field = 0; field < 4; ++field)
-                for (int byte = 0; byte < 4; ++byte)
-                    header[8 + field * 4 + byte] = uint8_t(geometry[field] >> (8 * byte));
-            lt::io(pwrite(packed->n, header, sizeof header, 0) == ssize_t(sizeof header), "write packed NAND header");
-            lt::io(pwrite(packed->n, slots.data(), slots.size(), 24) == ssize_t(slots.size()), "write packed NAND index");
-            lt::io(ftruncate(packed->n, off_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
-                   "size packed NAND");
-            lt::io(fsync(packed->n) == 0, "sync packed NAND");
-            packed.reset();
-            observation.begin("packing");
-            lt::Json record;
-            record.kind = lt::Json::Object;
-            auto text = [](const std::string &value, lt::Json::Kind kind = lt::Json::String) {
-                lt::Json j;
-                j.kind = kind;
-                j.text = value;
-                return j;
-            };
-            record.object.emplace("path", text("nand"));
-            record.object.emplace("format", text("ITNAND01"));
-            record.object.emplace("sha256", text(lt::digest_file(stage.path / "nand")));
-            record.object.emplace("pages", text(std::to_string(records), lt::Json::Number));
-            record.object.emplace("source_listing_sha256", text(source.at("listing_sha256").string()));
-            lt::io(rename((stage.path / "device.lock.json").c_str(), (stage.path / "source-device.lock.json").c_str()) == 0,
-                   "keep source device lock");
-            lock.object.at("outputs").object.at("nand") = record;
-            lt::atomic_write(stage.path / "device.lock.json", lt::dump(lock) + "\n");
+            if (route == Nand::Pages)
+                lt::require(lt::parse(lt::read_file(stage.path / "device.lock.json")).at("board").string() == "n72ap",
+                            "n72 NAND pages on a board other than n72");
+            stage.known = container.finish(observation);
         }
         stage.finish(&observation);
     });
@@ -1133,6 +1345,28 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         std::string sha256;
         uint64_t at, length;
     };
+    // Chip images become the record's NAND container (ContainerImport) when nand/ is exactly geometry.json and the
+    // chips it names; anything else is unpacked as it is.
+    std::unique_ptr<ContainerImport> container;
+    {
+        bool geometry = false, other = false;
+        for (const auto &entry : files.array) {
+            const std::string name = entry.at("name").string();
+            geometry |= name == "nand/geometry.json";
+            other |= name.rfind("nand/", 0) == 0 && name != "nand/geometry.json";
+        }
+        if (geometry && !other && nand_disk::Layout::known(read_file(source / "files/nand/geometry.json", 1 << 16))) {
+            const auto layout = nand_disk::Layout::of(parse(read_file(source / "files/nand/geometry.json", 1 << 16)));
+            bool chips = images.array.size() == layout.names.size();
+            for (const auto &image : images.array) {
+                const std::string name = image.at("name").string();
+                chips = chips && name.rfind("nand/", 0) == 0 && ContainerImport::chip_of(layout, name.substr(5)) >= 0 &&
+                        uint64_t(image.at("size").integer()) == layout.chip_bytes();
+            }
+            if (chips)
+                container = std::make_unique<ContainerImport>(stage);
+        }
+    }
     std::vector<Chunk> chunks;
     std::vector<std::unique_ptr<Fd>> outputs;
     for (const auto &image : images.array) {
@@ -1153,11 +1387,15 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
             total += length;
             chunks.push_back({outputs.size(), item.first, item.second.string(), at, length});
         }
+        if (container) {
+            outputs.emplace_back();
+            continue;
+        }
         auto dest = stage / name;
         fs::create_directories(dest.parent_path());
-        outputs.push_back(std::make_unique<Fd>(open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
+        outputs.push_back(std::make_unique<Fd>(lt::os::open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
         io(outputs.back()->n >= 0, "create packed image");
-        io(ftruncate(outputs.back()->n, off_t(size)) == 0, "size packed image");
+        io(lt::os::ftruncate(outputs.back()->n, int64_t(size)) == 0, "size packed image");
     }
     observation.total = total;
     auto report = [&](uint64_t bytes) {
@@ -1170,16 +1408,87 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         const std::string name = entry.at("name").string();
         auto dest = stage / name;
         fs::create_directories(dest.parent_path());
-        lt::copy_file(source / "files" / name, dest);
+        lt::copy_contents(source / "files" / name, dest);
         require(fs::file_size(dest) == uint64_t(entry.at("size").integer()) &&
                     digest_file(dest) == entry.at("sha256").string(),
                 "packed base file checksum mismatch: " + name);
         report(fs::file_size(dest));
+        if (container && name == "nand/geometry.json") {
+            container->begin(read_file(dest, 1 << 16));
+            container->digests.emplace("geometry.json", entry.at("sha256").string());
+        }
+    }
+    std::mutex guard;
+    std::exception_ptr failure;
+    if (container) {
+        // A few chip images at a time, each one's chunks in order, so its digest (for the source lock's NAND
+        // listing; holes hash as the zeros they read as) is taken as it streams into the container.
+        std::vector<std::vector<size_t>> order(images.array.size());
+        for (size_t i = 0; i < chunks.size(); ++i)
+            order[chunks[i].image].push_back(i);
+        for (auto &list : order)
+            std::sort(list.begin(), list.end(), [&](size_t a, size_t b) { return chunks[a].at < chunks[b].at; });
+        size_t next_image = 0;
+        auto pack = [&] {
+            std::vector<uint8_t> raw(chunk);
+            for (;;) {
+                size_t image;
+                {
+                    std::lock_guard<std::mutex> lock(guard);
+                    if (failure || next_image == order.size())
+                        return;
+                    image = next_image++;
+                }
+                try {
+                    const std::string name = images.array[image].at("name").string();
+                    const size_t chip = size_t(ContainerImport::chip_of(container->layout, name.substr(5)));
+                    const auto folder = source / name.substr(0, name.size() - 6);
+                    Sha256 digest;
+                    uint64_t at = 0;
+                    for (size_t index : order[image]) {
+                        const auto &item = chunks[index];
+                        hash_zeros(digest, item.at - at);
+                        const std::string packed = read_file(folder / (item.number + ".z"), 2 * chunk);
+                        uLongf length = uLongf(item.length);
+                        require(uncompress(raw.data(), &length, reinterpret_cast<const Bytef *>(packed.data()),
+                                           uLong(packed.size())) == Z_OK && length == item.length,
+                                "corrupt packed chunk " + name + " " + item.number);
+                        Sha256 hash;
+                        hash.update(raw.data(), length);
+                        require(hash.finish() == item.sha256, "packed chunk checksum mismatch: " + name + " " + item.number);
+                        digest.update(raw.data(), length);
+                        container->put(chip, item.at, raw.data(), length);
+                        at = item.at + length;
+                        std::lock_guard<std::mutex> lock(guard);
+                        if (failure)
+                            return;
+                        report(length);
+                    }
+                    hash_zeros(digest, container->layout.chip_bytes() - at);
+                    std::lock_guard<std::mutex> lock(guard);
+                    container->digests.emplace(name.substr(5), digest.finish());
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(guard);
+                    if (!failure)
+                        failure = std::current_exception();
+                    return;
+                }
+            }
+        };
+        const size_t threads = std::min<size_t>({order.size(), 4, std::max(1u, std::thread::hardware_concurrency())});
+        std::vector<std::thread> pool;
+        for (size_t i = 1; i < threads; i++)
+            pool.emplace_back(pack);
+        pack();
+        for (auto &thread : pool)
+            thread.join();
+        if (failure)
+            std::rethrow_exception(failure);
+        staged.known = container->finish(observation);
+        return;
     }
     // Each chunk is read, inflated, checked and written at its own offset, a few at a time.
-    std::mutex guard;
     size_t next = 0;
-    std::exception_ptr failure;
     auto unpack = [&] {
         std::vector<uint8_t> raw(chunk);
         for (;;) {
@@ -1204,7 +1513,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
                 require(hash.finish() == item.sha256, "packed chunk checksum mismatch: " + name + " " + item.number);
                 const int out = outputs[item.image]->n;
                 for (size_t done = 0; done < length;) {
-                    ssize_t n = pwrite(out, raw.data() + done, length - done, off_t(item.at + done));
+                    ssize_t n = lt::os::pwrite(out, raw.data() + done, length - done, int64_t(item.at + done));
                     if (n < 0 && errno == EINTR)
                         continue;
                     io(n > 0, "write packed chunk");
@@ -1232,7 +1541,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         std::rethrow_exception(failure);
     if (!staged.bulk_sync)
         for (const auto &out : outputs)
-            io(fsync(out->n) == 0, "sync packed image");
+            io(lt::os::fsync(out->n) == 0, "sync packed image");
 }
 } // namespace lt
 lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
@@ -1254,7 +1563,7 @@ lt_status lt_import_directory_observed(const lt_import_config *c, lt_import_phas
             return;
         }
         uint64_t total = 0, written = 0;
-        std::vector<lt::fs::path> files;
+        std::vector<lt::fs::path> files, nand;
         for (const auto &entry : lt::fs::recursive_directory_iterator(source)) {
             observation.checkpoint();
             lt::require(!entry.is_symlink(), "symlink source refused");
@@ -1264,21 +1573,73 @@ lt_status lt_import_directory_observed(const lt_import_config *c, lt_import_phas
             uint64_t n = entry.file_size();
             lt::require(n <= lt::limit(c) && total <= lt::limit(c) - n, "directory exceeds limit");
             total += n;
-            files.push_back(entry.path());
+            (entry.path().lexically_relative(source).begin()->string() == "nand" ? nand : files).push_back(entry.path());
         }
+        // The NAND becomes the record's container (ContainerImport) when nand/ is a store of chip files (geometry.json
+        // and the chips it names) or the 2G's page files; anything else (a container already) is copied.
+        lt::ContainerImport container(stage.path);
+        enum class Nand { Copy, Pages, Chips } route = Nand::Copy;
+        {
+            std::set<std::string> names;
+            for (const auto &file : nand)
+                names.insert(file.lexically_relative(source / "nand").generic_string());
+            uint32_t cs = 0, page = 0;
+            if (names.count("geometry.json") &&
+                lt::nand_disk::Layout::known(lt::read_file(source / "nand/geometry.json", 1 << 16))) {
+                const auto layout = lt::nand_disk::Layout::of(lt::parse(lt::read_file(source / "nand/geometry.json", 1 << 16)));
+                std::set<std::string> chips(layout.names.begin(), layout.names.end());
+                chips.insert("geometry.json");
+                if (chips == names)
+                    route = Nand::Chips;
+            } else if (!names.empty() && std::all_of(nand.begin(), nand.end(), [&](const lt::fs::path &file) {
+                           return lt::n72_page_name(file.lexically_relative(source / "nand").generic_string(), cs, page) &&
+                                  lt::fs::file_size(file) == lt::nand_disk::n72_record;
+                       }))
+                route = Nand::Pages;
+        }
+        if (route == Nand::Copy)
+            files.insert(files.end(), nand.begin(), nand.end());
         observation.total = total;
         observation.checkpoint();
+        auto step = [&](uint64_t bytes) {
+            written += bytes;
+            lt::progress(c, written, total);
+            observation.done = written;
+            observation.checkpoint();
+        };
         for (const auto &file : files) {
             auto relative = file.lexically_relative(source);
             lt::safe_name(relative.generic_string());
             auto dest = stage.path / relative;
             lt::fs::create_directories(dest.parent_path());
-            lt::copy_file(file, dest);
-            written += lt::fs::file_size(file);
-            lt::progress(c, written, total);
-            observation.done = written;
-            observation.checkpoint();
+            lt::copy_contents(file, dest);
+            step(lt::fs::file_size(file));
         }
+        if (route == Nand::Chips) {
+            container.begin(lt::read_file(source / "nand/geometry.json", 1 << 16));
+            container.digests.emplace("geometry.json", lt::digest_file(source / "nand/geometry.json"));
+            for (size_t chip = 0; chip < container.layout.names.size(); ++chip) {
+                const auto &name = container.layout.names[chip];
+                container.digests.emplace(name, container.put_file(source / "nand" / name, chip, step));
+            }
+        } else if (route == Nand::Pages) {
+            container.begin(lt::nand_disk::n72_geometry());
+            std::array<uint8_t, lt::nand_disk::n72_record> record{};
+            for (const auto &file : nand) {
+                const std::string name = file.lexically_relative(source / "nand").generic_string();
+                uint32_t cs = 0, page = 0;
+                lt::n72_page_name(name, cs, page);
+                auto in = lt::open_read(file);
+                lt::read_all(in.n, record.data(), record.size());
+                lt::Sha256 hash;
+                hash.update(record.data(), record.size());
+                container.digests.emplace(name, hash.finish());
+                container.put_n72(cs, page, record.data());
+                step(record.size());
+            }
+        }
+        if (route != Nand::Copy)
+            stage.known = container.finish(observation);
         stage.finish(&observation);
     });
 }
@@ -1311,16 +1672,19 @@ void lt_device_close(lt_device *d) {
         delete d;
 }
 namespace lt {
-// FirmwareKit's image stores (geometry.json storage_format nand-xor-blank-v2: the iPod touch 2G's) are written in
-// place, with no page overlay: a device boots a copy of its base's store in state/nand, made on its first boot (and
-// again after an erase removes it), as upstream's HostRuntime clones it. Only the chips' data extents are copied;
-// the rest stays holes, which read as blank pages.
+// FirmwareKit's image stores of chip files (geometry.json storage_format nand-xor-blank-v2: the iPod touch 2G's, as
+// earlier preparations made them) are written in place, with no page overlay: a device boots a copy of its base's
+// store in state/nand, made on its first boot (and again after an erase removes it), as upstream's HostRuntime
+// clones it. Only the chips' data extents are copied; the rest stays holes, which read as blank pages. A NAND
+// container (geometry.json "container": "qcow2", every board's since) is never copied: the engine writes the
+// device's own overlay, state/nand/nand.qcow2, over the base's nand.qcow2.
 static bool image_store_in_place(const fs::path &nand) {
     if (!fs::is_regular_file(nand / "geometry.json"))
         return false;
     auto geometry = parse(read_file(nand / "geometry.json", 1 << 16));
     const auto *format = geometry.find("storage_format");
-    return format && format->kind == Json::String && format->string() == "nand-xor-blank-v2";
+    return format && format->kind == Json::String && format->string() == "nand-xor-blank-v2" &&
+           !geometry.find("container");
 }
 static fs::path live_image_store(const fs::path &base, const fs::path &state) {
     const fs::path live = state / "nand";
@@ -1363,7 +1727,8 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             }
             return o;
         };
-        // An image store (the 2G's and the 1.x boards'): the emulator writes a live copy in place, with no overlay.
+        // An image store of chip files (the 2G's and the 1.x boards'): the emulator writes a live copy in place,
+        // with no overlay. Everything else, containers included, takes the device's state/nand as its overlay.
         const bool image_store = route.family != lt::BootFamily::A4 && lt::image_store_in_place(d->base / "nand");
         std::string machine = c->machine;
         auto option = [&](const std::string &k, const std::string &v) { machine += "," + k + "=" + escape(v); };
@@ -1437,6 +1802,25 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         if (c->headphones)
             option("headphones", "on");
         d->args = {"LightTouch", "-M", machine};
+        lt::require(c->network_mode <= 2, "Invalid network mode");
+        std::string network = "user,id=wifi0,lan=" + std::string(c->network_local && c->network_mode == 1 ? "on" : "off") +
+            ",restrict=" + (c->network_mode == 1 ? "off" : "on");
+        // The proxy forward is there whatever the mode, so networking can be turned on while the guest runs: with no
+        // proxy listening yet a guest connection to it just closes, and Off still blocks every other destination.
+        if (c->network_socket) {
+            // An absolute path that fits sockaddr_un everywhere (104 bytes on macOS); on Windows a drive path.
+            const char *endpoint = c->network_socket;
+#ifdef _WIN32
+            const bool absolute = endpoint && (endpoint[0] | 32) >= 'a' && (endpoint[0] | 32) <= 'z' &&
+                                  endpoint[1] == ':' && (endpoint[2] == '\\' || endpoint[2] == '/');
+#else
+            const bool absolute = endpoint && endpoint[0] == '/';
+#endif
+            lt::require(absolute && std::strlen(c->network_socket) < 104 &&
+                        std::strchr(c->network_socket, '\n') == nullptr, "Invalid private network endpoint");
+            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket);
+        }
+        d->args.insert(d->args.end(), {"-netdev", network});
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
         // in place (the engine's cross-page-chain property documents the assumption).
         // Interleaved A/B: Poco F3 Flight Control 19.8 -> 24.5 fps (6 pairs), Pixel 10
@@ -1486,5 +1870,5 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
 }
 lt_device::~lt_device() {
     if (lease >= 0)
-        close(lease);
+        lt::os::close(lease);
 }

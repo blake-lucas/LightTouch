@@ -7,6 +7,7 @@
 #include "GuestPackageJudge.hpp"
 #include "FrameStorage.hpp"
 #include "Base64.hpp"
+#include "GuestNetwork.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
 #include <atomic>
@@ -15,15 +16,15 @@
 #include <condition_variable>
 #include <cmath>
 #include <deque>
-#include <dlfcn.h>
-#include <fcntl.h>
+#include "Os.hpp"
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unistd.h>
+#ifndef _WIN32
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
-#include <sys/stat.h>
+#endif
 #include <time.h>
 #include <limits>
 #include <algorithm>
@@ -56,7 +57,7 @@ static void prefer_fast_cores() {
     for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
         char path[96];
         snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d", cpu);
-        if (access(path, F_OK) != 0)
+        if (!lt::os::exists(path))
             break;
         snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpu_capacity", cpu);
         long value = 0;
@@ -94,7 +95,7 @@ static uint64_t now_ns() {
     return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
 }
 struct Engine {
-    void *library = nullptr;
+    lt::os::Library library = nullptr;
     decltype(&qemu_ios_main) main = nullptr;
     decltype(&qemu_ios_portable_board_at) board_at = nullptr;
     decltype(&qemu_ios_portable_board) board = nullptr;
@@ -114,6 +115,8 @@ struct Engine {
     decltype(&qemu_ios_ui_shutdown) shutdown = nullptr;
     decltype(&qemu_ios_ui_quit) quit = nullptr;
     decltype(&qemu_ios_ui_button) button = nullptr;
+    decltype(&qemu_ios_ui_net_restrict) net_restrict = nullptr;
+    decltype(&qemu_ios_ui_net_lan) net_lan = nullptr;
     decltype(&qemu_ios_agent_request) agent_request = nullptr;
     decltype(&qemu_ios_agent_result) agent_result = nullptr;
     decltype(&qemu_ios_agent_free_result) agent_free = nullptr;
@@ -130,7 +133,7 @@ struct Engine {
     // Optional: engines before the guest-package hypercalls lack it.
     decltype(&qemu_ios_guest_package_report) package_report = nullptr;
     template <class F> F symbol(const char *n) {
-        auto p = dlsym(library, n);
+        auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
         return reinterpret_cast<F>(p);
     }
@@ -138,6 +141,21 @@ struct Engine {
         require(path && *path, "engine library missing");
         // QEMU registers process-global type/module callbacks at library load. Keep
         // code resident even when a discovery-only handle is released.
+#ifdef _WIN32
+        // Its dependencies sit beside it. Pinned, the RTLD_NODELETE of Windows: QEMU starts its RCU thread at load,
+        // and releasing a discovery-only handle would unmap the code under it.
+        std::string load_error;
+        library = lt::os::library_open(path, load_error);
+        if (!library)
+            throw Failure(LT_ENGINE, "engine load failed: " + load_error);
+        HMODULE pinned = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(library), &pinned)) {
+            lt::os::library_close(library);
+            library = nullptr;
+            throw Failure(LT_ENGINE, "engine load failed: could not pin " + std::string(path));
+        }
+#else
         int flags = RTLD_NOW | RTLD_GLOBAL;
 #ifdef RTLD_NODELETE
         flags |= RTLD_NODELETE;
@@ -147,6 +165,7 @@ struct Engine {
             const char *e = dlerror();
             throw Failure(LT_ENGINE, e ? e : "engine load failed");
         }
+#endif
         try {
             auto version = symbol<decltype(&qemu_ios_api_version)>("qemu_ios_api_version");
             require((version() >> 16) == 2, "incompatible qemu_ios API major", LT_UNSUPPORTED);
@@ -181,21 +200,23 @@ struct Engine {
             LOAD(audio_read, qemu_ios_audio_capture_read);
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
 #undef LOAD
-            profile_start = reinterpret_cast<decltype(profile_start)>(dlsym(library, "qemu_ios_profile_start"));
-            profile_stop = reinterpret_cast<decltype(profile_stop)>(dlsym(library, "qemu_ios_profile_stop"));
-            profile_status = reinterpret_cast<decltype(profile_status)>(dlsym(library, "qemu_ios_profile_status"));
-            attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
+            profile_start = reinterpret_cast<decltype(profile_start)>(lt::os::library_symbol(library, "qemu_ios_profile_start"));
+            profile_stop = reinterpret_cast<decltype(profile_stop)>(lt::os::library_symbol(library, "qemu_ios_profile_stop"));
+            profile_status = reinterpret_cast<decltype(profile_status)>(lt::os::library_symbol(library, "qemu_ios_profile_status"));
+            attach = reinterpret_cast<decltype(attach)>(lt::os::library_symbol(library, "qemu_ios_ui_attach"));
+            net_restrict = reinterpret_cast<decltype(net_restrict)>(lt::os::library_symbol(library, "qemu_ios_ui_net_restrict"));
+            net_lan = reinterpret_cast<decltype(net_lan)>(lt::os::library_symbol(library, "qemu_ios_ui_net_lan"));
             package_report =
-                reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
+                reinterpret_cast<decltype(package_report)>(lt::os::library_symbol(library, "qemu_ios_guest_package_report"));
         } catch (...) {
-            dlclose(library);
+            lt::os::library_close(library);
             library = nullptr;
             throw;
         }
     }
     ~Engine() {
         if (library)
-            dlclose(library);
+            lt::os::library_close(library);
     }
     QemuIosPortableBoard find_board(const std::string &id) {
         for (int index = 0; index < 128; index++) {
@@ -277,6 +298,7 @@ struct lt_runtime {
     lt::PcmEpochQueue<lt::PcmPacket> pcm;
     lt::VmPauseControl vm_pause;
     bool audio_enabled = false;
+    bool network_available = false;
     std::string fault;
     explicit lt_runtime(lt_device *d) : device(d) {}
     ~lt_runtime() {
@@ -286,18 +308,24 @@ struct lt_runtime {
             publisher.join();
         if (engine && engine->attach)
             engine->attach(nullptr, nullptr);
+#ifdef _WIN32
+        std::free(shared);
+#else
         if (shared)
             munmap(shared, mapping_bytes);
+#endif
         if (frame_fd >= 0)
-            close(frame_fd);
+            lt::os::close(frame_fd);
         if (frame_log)
             fclose(frame_log);
+#ifndef _WIN32
         if (debug_qmp_fd >= 0) {
-            struct stat st {};
-            if (lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == geteuid())
-                unlink(debug_qmp_path.c_str());
-            close(debug_qmp_fd);
+            lt::os::Stat st {};
+            if (lt::os::lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == lt::os::euid())
+                lt::os::unlink(debug_qmp_path.c_str());
+            lt::os::close(debug_qmp_fd);
         }
+#endif
     }
     // Without verdicts the guest's loader reverts any package it was not told is good after two
     // boots and refuses it from then on (GuestPackageJudge).
@@ -319,7 +347,16 @@ struct lt_runtime {
     }
     void publish() {
         bool quit_sent = false;
+        static_assert(lt::GuestShutdownAdmission::boot_budget_ns == uint64_t(LT_SHUTDOWN_AGENT_WAIT_MS) * 1000000);
         lt::GuestShutdownAdmission shutdown_admission;
+        // A device whose agent answered on an earlier boot gets one on this boot too: a Stop before it answers waits
+        // for it (GuestShutdownAdmission::boot_budget_ns) rather than pressing Power on a booting guest.
+        try {
+            if (lt::guest_agent_expected(device))
+                shutdown_admission.expect_agent();
+        } catch (const std::exception &e) {
+            fprintf(stderr, "lighttouch: could not read the guest package verdicts: %s\n", e.what());
+        }
         lt::GuestPackageJudge package_judge;
         while (!done) {
             try {
@@ -538,6 +575,8 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::require(!c->device->active, "device already active", LT_BUSY);
         lt::require(!lt::process_started, "engine process already consumed: restart in fresh process", LT_BUSY);
         auto runtime = std::make_unique<lt_runtime>(c->device);
+        // The proxy forward exists whenever a socket was given (Storage.cpp), Off included, so policy can open live.
+        runtime->network_available = c->boot.network_mode != 0 || c->boot.network_socket != nullptr;
         runtime->engine = std::make_unique<lt::Engine>(c->engine_library);
         auto facts = runtime->engine->find_board(c->device->lock.at("board").string());
         runtime->guest_capabilities = facts.capabilities;
@@ -554,28 +593,53 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         for (int i = 0; i < argc; i++)
             runtime->argv.push_back(const_cast<char *>(argv[i]));
         runtime->argv.push_back(nullptr);
+        if (const char *log = getenv("LT_LOG_ARGV"); log && *log) {
+            // The engine's command line, one argument a line, for reproducing a boot outside the app.
+            for (int i = 0; i < argc; i++)
+                fprintf(stderr, "argv[%d] %s\n", i, argv[i]);
+        }
         runtime->audio_enabled = boot.audio_enabled;
         if (const char *log = getenv("LT_FRAME_LOG"); log && *log)
             runtime->frame_log = fopen(log, "a");
 #ifdef SYS_memfd_create
         runtime->frame_fd = int(syscall(SYS_memfd_create, "lighttouch-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING));
-#else
- runtime->frame_fd=-1;errno=ENOSYS;
+#elif defined(__APPLE__)
+        // No memfd: a POSIX shared memory object unlinked at once is as private (names are at most 31 bytes).
+        {
+            char name[32];
+            snprintf(name, sizeof name, "/ltf-%d-%llx", lt::os::pid(), (unsigned long long)(lt::now_ns() & 0xffffffffffull));
+            runtime->frame_fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+            if (runtime->frame_fd >= 0) {
+                shm_unlink(name);
+                fcntl(runtime->frame_fd, F_SETFD, FD_CLOEXEC);
+            }
+        }
+#elif !defined(_WIN32)
+        runtime->frame_fd = -1;
+        errno = ENOSYS;
 #endif
-        lt::io(runtime->frame_fd >= 0, "private frame memfd");
         runtime->mapping_bytes = sizeof(lt_shared_frame) + LT_FRAME_CAPACITY;
-        lt::io(ftruncate(runtime->frame_fd, off_t(runtime->mapping_bytes)) == 0, "size frame memfd");
+#ifdef _WIN32
+        // Nothing reopens the frame by descriptor here (lt_runtime_frame_fd is unsupported): private memory does.
+        runtime->shared = static_cast<lt_shared_frame *>(std::calloc(1, runtime->mapping_bytes));
+        lt::io(runtime->shared != nullptr, "allocate frame memory");
+#else
+        lt::io(runtime->frame_fd >= 0, "private frame memfd");
+        lt::io(lt::os::ftruncate(runtime->frame_fd, int64_t(runtime->mapping_bytes)) == 0, "size frame memfd");
         runtime->shared = static_cast<lt_shared_frame *>(
             mmap(nullptr, runtime->mapping_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, runtime->frame_fd, 0));
         if (runtime->shared == MAP_FAILED) {
             runtime->shared = nullptr;
             throw lt::Failure(LT_IO, "map frame memfd");
         }
+#endif
         runtime->shared->size = sizeof(lt_shared_frame);
         runtime->shared->version = 1;
         runtime->shared->capacity = LT_FRAME_CAPACITY;
+#ifdef F_ADD_SEALS
         lt::io(fcntl(runtime->frame_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0,
                "seal frame size");
+#endif
         *out = runtime.release();
     });
 }
@@ -611,18 +675,18 @@ lt_status lt_runtime_debug_qmp_enable(lt_runtime *r, lt_error *e) {
         lt::fs::create_directories(work);
         struct OwnedFd {
             int value;
-            ~OwnedFd() { if (value >= 0) close(value); }
-        } fd{open(work.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
+            ~OwnedFd() { if (value >= 0) lt::os::close(value); }
+        } fd{lt::os::open(work.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
         lt::io(fd.value >= 0, "open private QMP work directory");
-        struct stat st{};
-        lt::io(fstat(fd.value, &st) == 0, "inspect private QMP directory");
-        lt::require(st.st_uid == geteuid(), "QMP directory owner mismatch");
-        lt::io(fchmod(fd.value, 0700) == 0, "protect private QMP directory");
+        lt::os::Stat st{};
+        lt::io(lt::os::fstat(fd.value, &st) == 0, "inspect private QMP directory");
+        lt::require(st.st_uid == lt::os::euid(), "QMP directory owner mismatch");
+        lt::io(lt::os::fchmod(fd.value, 0700) == 0, "protect private QMP directory");
         std::string name = "qmp-" + std::to_string(getpid()) + ".sock";
         std::string path = (work / name).string();
-        if (lstat(path.c_str(), &st) == 0) {
-            lt::require(S_ISSOCK(st.st_mode) && st.st_uid == geteuid(), "unexpected QMP path occupant");
-            lt::io(unlink(path.c_str()) == 0, "remove stopped QMP socket");
+        if (lt::os::lstat(path.c_str(), &st) == 0) {
+            lt::require(S_ISSOCK(st.st_mode) && st.st_uid == lt::os::euid(), "unexpected QMP path occupant");
+            lt::io(lt::os::unlink(path.c_str()) == 0, "remove stopped QMP socket");
         }
         r->argv.reserve(r->argv.size() + 2);
         r->debug_qmp_path = path;
@@ -650,7 +714,11 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
         lt::require(!lt::process_started, "one engine start per process; use fresh worker", LT_BUSY);
         lt::atomic_write(r->device->state / ".dirty", "schema=1\nbase=" + r->device->base_digest + "\n");
         r->device->dirty = true;
+#ifdef _WIN32
+        lt::io(_putenv_s("IT_TVOUT_READY", "1") == 0, "set shared boot environment");
+#else
         lt::io(setenv("IT_TVOUT_READY", "1", 1) == 0, "set shared boot environment");
+#endif
         bool expected = false;
         lt::require(lt::process_started.compare_exchange_strong(expected, true),
                     "one engine start per process; use fresh worker", LT_BUSY);
@@ -733,6 +801,23 @@ lt_status lt_runtime_profile_status(lt_runtime *r, int32_t *status, lt_error *e)
         lt::require(r && status, "guest runtime inactive", LT_AGAIN);
         lt::require(r->engine->profile_status, "engine profiling unavailable", LT_UNSUPPORTED);
         *status = r->engine->profile_status();
+    });
+}
+lt_status lt_runtime_network_policy(lt_runtime *r, uint32_t mode, uint32_t local, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(mode <= 2 && local <= 1, "Invalid network policy");
+        lt::require(r && r->started && !r->done && !r->stopping, "runtime not active", LT_AGAIN);
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->stopping, "runtime is stopping", LT_AGAIN);
+        lt::require(r->network_available, "This session started without networking; stop and start the device", LT_UNSUPPORTED);
+        lt::require(r->engine->net_restrict && r->engine->net_lan, "Engine cannot change network policy live", LT_UNSUPPORTED);
+        lt::require(r->engine->ready(), "Waiting for network readiness", LT_AGAIN);
+        // wifi0 is the private user netdev created by lt_device_boot_argv.
+        // These hooks schedule bottom halves; never enter slirp on the caller.
+        // Close NAT before changing LAN admission, and open it last.
+        if (mode != 1) r->engine->net_restrict("wifi0", true);
+        r->engine->net_lan("wifi0", mode == 1 && local);
+        if (mode == 1) r->engine->net_restrict("wifi0", false);
     });
 }
 lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
@@ -841,8 +926,12 @@ lt_status lt_runtime_set_frame_listener(lt_runtime *r, lt_frame_listener listene
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && fd && bytes, "invalid frame FD output");
+#if defined(__APPLE__) || defined(_WIN32)
+        // A shared memory object can't be reopened read-only by descriptor.
+        throw lt::Failure(LT_UNSUPPORTED, "frame FD sharing is not available on this system");
+#endif
         std::string path = "/proc/self/fd/" + std::to_string(r->frame_fd);
-        int copy = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        int copy = lt::os::open(path.c_str(), O_RDONLY | O_CLOEXEC);
         lt::io(copy >= 0, "readonly frame FD");
         *fd = copy;
         *bytes = r->mapping_bytes;
@@ -1053,6 +1142,27 @@ lt_status lt_runtime_guest_request(lt_runtime *r, const lt_guest_request *c, uin
             op = "type";
             body = argument;
             argument.clear();
+            break;
+        case LT_GUEST_NETWORK_CERTIFICATE:
+            op = "put";
+            body = lt::base64_decode(argument);
+            lt::require(body.size() > 256 && body.size() < 4096, "Invalid proxy certificate length");
+            argument = "/tmp/lighttouch-network-ca.der 644";
+            break;
+        case LT_GUEST_NETWORK_TRUST:
+        case LT_GUEST_NETWORK_ROUTE: {
+            lt::require(argument.empty(), "Network setup takes no argument");
+            op = "spawn";
+            std::vector<std::string> args = c->operation == LT_GUEST_NETWORK_TRUST ?
+                std::vector<std::string>{"/tmp/lighttouch-ittrust", "add", "/tmp/lighttouch-network-ca.der"} :
+                std::vector<std::string>{"/tmp/lighttouch-itproxy", "on"};
+            for (const auto &arg : args) { body += arg; body += '\0'; }
+            break;
+        }
+        case LT_GUEST_NETWORK_TRUST_CHUNK:
+        case LT_GUEST_NETWORK_ROUTE_CHUNK:
+            op = "putpart";
+            argument = lt::network_tool_chunk(argument, c->operation == LT_GUEST_NETWORK_TRUST_CHUNK, body);
             break;
         case LT_GUEST_LAUNCH_BUILTIN:
             lt::require(argument.rfind("com.apple.", 0) == 0, "only builtin app IDs allowed");

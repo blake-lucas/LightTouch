@@ -24,6 +24,10 @@ A firmware is **Tested** in the Android app (`testedFirmwares` in `FirmwareCatal
 
 ## Running
 
+The runner predates the Rust desktop app: it still drives the removed Linux frontend and adds devices by importing
+prepared `.itbase` bases, which neither app does any more. It needs porting to `lighttouch prepare` and `lighttouch
+run` (and Android's own preparation) before it runs again; the results below were recorded with it.
+
 ```sh
 python3 tools/compat/compat.py prepare n81ap-10B500   # on the Mac (firmwarekit), copied back to the bases folder
 python3 tools/compat/compat.py linux n81ap-10B500 n72ap-7E18

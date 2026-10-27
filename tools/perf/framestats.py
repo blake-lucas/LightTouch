@@ -6,7 +6,7 @@ usage: framestats.py --device SECONDS [--chart out.png] [--label NAME] [--save L
          measure live play on the phone (ANDROID_SERIAL set; the engine started with
          LT_FRAME_LOG=<files>/frames.log in files/debug-env, which fcbench.py FC_FRAMES=1 arranges)
        framestats.py LOG [LOG...] [--skip S | --last S] [--secs N] [--chart out.png]
-         analyse logs already pulled (or written by lighttouch-linux); several logs share one chart
+         analyse logs already pulled (or written by a desktop run); several logs share one chart
 
 Each log line is "monotonic_ns sequence" for one published frame. Reported per run:
   mean      frames / seconds

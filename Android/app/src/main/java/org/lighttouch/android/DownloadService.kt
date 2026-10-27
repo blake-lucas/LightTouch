@@ -52,13 +52,21 @@ class DownloadService : Service() {
         }
 
         fun release(context: Context) = synchronized(this) {
-            if (holders > 0 && --holders == 0) context.stopService(Intent(context, DownloadService::class.java))
+            if (holders > 0 && --holders == 0) {
+                context.stopService(Intent(context, DownloadService::class.java))
+                // An update posted while the service was refused (or not yet started) is a plain notification, which
+                // stopping the service leaves behind.
+                manager(context).cancel(3)
+            }
         }
 
         /** New text and progress for the service's notification, while something holds it. */
         fun update(context: Context, text: String, fraction: Float?) = synchronized(this) {
             if (holders > 0) manager(context).notify(3, notification(context, text, fraction))
         }
+
+        /** LightTouch is back on screen, where the Store shows how the installs went. */
+        fun clearFinished(context: Context) = manager(context).cancel(4)
 
         /** A notification that stays after the service is gone: how a queue of installs ended. */
         fun finished(context: Context, text: String) {

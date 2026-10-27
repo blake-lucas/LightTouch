@@ -60,18 +60,12 @@ static void discard(const fs::path &root) {
 struct Observation {
     std::string cancel;
     bool after_progress = false;
-    fs::path cancel_after_immutable;
     std::vector<std::string> phases;
     static int notify(void *opaque, const char *phase, uint64_t done, uint64_t total) {
         auto &self = *static_cast<Observation *>(opaque);
         assert(done <= total);
         if (self.phases.empty() || self.phases.back() != phase)
             self.phases.emplace_back(phase);
-        if (!self.cancel_after_immutable.empty() && std::string(phase) == "verifying")
-            for (const auto &entry : fs::directory_iterator(self.cancel_after_immutable))
-                if (entry.is_directory() && entry.path().filename().string().find(".lt-import-") == 0 &&
-                    (entry.status().permissions() & fs::perms::owner_write) == fs::perms::none)
-                    return 1;
         return self.cancel == phase && (!self.after_progress || done > 0);
     }
 };
@@ -108,8 +102,8 @@ int main() {
     std::string source = input.string(), destination = (root / "base").string(), expected = sha(read(input));
     lt_import_config config{sizeof(config), 1, source.c_str(), destination.c_str(), expected.c_str(), 0, nullptr, nullptr};
     lt_error error{sizeof(error), 1, 0, {}};
-    // A caller-written stage publishes by rename, with no recopy. Failed or
-    // cancelled finalization leaves it for the caller, including frozen modes.
+    // A caller-written stage publishes by rename, with no recopy and no change
+    // to its modes. Failed or cancelled finalization leaves it for the caller.
     auto make_stage = [&] {
         const auto stage = root / ".lt-import-caller";
         fs::create_directory(stage);
@@ -135,17 +129,15 @@ int main() {
     assert(!fs::exists(stage_path) && fs::exists(destination));
     assert(stat((fs::path(destination) / "nand/allzero").c_str(), &published_inode) == 0);
     assert(staged_inode.st_dev == published_inode.st_dev && staged_inode.st_ino == published_inode.st_ino);
-    assert((fs::status(destination).permissions() & fs::perms::owner_write) == fs::perms::none);
+    assert((fs::status(destination).permissions() & fs::perms::owner_write) != fs::perms::none);
+    assert((fs::status(fs::path(destination) / "nand/allzero").permissions() & fs::perms::owner_write) !=
+           fs::perms::none);
     discard(destination);
-    for (bool frozen : {false, true}) {
+    {
         make_stage();
         Observation cancel;
-        if (frozen)
-            cancel.cancel_after_immutable = root;
-        else {
-            cancel.cancel = "verifying";
-            cancel.after_progress = true;
-        }
+        cancel.cancel = "verifying";
+        cancel.after_progress = true;
         assert(lt_finalize_import_observed(&finalize, Observation::notify, &cancel, &error) == LT_CANCELLED);
         assert(!fs::exists(destination) && read(fs::path(stage_path) / "nand/allzero") == nand.at("allzero"));
         discard(stage_path);
@@ -192,7 +184,7 @@ int main() {
         auto path = root / "base" / file.first;
         assert(fs::file_size(path) == file.second.size());
         assert(read(path) == file.second);
-        assert((fs::status(path).permissions() & fs::perms::owner_write) == fs::perms::none);
+        assert((fs::status(path).permissions() & fs::perms::owner_write) != fs::perms::none);
     }
     struct stat physical {};
     assert(stat((root / "base/nand/allzero").c_str(), &physical) == 0);
@@ -211,10 +203,6 @@ int main() {
         assert(lt_import_archive_observed(&config, Observation::notify, &cancel, &error) == LT_CANCELLED);
         no_staging();
     }
-    Observation immutable_cancel;
-    immutable_cancel.cancel_after_immutable = root;
-    assert(lt_import_archive_observed(&config, Observation::notify, &immutable_cancel, &error) == LT_CANCELLED);
-    no_staging();
     // Authentic archive checksum but payload beyond the checked index.
     archive(input, entries, "unexpected");
     expected = sha(read(input));
@@ -237,8 +225,9 @@ int main() {
     config.expected_sha256 = expected.c_str();
     assert(lt_import_archive(&config, &error) == LT_INVALID);
     no_staging();
-    // Full 4160-byte n72 pages are packed into one ITNAND01 file, in archive order, with the
-    // source lock kept beside the rewritten one.
+    // Full 4160-byte n72 pages become the record's NAND container (nand/nand.qcow2), each record stored XOR the n72
+    // blank at its place in the padded layout, in any archive order, with the source lock kept beside the rewritten
+    // one.
     std::map<std::string, std::string> pages{{"cs0/0.page", std::string(4160, 'a')},
                                              {"cs1/7.page", std::string(4160, '\0')},
                                              {"cs3/524287.page", std::string(4159, '\0') + "z"}};
@@ -269,20 +258,35 @@ int main() {
     Observation packing;
     assert(lt_import_archive_observed(&config, Observation::notify, &packing, &error) == LT_OK);
     assert((packing.phases == std::vector<std::string>{"hashing", "extracting", "packing", "verifying"}));
-    assert(fs::is_regular_file(root / "base/nand") && read(root / "base/source-device.lock.json") == n72_lock);
-    const std::string image = read(root / "base/nand");
-    const size_t index_bytes = 4 * 524288 * 4, records_at = 24 + index_bytes;
-    assert(image.size() == records_at + 3 * 4160 && image.compare(0, 8, "ITNAND01") == 0);
-    auto slot = [&](size_t chip, size_t page) {
-        const auto *p = reinterpret_cast<const unsigned char *>(image.data() + 24 + (chip * 524288 + page) * 4);
-        return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+    assert(fs::is_regular_file(root / "base/nand/nand.qcow2") && fs::is_regular_file(root / "base/nand/geometry.json") &&
+           read(root / "base/source-device.lock.json") == n72_lock);
+    const std::string image = read(root / "base/nand/nand.qcow2");
+    auto be64 = [&](uint64_t at) {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i)
+            v = v << 8 | uint8_t(image[at + i]);
+        return v;
     };
-    assert(slot(3, 524287) == 1 && slot(0, 0) == 2 && slot(1, 7) == 3 && slot(0, 1) == 0);
-    assert(image.compare(records_at, 4160, pages.at("cs3/524287.page")) == 0);
-    assert(image.compare(records_at + 4160, 4160, pages.at("cs0/0.page")) == 0);
-    assert(image.compare(records_at + 2 * 4160, 4160, pages.at("cs1/7.page")) == 0);
+    // A record as the container holds it: chip c's page p at c * chip stride + its block's stride (9 64 KiB
+    // clusters) + its place in the block, through the image's own L1 and L2 tables.
+    auto record = [&](uint64_t chip, uint64_t page) {
+        const uint64_t cluster = 65536, block_stride = 9 * cluster;
+        const uint64_t at = chip * 4096 * block_stride + page / 128 * block_stride + page % 128 * 4160;
+        std::string out;
+        for (uint64_t g = at; g < at + 4160; ++g) {
+            const uint64_t l2 = be64(be64(40) + g / cluster / 8192 * 8) & ~(1ull << 63);
+            const uint64_t host = l2 ? be64(l2 + g / cluster % 8192 * 8) & ~(1ull << 63) : 0;
+            out += host ? image[host + g % cluster] : '\0';
+        }
+        out[4096 + 8] ^= char(0xff);  // the n72 blank, which every stored record is XOR'd with
+        out[4096 + 10] ^= char(0xff);
+        return out;
+    };
+    assert(record(3, 524287) == pages.at("cs3/524287.page") && record(0, 0) == pages.at("cs0/0.page") &&
+           record(1, 7) == pages.at("cs1/7.page") && record(0, 1) == std::string(4160, '\0').replace(4104, 1, "\xff")
+                                                                       .replace(4106, 1, "\xff"));
     const std::string rewritten = read(root / "base/device.lock.json");
-    assert(rewritten.find("\"format\":\"ITNAND01\"") != std::string::npos &&
+    assert(rewritten.find("\"nand.qcow2\":\"" + sha(image) + "\"") != std::string::npos &&
            rewritten.find("\"source_listing_sha256\":\"" + sha(page_listing) + "\"") != std::string::npos &&
            rewritten.find("listing_sha256\":\"" + sha(page_listing) + "\",\"path\"") == std::string::npos);
     const std::string state = (root / "packed-state").string();
@@ -292,7 +296,7 @@ int main() {
     lt_device_close(opened);
     discard(root / "base");
     discard(state);
-    // The packed pages must still match the source listing, and only n72 is packed.
+    // The pages must still match the source listing, and only n72 has them.
     for (const auto &bad_lock : {packed_lock("n72ap", std::string(64, '0')), packed_lock("n81ap", sha(page_listing))}) {
         archive(input, packed_entries(bad_lock));
         expected = sha(read(input));

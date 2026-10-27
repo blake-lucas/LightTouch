@@ -1,0 +1,5 @@
+# Cross builds for Windows link with the posix-threads MinGW toolchain: the Portable core is compiled with
+# g++-posix, and the plain x86_64-w64-mingw32-gcc on Debian/Ubuntu is the win32-threads variant, whose static
+# libstdc++ disagrees with those headers about what a std::condition_variable is.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc-posix"

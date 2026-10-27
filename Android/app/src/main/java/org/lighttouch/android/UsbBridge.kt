@@ -9,7 +9,7 @@ import java.io.File
 /**
  * The :engine worker's private USB link to its guest: the bundled QEMU-only usbmuxd
  * (libusbmuxd_qemu.so) listens on qemu.sock, which the engine dials through IT_USB_TCP, and
- * serves libimobiledevice clients on mux.sock. Same design as Desktop/app_services/bridge.py.
+ * serves libimobiledevice clients on mux.sock. Same design as the desktop app's crates/lighttouch-services.
  * Owner-only sockets under filesDir; pairing records persist per device record. The daemon
  * gets SIGTERM when this process dies (LT_PARENT_DEATH_SIGNAL), and start() also retires
  * any daemon a previous, killed worker left behind.

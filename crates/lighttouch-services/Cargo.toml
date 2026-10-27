@@ -1,0 +1,20 @@
+[package]
+name = "lighttouch-services"
+description = "Guest device services over the emulated USB cable: usbmux, lockdown, AFC, installation proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Build OpenSSL from source (packaged builds); otherwise the system library is used.
+vendored-openssl = ["openssl/vendored", "lighttouch-core/vendored-openssl"]
+
+[dependencies]
+lighttouch-catalog = { path = "../lighttouch-catalog" }
+lighttouch-core = { path = "../lighttouch-core" }
+openssl = "0.10"
+plist = "1"
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -14,6 +14,10 @@ class EngineService : Service() {
     @Volatile private var error = ""
     @Volatile private var userPaused = false
     @Volatile private var focusPaused = false
+    /** The running device's name, for the notification; set by start. */
+    @Volatile private var deviceName = ""
+    /** startForeground has run in this worker, so the notification may be updated. */
+    @Volatile private var foregrounded = false
     private val started = WorkerStartAdmission()
     private val failureRecorded = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
@@ -41,6 +45,13 @@ class EngineService : Service() {
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
     private val usbThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "usb-bridge") }
     @Volatile private var usbError = ""
+    private val networkSession = NetworkSession()
+    @Volatile private var networkSetup = "Off"
+    /** The guest setup ran (or is running) this session; it keeps its certificate and proxy when networking is
+     * turned off and on again. */
+    private val guestNetworkStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var networkSetupError = false
+    private val networkThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "network-setup") }
     private val cpuSampler by lazy { WorkerCpuSampler() }
     private val profileTail = ProfileTail()
     @Volatile private var detailedTiming = false
@@ -52,8 +63,6 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
-        override fun importDevice(source: String, displayName: String, rom: String, guest: String, sha256: String): String =
-            Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest, sha256)
         override fun importProgress(): Bundle = Native.importProgress().let { p ->
             Bundle().apply { putString("phase", p[0]); putLong("done", p[1].toLongOrNull() ?: 0); putLong("total", p[2].toLongOrNull() ?: 0) }
         }
@@ -70,6 +79,13 @@ class EngineService : Service() {
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
+        }
+        override fun applyNetworkSettings() {
+            synchronized(networkSession) {
+                if (!started.isConsumed() || stopping.get()) return
+                networkSession.request(NetworkConfiguration.load(applicationContext))
+                refreshNetworkSettings()
+            }
         }
         /** Freeze what led up to now for the hitch inspector: the frame timeline, and the detailed
          * timing capture (closed and kept) when one is running. The caller has paused the guest. */
@@ -125,8 +141,6 @@ class EngineService : Service() {
             val result = Native.debugQmpSnapshot()
             return Bundle().apply { putString("error", result[0]); putString("path", result[1]) }
         }
-        override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
-            displayName, File(filesDir, "bootrom.bin").absolutePath, File(filesDir, "guest.itpack").absolutePath)
         override fun importPrepared(source: String, displayName: String, rom: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, "")
         override fun adoptPrepared(source: String, displayName: String, rom: String): String = Native.adoptPrepared(source, File(filesDir, "library").absolutePath, displayName, rom)
         override fun setGuestPackage(recordId: String, path: String): String = Native.setGuestPackage(File(filesDir, "library").absolutePath, recordId, path)
@@ -149,8 +163,9 @@ class EngineService : Service() {
             if (!started.tryConsume()) return status().apply {
                 putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
             }
-            foreground()
             val libraryRoot = File(filesDir, "library").absolutePath
+            deviceName = Native.records(libraryRoot).firstOrNull { it[0] == recordId }?.getOrNull(1) ?: ""
+            foreground()
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
             usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
             // Perf work on debug builds (create these with run-as): files/debug-vcpu-accounting logs the
@@ -166,13 +181,23 @@ class EngineService : Service() {
             }
             // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
-            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+            synchronized(networkSession) {
+                val network = NetworkConfiguration.load(applicationContext)
+                networkSession.begin(network)
+                guestNetworkStarted.set(false)
+                networkSetup = if (network.enabled) "Waiting for guest tools…" else "Off"
+                val roots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts").firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
+                error = Native.networkPrepare(filesDir.absolutePath, recordId, network.nativeMode, network.archiveDate, network.localNetwork, roots)
+                if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+                if (error.isEmpty() && network.enabled) startGuestNetwork()
+            }
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
                 persistObservations("start-failed")
                 alive.set(false)
+                foregrounded = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 Process.killProcess(Process.myPid())
@@ -183,6 +208,9 @@ class EngineService : Service() {
             profileCapture.change(recording, Native.status().firstOrNull() ?: "stopped")
         override fun status(): Bundle {
             val s = Native.status()
+            refreshNetworkSettings()
+            val network = networkSession.snapshot()
+            val proxy = Native.networkStatus()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
             if (s.firstOrNull() == "failed" && started.isConsumed() && failureRecorded.compareAndSet(false, true)) {
                 val retainedError = error.ifEmpty { "Guest worker failed; writable state and diagnostics retained. Start a fresh worker." }
@@ -215,6 +243,21 @@ class EngineService : Service() {
                 putInt("uid", Process.myUid())
                 putString("usbMuxSocket", usb.muxSocket ?: "")
                 putString("appServicesError", usbError)
+                putString("networkStatus", if (!network.active.enabled) "Off" else "${network.active.summary} · $networkSetup" +
+                    if (networkSetup == "Ready") " · ${proxy.firstOrNull().orEmpty()}" else "")
+                putString("networkSetup", networkSetup)
+                putBoolean("networkSetupError", networkSetupError)
+                putString("networkActivity", proxy.firstOrNull().orEmpty())
+                putLong("networkConnections", proxy.getOrNull(2)?.toLongOrNull() ?: 0)
+                putLong("networkCompleted", proxy.getOrNull(4)?.toLongOrNull() ?: 0)
+                putLong("networkFailed", proxy.getOrNull(5)?.toLongOrNull() ?: 0)
+                putString("networkLastResult", proxy.getOrElse(6) { "" })
+                putBoolean("networkLastResultError", proxy.getOrNull(7) == "1")
+                putInt("networkMode", network.active.nativeMode)
+                putString("networkArchiveDate", network.active.archiveDate)
+                putBoolean("networkLocal", network.active.localNetwork)
+                putString("networkChangeNotice", network.notice)
+                putString("networkCertificateFingerprint", proxy.getOrElse(1) { "" })
                 putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
             }
@@ -240,6 +283,7 @@ class EngineService : Service() {
             if (result == "Display ownership retired") return@run
             if (result.isNotEmpty()) { error = result; return@run }
             stopAudioOutput()
+            updateNotification()
         } }
         override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
@@ -254,9 +298,11 @@ class EngineService : Service() {
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
             if (paused) stopAudioOutput()
             else startAudioOutput()
+            updateNotification()
         } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
+            updateNotification()
             profileCapture.finish("guest-stop")
             shutdownWatchdog.request()
         }
@@ -325,6 +371,61 @@ class EngineService : Service() {
             ""
         } catch (e: Exception) { e.message ?: "Screenshot failed" }
     }
+    private fun refreshNetworkSettings() {
+        if (stopping.get()) return
+        networkSession.refresh { config ->
+            val result = Native.networkUpdate(config.nativeMode, config.archiveDate, config.localNetwork)
+            (result.getOrNull(0)?.toIntOrNull() ?: 2) to result.getOrElse(1) { "Network worker unavailable" }
+        }
+        // Turned on live for the first time this session: set the guest up as a networked start does.
+        if (networkSession.snapshot().active.enabled) startGuestNetwork()
+    }
+
+    private fun startGuestNetwork() {
+        if (!guestNetworkStarted.compareAndSet(false, true)) return
+        networkSetup = "Waiting for guest tools…"
+        networkThread.execute { configureGuestNetwork() }
+    }
+
+    /** Fixed typed operations only; no shell or arbitrary guest commands. A failed
+     * mutation is reported once and is never silently replayed after a timeout. */
+    private fun configureGuestNetwork() {
+        networkSetupError = false
+        try {
+            val operations = GuestNetworkOperation(Native::guestRequest, Native::guestPoll, Native::guestCancel,
+                { alive.get() && !stopping.get() }, SystemClock::elapsedRealtime, Thread::sleep)
+            fun operation(kind: Int, argument: String = "") = operations.execute(kind, argument)
+            operations.execute(0, admissionWaitMs = 120_000)
+            // Use the app's matching signed helpers, including on older installed
+            // packages that have an agent but omit ittrust/itproxy. Chunk uploads
+            // are atomic in the guest and never replayed after a lost completion.
+            networkSetup = "Preparing guest network tools…"
+            for ((name, kind) in listOf("ittrust" to 9, "itproxy" to 10)) {
+                assets.open("guest-tools/$name").use { stream ->
+                    val binary = stream.readBytes()
+                    check(binary.size in 1..1_048_576) { "Bundled network tool is invalid: $name" }
+                    var offset = 0
+                    while (offset < binary.size) {
+                        val end = minOf(offset + 2048, binary.size)
+                        val chunk = android.util.Base64.encodeToString(binary.copyOfRange(offset, end), android.util.Base64.NO_WRAP)
+                        operation(kind, "$offset ${if (end == binary.size) 1 else 0} $chunk")
+                        offset = end
+                    }
+                }
+            }
+            networkSetup = "Installing guest certificate…"
+            operation(6, android.util.Base64.encodeToString(Native.networkCertificate(), android.util.Base64.NO_WRAP))
+            val trusted = operation(7)
+            check(trusted.contains("Guest trust add: 0")) { "The guest did not accept its HTTPS certificate. Update guest tools and restart." }
+            networkSetup = "Configuring the guest connection…"
+            check(operation(8).contains("Proxy enabled")) { "The guest did not accept the proxy. Update guest tools and restart." }
+            networkSetup = "Ready"
+        } catch (error: Exception) {
+            networkSetup = error.message ?: "Network setup failed. Update guest tools and restart."
+            networkSetupError = true
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun persistObservations(reason: String) {
         fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
@@ -431,6 +532,9 @@ class EngineService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
+        // A worker that ended its device is replaced by a fresh one while LightTouch stays bound, and Android carries
+        // the old one's foreground state over: its "running" notification stayed up with nothing running.
+        stopForeground(STOP_FOREGROUND_REMOVE)
         detailedTimingThread.scheduleWithFixedDelay({
             try {
                 if (detailedTiming && detailedTimingError.isEmpty() && !stopping.get())
@@ -590,12 +694,27 @@ class EngineService : Service() {
         }
     } }
     private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false } }
+    /** The ongoing notification while a device is on in this worker (Android requires one to keep it running). */
     private fun foreground() {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))
-        val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
+        startForeground(1, notification())
+        foregrounded = true
     }
-    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
+    /** The notification follows the device: running, paused (LightTouch left), or shutting down. */
+    private fun updateNotification() {
+        if (foregrounded) getSystemService(NotificationManager::class.java).notify(1, notification())
+    }
+    private fun notification(): Notification {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel("guest", "Running device", NotificationManager.IMPORTANCE_LOW))
+        val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val text = when {
+            stopping.get() -> "Shutting down"
+            userPaused -> "Paused while you're away. Tap to go back to it."
+            !started.isConsumed() -> "Starting"
+            else -> "Running. Tap to go back to it."
+        }
+        return Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(deviceName.ifEmpty { "LightTouch" }).setContentText(text).setContentIntent(launch).setOngoing(true).build()
+    }
+    override fun onDestroy() { networkThread.shutdownNow(); detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
 }

@@ -9,10 +9,10 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * One preparation per process, independent of a running QEMU worker: firmwarekit (Packages/FirmwareKit, the
- * preparer every LightTouch port shares) builds the device from its IPSW, with its build-time boots through
- * lighttouch-oneshot and the APK's engine, into a device folder that the device worker moves into its library.
- * Both ship as executables in nativeLibraryDir (libfirmwarekit.so, liblighttouch_oneshot.so).
+ * One preparation per process, independent of a running QEMU worker: firmwarekit (crates/lighttouch-firmware, the
+ * preparer every LightTouch port shares) builds the device from its IPSW, with its build-time boots running the APK's
+ * engine itself (`firmwarekit oneshot`, LTM_QEMU_DYLIB), into a device folder that the device worker moves into its
+ * library. It ships as an executable in nativeLibraryDir (libfirmwarekit.so).
  */
 class FirmwareService : Service() {
     private val consumed = AtomicBoolean(false)
@@ -34,7 +34,7 @@ class FirmwareService : Service() {
                 FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
         override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String): Bundle {
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
-            foreground()
+            foreground(PREPARING)
             currentFirmwareId = firmwareId
             state = "preparing"; stage = "Starting"
             val parent = File(filesDir, "prepared").apply { mkdirs() }
@@ -79,21 +79,22 @@ class FirmwareService : Service() {
             val catalog = File(filesDir, "firmware-catalog.json")
             assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
             run(libs, listOf("create", "--catalog", catalog.path, "--id", firmwareId, "--ipsw", ipsw, "--out", out.path,
-                "--helper", File(libs, "liblighttouch_oneshot.so").path, "--guest-tools", tools.path, "--cache", cache.path,
+                "--guest-tools", tools.path, "--cache", cache.path,
                 "--language", Locale.getDefault().toLanguageTag(),
                 // iOS 5 and later start at the Home screen, not Setup Assistant (ignored before 5, which has none)
                 "--skip-setup") +
                 // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
                 (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
             // create's own lease and boot logs; the device is the rest
-            File(out, "work").let { writable(it); it.deleteRecursively() }
+            File(out, "work").deleteRecursively()
             done = total
             state = "complete"
             note("complete")
-            foreground("Your device is prepared. Open LightTouch to add it.")
+            foreground(PREPARED)
         } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
-            writable(out); out.deleteRecursively()
+            if (!cancelling) foreground(FAILED)
+            out.deleteRecursively()
             if (cancelling) PreparationNote.clear(this) else note("failed")
         } finally {
             process = null
@@ -146,21 +147,27 @@ class FirmwareService : Service() {
     private fun note(phase: String) = PreparationNote.write(this, JSONObject().put("state", phase).put("pid", Process.myPid())
         .put("firmwareId", currentFirmwareId).put("destination", destination).put("timings", timings).put("error", failure))
 
-    /** firmwarekit leaves its outputs read-only; delete needs the folders writable again. */
-    private fun writable(root: File) { if (root.exists()) root.walkTopDown().forEach { it.setWritable(true, true) } }
-
     override fun onBind(intent: Intent): IBinder = binder
+    // A fresh worker replacing one that ended (LightTouch stays bound) must not inherit its foreground notification.
+    override fun onCreate() { super.onCreate(); stopForeground(STOP_FOREGROUND_REMOVE) }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        foreground(if (state == "complete") "Your device is prepared. Open LightTouch to add it." else "Preparing a device; return to view progress or cancel")
+        foreground(when (state) { "complete" -> PREPARED; "failed" -> FAILED; else -> PREPARING })
         return START_NOT_STICKY
     }
-    private fun foreground(text: String = "Preparing a device; return to view progress or cancel") {
+    /** The ongoing notification while this worker has a preparation: under way, or its result until LightTouch takes it. */
+    private fun foreground(text: Pair<String, String>) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("firmware", "Firmware preparation", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("firmware", "Device setup", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         startForeground(2, Notification.Builder(this, "firmware").setSmallIcon(android.R.drawable.ic_menu_upload)
-            .setContentTitle("LightTouch preparation").setContentText(text)
+            .setContentTitle(text.first).setContentText(text.second)
             .setContentIntent(launch).setOngoing(true).build())
+    }
+
+    private companion object {
+        val PREPARING = "Preparing a device" to "Tap to see its progress."
+        val PREPARED = "Your device is ready" to "Open LightTouch to add it."
+        val FAILED = "Couldn't prepare the device" to "Open LightTouch to see why."
     }
 }
 

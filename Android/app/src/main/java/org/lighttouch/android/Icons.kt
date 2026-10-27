@@ -12,6 +12,7 @@ internal object LtIcons {
         for (path in paths) addPath(addPathNodes(path), fill = SolidColor(Color.Black))
     }.build()
 
+    val Network by lazy { icon("Network", "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.92 6h-3a15.7 15.7 0 0 0-1.38-3.56A8.04 8.04 0 0 1 18.92 8zM12 4c.83 1.2 1.48 2.54 1.82 4h-3.64C10.52 6.54 11.17 5.2 12 4zM4.26 14a7.8 7.8 0 0 1 0-4h3.4a16.49 16.49 0 0 0 0 4h-3.4zm.82 2h3a15.7 15.7 0 0 0 1.38 3.56A8.04 8.04 0 0 1 5.08 16zm3-8h-3a8.04 8.04 0 0 1 4.38-3.56A15.7 15.7 0 0 0 8.08 8zM12 20a13.7 13.7 0 0 1-1.82-4h3.64A13.7 13.7 0 0 1 12 20zm2.16-6H9.84a14.5 14.5 0 0 1 0-4h4.32a14.5 14.5 0 0 1 0 4zm.38 5.56A15.7 15.7 0 0 0 15.92 16h3a8.04 8.04 0 0 1-4.38 3.56zM16.34 14a16.49 16.49 0 0 0 0-4h3.4a7.8 7.8 0 0 1 0 4h-3.4z") }
     val Play by lazy { icon("Play", "M8 5v14l11-7z") }
     val Pause by lazy { icon("Pause", "M6 19h4V5H6v14zm8-14v14h4V5h-4z") }
     val Stop by lazy { icon("Stop", "M6 6h12v12H6z") }

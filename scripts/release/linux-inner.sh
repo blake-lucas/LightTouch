@@ -16,20 +16,22 @@ Q=$QEMU_SOURCE
 rm -rf /build/qemu-source
 git clone -q --shared --no-checkout "$Q" /build/qemu-source
 git -C /build/qemu-source checkout -q --detach "$EXPECTED_QEMU_REV"
-for p in berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb; do cp -a "$Q/subprojects/$p" /build/qemu-source/subprojects/; done
+# The subprojects meson would download (no network here), slirp with its patches already applied.
+for p in berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb dtc slirp; do cp -a "$Q/subprojects/$p" /build/qemu-source/subprojects/; done
 [ -z "$(git -C /build/qemu-source status --porcelain=v1 --untracked-files=all)" ]
 echo "=== ENGINE (LDFLAGS=-ldl: glibc 2.31 keeps dladdr in libdl)"
 LDFLAGS=-ldl python3 /build/qemu-source/contrib/portable/build-engine.py /build/engine --cpp-standard=gnu++17 \
     --prefix /build/deps-full/prefix --crypto-prefix /build/crypto/prefix
-echo "=== FRONTEND"
-cmake -S /src/app/Linux -B /build/frontend -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIGHTTOUCH_QEMU_SOURCE=/build/qemu-source \
-    -DLIGHTTOUCH_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS=-DSDL_PIXELFORMAT_BGRX32=SDL_PIXELFORMAT_RGB888
-cmake --build /build/frontend --parallel "$LT_JOBS"
-echo "=== CTEST"
-ctest --test-dir /build/frontend --output-on-failure
-echo "=== COLLECT"
-rm -rf /build/runtime
-python3 /src/app/Linux/packaging/collect-bullseye-runtime.py --output /build/runtime --frontend /build/frontend/lighttouch-linux \
-    --engine /build/engine/libqemu-arm.so --dependency /build/deps-full --dependency /build/crypto \
-    --dependency /build/mobile-private-runtime-ui15
+echo "=== RUNTIME (the engine, the USB bridge and the libraries they load beyond the base system)"
+rm -rf /build/runtime; mkdir -p /build/runtime/lib
+cp /build/engine/libqemu-arm.so /build/mobile-private-runtime-ui15/prefix/bin/usbmuxd-qemu /build/runtime/
+export LD_LIBRARY_PATH=/build/deps-full/prefix/lib:/build/crypto/prefix/lib:/build/mobile-private-runtime-ui15/prefix/lib
+for l in libfdt.so.1 libimobiledevice-1.0.so.6 libimobiledevice-glue-1.0.so.0 libplist-2.0.so.4 libusbmuxd-2.0.so.7 \
+         libssl.so.1.1 libcrypto.so.1.1; do
+    p=$(ldd /build/runtime/libqemu-arm.so /build/runtime/usbmuxd-qemu | awk -v l="$l" '$1 == l { print $3; exit }')
+    [ -n "$p" ] || { echo "neither the engine nor the USB bridge loads $l" >&2; exit 1; }
+    cp -L "$p" /build/runtime/lib/
+done
+# Build-tree search paths must not reach the package; the app's launcher puts lib/ on the library path.
+for f in /build/runtime/libqemu-arm.so /build/runtime/usbmuxd-qemu /build/runtime/lib/*; do patchelf --remove-rpath "$f"; done
 printf '\nLINUX_RELEASE_BUILD_COMPLETE\n'

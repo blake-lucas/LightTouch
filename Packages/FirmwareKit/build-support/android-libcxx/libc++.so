@@ -1,4 +1,0 @@
-/* Android cross builds: the Swift SDK's static runtime needs the NDK r30 libc++ (std::__hash_memory), newer than the
-   libc++_shared.so the app ships beside the engine, so firmwarekit takes libc++ statically. zlib.pc puts this folder
-   ahead of the sysroot's on the link. */
-INPUT(-lc++_static -lc++abi)

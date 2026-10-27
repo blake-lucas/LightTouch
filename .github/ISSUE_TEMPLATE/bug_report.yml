@@ -5,39 +5,44 @@ body:
   - type: input
     id: version
     attributes:
-      label: Light Touch version
-      description: From About Light Touch (version and build).
+      label: LightTouch version
+      description: From Settings › About, or the release you downloaded (for example "v0.0.12").
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Phone or computer, and its OS version
+      description: For example "Pixel 10, Android 16" or "Ryzen 7 3700X with an RTX 2080, Windows 11".
     validations:
       required: true
   - type: input
     id: device
     attributes:
       label: Emulated device and iOS version
-      description: For example "iPod touch (2nd gen), iOS 3.1.3".
+      description: For example "iPod touch 2G, iOS 3.1.3".
     validations:
       required: true
-  - type: input
-    id: mac
-    attributes:
-      label: Mac and macOS version
-      description: For example "MacBook Air M2, macOS 15.1".
-    validations:
-      required: true
-  - type: textarea
-    id: info
-    attributes:
-      label: Light Touch info
-      description: Choose Help ▸ Copy Bug Report Info in Light Touch, then paste here. It names the build, your Mac and the device's setup, with no personal details.
-      placeholder: Paste the block here.
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, and what happened instead.
+      description: What you did, what you expected, and what happened instead. If LightTouch showed an error, paste its text.
     validations:
       required: true
   - type: textarea
-    id: diagnostics
+    id: more
     attributes:
-      label: Diagnostics
-      description: Help ▸ Export Diagnostics saves a zip of the logs, with personal details removed. Attach it here.
+      label: Anything else
+      description: Screenshots, or whether it happens every time. Please don't attach firmware, boot ROMs or personal data.

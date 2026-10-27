@@ -65,7 +65,7 @@ internal fun LicenseDialog(onClose: () -> Unit) {
                 if (failure.isNotEmpty()) item { Text(failure, color = MaterialTheme.colorScheme.error) }
                 if (selected == null) {
                     for (group in groups) {
-                        item { Text(when (group.folder) { "firmware" -> "Firmware preparation"; "engine-arm64-v8a" -> "Engine (ARM64)"; "engine-x86_64" -> "Engine (x86-64)"; "angle" -> "Graphics provider (ANGLE)"; "frontend" -> "Android interface"; else -> group.folder }, style = MaterialTheme.typography.titleSmall) }
+                        item { Text(when (group.folder) { "firmware", "firmwarekit" -> "Firmware preparation"; "engine-arm64-v8a" -> "Engine (ARM64)"; "engine-x86_64" -> "Engine (x86-64)"; "angle" -> "Graphics provider (ANGLE)"; "frontend" -> "Android interface"; "network" -> "Network (OpenSSL)"; else -> group.folder }, style = MaterialTheme.typography.titleSmall) }
                         items(group.files) { file -> TextButton(onClick = { failure = ""; selected = group to file }) { Text(file.first) } }
                         item { TextButton(onClick = { openSource(context, group.source) { failure = it } }) { Text("Source code") } }
                     }

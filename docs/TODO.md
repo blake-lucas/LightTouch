@@ -134,9 +134,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   boot, keeping apps and data. Linux: `lighttouch-linux --library LIB --record ID --set-guest-package
   ITPACK`. Android: "Guest tools" on a stopped device applies the file to the selected device. Tested:
   desktop (serial 26 record → 27, two boots judged good) and the Pixel (26 ↔ 27 through the picker).
-- [ ] Guest tools update, follow-ups: check that the package has a family for the record's board and
+- [ ] Guest tools update, follow-up: check that the package has a family for the record's board and
   build before swapping (today an older or mismatched package is accepted; `it_boot` then keeps the
-  installed serial), and add the action to the Windows and macOS apps.
+  installed serial).
 - [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
   the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
 - [x] Fewer host GL calls per draw: the client-array cache (engine `6762325419`, on by default) skips
@@ -153,10 +153,6 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. `LT_EXCEPTION_PROF=on` counts exceptions, SVCs and
   Mach messages; next, find which of them the emulator makes expensive.
-- [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
-  5997) has an entry whose central-directory name differs from its local header (an OpenFeint
-  `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
-  directory ... and header ... differ"). Skip or tolerate such entries like the Android installer.
 - [x] Pixel: the AHardwareBuffer present (engine 4de4ae5ba1) takes the `IOSurface` path on the Pixel's
   PowerVR driver and renders correctly (LT Bench).
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
@@ -166,8 +162,6 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   BQL hold log, to see whether the slow seconds line up with main-loop work (audio DMA, LCD).
 - [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
-- [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
-  frame-published wakeups like Android.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 - [x] Manual Start/Stop profile in the Android app, next to the fps graph (engine `50a08eb2d2`):
@@ -186,12 +180,8 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   'legacy'" (reported on Windows). Engine dev/perf now carries upstream's `cb400606d2`. Checked on Linux:
   the v0.0.5 engine fails with that error on an imported `n72ap-7E18.itbase`, and the new engine boots
   it to SpringBoard. Users need a new release to get it.
-- [ ] Owner decision: attach `LightTouch-n72ap-7E18.zip` (itbase + armv6.itpack + bootrom.bin,
-  built locally in `~/Documents/LightTouch-Development/release-assets/`) to a release. It is
-  Apple's copyrighted firmware; upstream and devos50/qemu-ios `n72ap_v1` host the same kind of
-  files, but rehosting carries DMCA-takedown risk. If attached, add it as route 1 in ASSETS.md.
-- [ ] Android: download and unpack the upstream files in-app (port the get-assets.py decoder), so
-  phone-only users need no computer and nothing is rehosted.
+- [x] Prepared-device (`.itbase`) import removed from every app, with `get-assets.py`: each app prepares from an
+  IPSW it downloads (or the user chooses), with the boot ROM downloaded too, so nothing needs rehosting.
 
 ## Cleanup
 
@@ -209,14 +199,12 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
      `HostServiceWire`/`HostServiceClient`.
   4. [x] `CONTRIBUTING.md` rewritten without Xcode; stale handoff/branch notes and the stopped TCG
      profiling proposals removed.
-- [ ] Verify the SwiftPM macOS build after the cleanup on a Mac (`macOS/build-shared.py`, or at least
-  `swift build --product LightTouchDesktopHost --product LightTouchDevice`, then
-  `swift test --package-path Packages/LightTouchCore`). `Package.resolved` lost its Sparkle pin by hand;
-  SwiftPM will refresh its origin hash.
-- [ ] Further pruning, needs a Mac to compile-check: most of `Packages/LightTouchCore` is upstream Cocoa-app
-  logic (App, Apps, UI, Capture, Catalog models) that `macOS/SharedHost` does not import; trim it to what
-  `NativeSession`/`Import`/`NativeAppServices` use, then drop `Packages/DeviceServices` with it.
-  Also unreferenced since `scripts/` went: `build-support/{sources.json,developer-disk-images.json}`.
+- [x] Remove the Swift packages, `Package.swift`, `LightTouchDevice/`, the Python/Tk `Desktop/`, the Linux SDL
+  frontend, the Windows C# helper and the macOS shared host: the Rust desktop app and firmwarekit replace them
+  (v0.0.12). `CActivation` moved to `crates/lighttouch-firmware/csrc`.
+- [ ] Port `tools/compat` to `lighttouch prepare`/`run` and Android's own preparation (docs/COMPATIBILITY.md).
+- [ ] The core still reads `.itbase` archives (`lt_import_archive*` in `Portable/src/Storage.cpp`), which only its
+  tests use now: move those tests' fixtures to prepared folders, then drop the archive reader.
 
 ## Android bugs seen, not yet fixed
 

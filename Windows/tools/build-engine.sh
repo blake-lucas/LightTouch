@@ -41,7 +41,7 @@ cd "$out/engine"
   --with-devices-arm=portable --cross-prefix=x86_64-w64-mingw32- \
   --cc=x86_64-w64-mingw32-gcc-posix --cxx=x86_64-w64-mingw32-g++-posix \
   --host-cc=/usr/bin/cc --python=/usr/bin/python3 --enable-tcg --enable-pixman --enable-gcrypt \
-  --enable-sdl --disable-slirp --disable-docs --disable-tools --disable-guest-agent --disable-plugins \
+  --enable-sdl --enable-slirp --disable-docs --disable-tools --disable-guest-agent --disable-plugins \
   --disable-werror --disable-pie --disable-containers --audio-drv-list=sdl \
   --extra-cflags="-I$sysroot/mingw64/include" --extra-ldflags="-L$sysroot/mingw64/lib" \
   -Dcpp_std=gnu++17

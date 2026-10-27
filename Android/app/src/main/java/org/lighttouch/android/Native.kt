@@ -18,6 +18,10 @@ internal object Native {
     external fun frameTimeline(since: Long): LongArray
     external fun setPresentScale(mode: Int)
     external fun setPresentVisible(visible: Boolean)
+    external fun networkPrepare(root: String, record: String, mode: Int, date: String, local: Boolean, roots: String): String
+    external fun networkUpdate(mode: Int, date: String, local: Boolean): Array<String>
+    external fun networkCertificate(): ByteArray
+    external fun networkStatus(): Array<String>
     external fun start(libraryRoot: String, id: String, headphones: Boolean): String
     external fun recoverStart(libraryRoot: String, id: String, headphones: Boolean): String
     external fun status(): Array<String>
@@ -49,6 +53,7 @@ internal object Native {
     external fun audioInfo(): IntArray
     external fun profile(path: String): String
     external fun profileStatus(): Int
+    /** Request id (zero if unaccepted), error text, and portable lt_status code. */
     external fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Array<String>
     external fun guestPoll(requestId: Long): Array<String>
     external fun guestCancel(requestId: Long)

@@ -1,0 +1,37 @@
+[package]
+name = "lighttouch-firmware"
+description = "firmwarekit in Rust: prepares a device from an IPSW (decrypt, volumes, NAND, keybag, seal, lock)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "firmwarekit"
+path = "src/bin/firmwarekit.rs"
+
+[dependencies]
+aes = "0.8"
+cbc = "0.1"
+flate2 = "1"
+hex = "0.4"
+hmac = "0.12"
+memchr = "2"
+plist = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha1 = "0.10"
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+unicode-normalization = "0.1"
+ureq = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+libloading = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+# Compiles the vendored iBoot32Patcher C sources (vendor/iBoot32Patcher) into the crate for the iPad's real-iBoot
+# chain, so no external binary is shipped.
+cc = "1"

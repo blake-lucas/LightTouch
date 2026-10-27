@@ -99,10 +99,9 @@ tools/guestbench/android.sh results          # the newest pass's lines from the 
 Poco F3 layout preset: `python3 tools/perf/fcbench.py APK 0 ltbench` boots, unlocks and taps the icon
 without sampling fps on the static results screen.
 
-On the desktop, install the IPA through the app's Install IPA path (or headless: start the guest
-with the app-services bridge, `app_services.bridge.Bridge`, and run `python -m app_services.helper
-install --socket … --ipa LTBench.ipa`), tap the icon, and read the `[ltbench]` lines from the engine
-log (`lighttouch-linux --headless` prints it to the console).
+On the desktop, install the IPA through the app's Install IPA path (or headless: `lighttouch run ID --install
+LTBench.ipa`), tap the icon, and read the `[ltbench]` lines from the engine log (`lighttouch run` prints it to the
+console).
 
 Results go to the engine log through the QEMU_CALL log channel (the same one the GLES shim
 uses), one line per test:

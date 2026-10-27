@@ -34,7 +34,6 @@ internal enum class PrepareStep { DEVICE, VERSION, FILES }
 internal class PrepareState {
     var catalog by mutableStateOf<List<CatalogFirmware>>(emptyList())
     /** Firmware ids this phone prepares itself: the whole catalog when the APK ships firmwarekit. */
-    var supported by mutableStateOf<Set<String>>(emptySet())
     var step by mutableStateOf(PrepareStep.DEVICE)
     var productType by mutableStateOf("")
     var firmwareId by mutableStateOf("")
@@ -62,7 +61,6 @@ internal class PrepareState {
     val bootrom get() = firmware?.let { Bootrom.forBoard(it.board) }
     val romReady get() = firmware != null && (bootrom == null || (romPath.isNotEmpty() && romFor == bootrom))
     /** This phone builds [firmware] from its IPSW; the others are added as a copy prepared elsewhere. */
-    val preparesHere get() = firmware?.id?.let { it in supported } == true
 }
 
 /** Order devices appear in: iPods, iPhones, then the iPad, each oldest first. */
@@ -90,8 +88,8 @@ private fun preparationCost(firmware: CatalogFirmware?) =
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit,
-                           onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit, onChoosePrepared: () -> Unit,
-                           onCancel: () -> Unit, onRetryImport: () -> Unit, onAdvanced: () -> Unit, onClose: () -> Unit) {
+                           onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit,
+                           onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
     val run = state.preparation?.getString("state")
     val showProgress = preparing || run in listOf("complete", "failed", "cancelled")
     val back = {
@@ -117,9 +115,8 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                 when {
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose)
-                    state.step == PrepareStep.DEVICE -> DeviceStep(state, onAdvanced)
+                    state.step == PrepareStep.DEVICE -> DeviceStep(state)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
-                    !state.preparesHere -> PreparedCopyStep(state, busy, onChoosePrepared)
                     else -> FilesStep(state, busy, onDownload, onChooseIpsw, onChooseRom, onDownloadRom, onPrepare)
                 }
                 Spacer(Modifier.height(24.dp))
@@ -168,7 +165,7 @@ private fun SupportBadge(support: Support) {
 }
 
 @Composable
-private fun DeviceStep(state: PrepareState, onAdvanced: () -> Unit) {
+private fun DeviceStep(state: PrepareState) {
     Heading("Choose a device", "Pick the device to emulate. You'll choose its iOS version next.")
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
     val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested } }
@@ -188,9 +185,6 @@ private fun DeviceStep(state: PrepareState, onAdvanced: () -> Unit) {
         }
     }
     if (state.catalog.isEmpty()) Text("Loading the firmware list…", style = MaterialTheme.typography.bodyMedium)
-    TextButton(onClick = onAdvanced, modifier = Modifier.padding(top = 12.dp).testTag("prepare_advanced")) {
-        Text("I already have the device files")
-    }
 }
 
 @Composable
@@ -215,8 +209,7 @@ private fun VersionStep(state: PrepareState) {
         SectionLabel(support.label)
         Text(support.detail, Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (firmware in group.sortedBy { it.id != recommendedFirmware }) {
-            val detail = (if (firmware.id == recommendedFirmware) "Recommended · " else "") + released(firmware) +
-                if (firmware.id in state.supported) "" else "\nPrepared on a computer, then added here"
+            val detail = (if (firmware.id == recommendedFirmware) "Recommended · " else "") + released(firmware)
             ChoiceRow(null, "iOS ${firmware.label}", detail, true, "prepare_version_${firmware.id}") {
                 state.firmwareId = firmware.id; state.step = PrepareStep.FILES
             }
@@ -225,35 +218,6 @@ private fun VersionStep(state: PrepareState) {
     if (betas > 0) TextButton(onClick = { state.showBetas = !state.showBetas }, modifier = Modifier.padding(top = 8.dp).testTag("prepare_show_betas")) {
         Text(if (state.showBetas) "Hide beta versions" else "Show $betas beta versions")
     }
-}
-
-/**
- * A firmware this phone cannot build from its IPSW yet: it is prepared on a computer (Light Touch for Mac, or
- * its firmwarekit) and the resulting .itbase is added here, through the same import as the advanced device files path.
- */
-@Composable
-private fun ColumnScope.PreparedCopyStep(state: PrepareState, busy: Boolean, onChoosePrepared: () -> Unit) {
-    val firmware = state.firmware ?: return
-    val name = shortProductName(firmware.productType)
-    val context = androidx.compose.ui.platform.LocalContext.current
-    Heading("$name, iOS ${firmware.label}", "LightTouch can't build this version on a phone yet. Prepare it on a computer, then add it here.")
-    if (firmware.support != Support.TESTED) Text("${firmware.support.label}: ${firmware.support.detail}", Modifier.padding(bottom = 12.dp),
-        style = MaterialTheme.typography.bodySmall, color = if (firmware.support == Support.UNTESTED) MaterialTheme.colorScheme.onSurfaceVariant else LtColors.Warning)
-    Card(icon = LtIcons.Layers, title = "Prepared system", done = false, detail = "${firmware.id}.itbase, made from ${firmware.fileName}") {
-        Text("On a Mac, Light Touch for Mac's firmwarekit tool prepares it and packs it into an .itbase folder. Copy that folder to this phone, then choose it here:",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("firmwarekit create --id ${firmware.id} …\nfirmwarekit pack-base …", Modifier.padding(vertical = 8.dp),
-            style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onChoosePrepared, enabled = !busy, modifier = Modifier.testTag("prepare_choose_prepared")) { Text("Choose the folder") }
-            TextButton(onClick = { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
-                android.net.Uri.parse("https://github.com/blake-lucas/LightTouch/blob/main/docs/ASSETS.md#5-prepare-a-system-from-an-ipsw-instead"))) }) { Text("How") }
-        }
-    }
-    Spacer(Modifier.height(12.dp))
-    Text(if (needsBootrom(firmware.board)) "This device also needs its boot file; add it from Settings after it is created."
-        else "This device needs no boot file. LightTouch's guest tools are added for you.",
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 private fun released(firmware: CatalogFirmware): String {

@@ -13,7 +13,12 @@ enum class OverlayGraph(val label: String) { FRAME_TIME("Frame time"), FPS("Fram
 enum class ScreenScaling(val label: String, val native: Int) { SMOOTH("Smooth", 0), SHARP("Sharp", 1) }
 
 /** User preferences, as Compose state backed by SharedPreferences. Read on the main thread. */
-class AppSettings(context: Context) {
+class AppSettings(private val context: Context) {
+    private val networkState = mutableStateOf(NetworkConfiguration.load(context))
+    var network: NetworkConfiguration
+        get() = networkState.value
+        set(value) { NetworkConfiguration.save(context, value); networkState.value = value }
+
     private val prefs = context.getSharedPreferences("ui", Context.MODE_PRIVATE)
 
     private inline fun <reified E : Enum<E>> enumPref(key: String, default: E) =

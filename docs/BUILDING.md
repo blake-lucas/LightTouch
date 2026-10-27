@@ -1,36 +1,38 @@
 # Building (development)
 
-`scripts/build.sh` builds what day-to-day work needs, with outputs saved under `build/` in this
-repository (ignored by git). Object trees go in `build/obj/` and build incrementally.
+The desktop app and `firmwarekit` are a Rust workspace: `cargo build` (see [DESKTOP.md](DESKTOP.md) for running
+it against an engine). `scripts/build.sh` builds the rest of what day-to-day work needs, with outputs saved under
+`build/` in this repository (ignored by git). Object trees go in `build/obj/` and build incrementally.
+
+Networking needs an engine with slirp and fresh firmware tools, including `ittrust`/`itproxy`. See
+[Guest networking](NETWORK.md) for OpenSSL inputs and portable verification.
 
 ```sh
-scripts/build.sh linux                 # build/linux/libqemu-arm.so + build/linux/lighttouch-linux
+scripts/build.sh linux-engine          # build/linux/libqemu-arm.so
 scripts/build.sh android               # build/android/engine/arm64-v8a/ + build/android/LightTouch-debug.apk
 scripts/build.sh portable-tests        # Portable/ unit tests (ctest)
 LT_MAC=user@mac scripts/build.sh guest-package ltbench   # build/guest-package/*.itpack, build/ltbench/LTBench.ipa
-scripts/build.sh all                   # linux android portable-tests (+ the Mac targets when LT_MAC is set)
+scripts/build.sh all                   # linux-engine android portable-tests (+ the Mac targets when LT_MAC is set)
 scripts/build.sh --clean android       # reconfigure from scratch (after a configure-level change)
 ```
 
 | Target | Output | Built from |
 | --- | --- | --- |
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
-| `linux` | the engine and `build/linux/lighttouch-linux` | `Linux/CMakeLists.txt` (includes `Portable/`) |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
 | `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
-| `firmwarekit` | `build/firmwarekit/linux/` (`firmwarekit`, `lighttouch-oneshot`) | `Packages/FirmwareKit` (Swift) and `Portable/oneshot`; links the system's OpenSSL 3 `libcrypto` (`libssl-dev`) |
-| `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same with the Swift SDK for Android (its static `libcrypto`) and NDK clang |
+| `firmwarekit` | `build/firmwarekit/linux/firmwarekit` | `crates/lighttouch-firmware` (Rust; links only libc) |
+| `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same for `aarch64-linux-android` (`rustup target add aarch64-linux-android`) with NDK clang; `licenses/` from `crates/lighttouch-firmware/stage-notices.py` |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
 | `guest-package` | `build/guest-package/{armv6,armv7}.itpack`, `build.log`, `VERSION`, `SHA256SUMS` | qemu-ios `contrib/guest-package/build.sh`, run on the Mac over ssh |
 | `ltbench` | `build/ltbench/LTBench.ipa` | `tools/guestbench/build.sh`, on the Mac over ssh |
 
-Windows and macOS app builds are not in this script. `Desktop/build.py` runs their recipes on their
-own hosts (`Desktop/README.md`), and `Linux/packaging/README.md` has the AppImage packaging.
+The desktop app's packages for Linux, Windows and macOS come from `scripts/build-release.sh` (below).
 
 ## Engine changes
 
 An engine change happens in the qemu-ios checkout (`$QEMU_IOS`, default `~/git-projects/qemu-ios`,
-branch `dev/perf`). `scripts/build.sh android` (or `linux`) rebuilds it incrementally and packages it
+branch `dev/perf`). `scripts/build.sh android` (or `linux-engine`) rebuilds it incrementally and packages it
 again. Known issue: the first configure of a fresh Android tree has once stopped at QEMU's meson
 postconf with `FileNotFoundError: .../pyvenv/bin/meson` although the file exists afterwards; running
 the same command again built normally. The engine is QEMU's `qemu-system-arm` link turned into a shared library by qemu-ios
@@ -70,10 +72,10 @@ tracked). The defaults are the development machine's paths.
 | --- | --- | --- |
 | `QEMU_IOS` | `~/git-projects/qemu-ios` | the engine source (github.com/samhenrigold/qemu-ios fork, `dev/perf`) |
 | `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `mobile-android/arm64-v8a` (the USB bridge helpers `libusbmuxd_qemu.so` and `liblt_appservice.so`, from `Android/packaging/build-mobile-android.py`); `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
-| `LT_ENGINE_KIT` | `~/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a` | the NDK's `libc++_shared.so`, the engine notice bundle and a fallback `portable-manifest.json`, which go next to an Android engine |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
-| `LT_SWIFT_ENV`, `LT_SWIFT_ANDROID_SDK` | `~/.local/share/swiftly/env.sh`, `swift-6.4.1-RELEASE_android` (target `aarch64-unknown-linux-android29`) | Swift 6.4.1 (swiftly) and the Swift SDK for Android that `firmwarekit` and `firmwarekit-android` build with. The SDK's static runtime needs NDK r30's libc++; relink the bundle to NDK r30 (`setup-android-sdk.sh`) |
 | `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
+| `LT_ANDROID_ENGINE` | unset (build it) | an `android-engine` output folder (holding `arm64-v8a/`) for `android` to package instead of building the engine |
+| `LT_APP_ID_SUFFIX`, `LT_APP_LABEL` | none, `LightTouch` | a test APK that installs beside the regular app (e.g. `.fwkit`; its own data) and its launcher name |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |
 | `JOBS` | `nproc` | parallel jobs |
@@ -106,9 +108,9 @@ publish built packages without the project owner's go-ahead.
 ## Checking a build
 
 - `scripts/build.sh portable-tests`.
-- Desktop, headless:
-  `build/linux/lighttouch-linux --library LIB --record ID --engine build/linux/libqemu-arm.so --headless --seconds 120 --no-audio`.
-  It boots a copy of a record and prints the runtime's status lines. Add `--package ITPACK` to offer a guest package.
+- Desktop, headless: `lighttouch run ID --seconds 120 [--script FILE] [--shot FILE.ppm]` with `LIGHTTOUCH_ENGINE`
+  naming the engine (docs/DESKTOP.md). It boots the record, prints the runtime's status lines and shuts iOS down
+  cleanly.
 - Phones: `tools/perf/fcbench.py build/android/LightTouch-debug.apk 30 jetpack` (with `ANDROID_SERIAL`
   set) installs the APK, boots, starts the game and measures it. `docs/PERFORMANCE.md` describes the
   benchmark set and the A/B method, and `docs/GUEST-BENCHMARKS.md` describes LT Bench.
@@ -119,22 +121,26 @@ publish built packages without the project owner's go-ahead.
 workspace `$LT_RELEASE_ROOT/release-X.Y.Z` (default `~/Documents/LightTouch-Development`):
 
 ```sh
-git tag v0.0.8; git -C ~/git-projects/qemu-ios tag lighttouch-v0.0.8   # both commits pushed, tags not yet
-LT_MAC=user@mac scripts/build-release.sh 0.0.8          # prepare android windows linux macos finish
-# write release-0.0.8/out/NOTES.md (title on line 1, CHECKSUMS for the checksum block)
-scripts/build-release.sh 0.0.8 finish publish           # checksums into the notes; push tags, GitHub release
+git tag v0.0.12; git -C ~/git-projects/qemu-ios tag lighttouch-v0.0.12   # both commits pushed, tags not yet
+LT_MAC=user@mac scripts/build-release.sh 0.0.12         # prepare android windows linux desktop macos finish
+# write release-0.0.12/out/NOTES.md (title on line 1, CHECKSUMS for the checksum block)
+scripts/build-release.sh 0.0.12 finish publish          # checksums into the notes; push tags, GitHub release
 ```
 
-| Step | Output in `out/` | How |
-| --- | --- | --- |
-| `android` | `LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with the guest tools and firmwarekit; checked non-debuggable and versioned |
-| `windows` | `LightTouch-vX-Windows-x86_64.zip` | `Windows/tools/build-engine.sh` (MinGW engine and FFmpeg), the C# helper published offline from the worktree (unless `LT_WIN_HELPER` names one), then `scripts/release/package-windows.py` |
-| `linux` | `LightTouch-vX-Linux-x86_64.AppImage` | `scripts/release/linux-inner.sh` in the Debian 11 Docker image `$LT_LINUX_IMAGE` (engine, frontend, ctest, runtime), then `Linux/packaging/seal-appimage.py` |
-| `macos` | `LightTouch-vX-macOS-arm64.zip` | on `$LT_MAC`: fetches both commits from GitHub, `macOS/build-engine.py`, `macOS/build-shared.py`, `ditto` |
-| `finish` | source archives, `armv6.itpack` and `armv7.itpack` (the desktop apps ask for them), `LICENSE.txt`, `SHA256SUMS`, `RELEASE-MANIFEST.json` | `scripts/release/finish.py`; checks the APK carries `$LT_GUEST_TOOLS` |
+Set `QEMU_IOS` to an engine checkout whose `subprojects/` were configured with the current patches (slirp's
+restricted-DNS patch is checked); `prepare` copies them into the release's engine worktree.
 
-A run skips steps already done; name a step to run it again. The prebuilt inputs (dependency
-prefixes, the MinGW sysroot, the Windows Python/Tk runtime, .NET SDK and NuGet packages, the Mac's Python runtime and
-LightTouchMac app) are variables at the top of the script, settable in `scripts/build.env`. The `android`
-step builds the guest tools from the release's engine on `$LT_MAC` (`firmware-tools`) unless
-`LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the local Swift SDK for Android. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.
+| Step | Output | How |
+| --- | --- | --- |
+| `android` | `out/LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with the guest tools and firmwarekit; checked non-debuggable and versioned |
+| `windows` | the MinGW engine build in `win-cross/` | `Windows/tools/build-engine.sh` (engine and FFmpeg) |
+| `linux` | `linux-build/runtime/`: the engine, `usbmuxd-qemu` and the libraries they load | `scripts/release/linux-inner.sh` in the Debian 11 Docker image `$LT_LINUX_IMAGE` |
+| `desktop` | `out/LightTouch-vX-Linux-x86_64.AppImage`, `out/LightTouch-vX-Windows-x86_64.zip` | the app built against glibc 2.31 (`scripts/release/build-desktop-linux.sh`) and cross-built for Windows, the Windows engine relinked as a DLL, then `scripts/release/package-desktop.py` |
+| `macos` | `out/LightTouch-vX-macOS-arm64.zip` | on `$LT_MAC`: fetches both commits from GitHub, `macOS/build-engine.py`, `cargo build`, `package-desktop.py --os macos` (signed ad hoc), `ditto` |
+| `finish` | source archives, `armv6.itpack` and `armv7.itpack`, `LICENSE.txt`, `SHA256SUMS`, `RELEASE-MANIFEST.json` | `scripts/release/finish.py`; checks the APK carries `$LT_GUEST_TOOLS` |
+
+A run skips steps already done; name a step to run it again. The prebuilt inputs (dependency prefixes, the MinGW
+sysroot, the Windows USB bridge, the notices, the Mac's LightTouchMac app for its USB bridge) are variables at the top
+of the script, settable in `scripts/build.env`. The `android` step builds the guest tools from the release's engine on
+`$LT_MAC` (`firmware-tools`) unless `LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the Rust Android
+target and the NDK. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.

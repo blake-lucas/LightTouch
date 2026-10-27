@@ -43,7 +43,7 @@ for repo, prefix, name in ((app, 'LightTouch-' + VERSION, 'LightTouch-' + VERSIO
     subprocess.run(['git', 'archive', '--format=tar.gz', '--prefix=' + prefix + '/', '-o', out / name, 'HEAD'],
                    cwd=repo, check=True)
 shutil.copy2(app / 'LICENSE', out / 'LICENSE.txt')
-for arch in ('armv6', 'armv7'):  # the desktop apps ask for these; the APK carries its own
+for arch in ('armv6', 'armv7'):  # published for reference: every package carries its own
     shutil.copy2(GUEST / (arch + '.itpack'), out / (arch + '.itpack'))
 
 apk = out / ('LightTouch-' + VERSION + '-android-arm64.apk')

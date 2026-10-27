@@ -1,25 +1,25 @@
 #!/bin/bash
-# One development build entry point: the engine, the Linux frontend, the Android APK, and (on a Mac,
-# over ssh) the guest package and LT Bench. Outputs go to build/<target>/ in this repository, object
+# One development build entry point: the engines, firmwarekit, the Android APK, and (on a Mac, over ssh) the
+# guest package and LT Bench. Outputs go to build/<target>/ in this repository, object
 # trees to build/obj/ (incremental; --clean removes a target's). See docs/BUILDING.md.
 #
 #   scripts/build.sh [--clean] TARGET...
 #
 #   linux-engine   build/linux/libqemu-arm.so                  x86_64 engine (qemu-ios, portable board)
-#   linux          build/linux/lighttouch-linux (+ engine)     the Linux frontend (Linux/CMakeLists.txt)
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
-#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK
+#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK (LT_ANDROID_ENGINE: a prebuilt
+#                                                             engine; LT_APP_ID_SUFFIX/LT_APP_LABEL: a side-by-side install)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
-#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Swift) + lighttouch-oneshot, x86_64
-#   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Swift SDK for Android)
+#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust), x86_64
+#   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Rust + the NDK)
 #   guest-package  build/guest-package/{armv6,armv7}.itpack   on the Mac ($LT_MAC), Xcode + old SDKs
 #   firmware-tools build/firmware-tools/                       on the Mac: the helpers firmwarekit create bakes in
 #                                                             (--guest-tools; contrib/export-guest-artifacts.sh)
 #   ltbench        build/ltbench/LTBench.ipa                   on the Mac ($LT_MAC)
-#   all            linux android portable-tests (+ guest-package ltbench when LT_MAC is set)
+#   all            linux-engine android portable-tests (+ guest-package ltbench when LT_MAC is set)
 #
-# Windows and macOS app builds are not here: Desktop/build.py (Desktop/README.md) runs those recipes on
-# their own hosts.
+# The desktop app is `cargo build` (docs/DESKTOP.md); scripts/build-release.sh packages it for Linux, Windows and
+# macOS.
 #
 # Machine-local inputs come from the environment, or from scripts/build.env if present (sourced; not
 # tracked). The defaults are this project's development machine; docs/BUILDING.md says what each is.
@@ -30,7 +30,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 : "${QEMU_IOS:=$HOME/git-projects/qemu-ios}"                                      # engine source
 : "${LT_INPUTS:=$HOME/Documents/LightTouch-Development/port-workspace/builds}"   # prebuilt deps
-: "${LT_ENGINE_KIT:=$HOME/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a}"  # libc++, notices
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 : "${ANDROID_NDK_VERSION:=28.2.13676358}"
 : "${JAVA_HOME:=/usr/lib/jvm/java-17-openjdk-amd64}"
@@ -45,13 +44,10 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
 : "${JOBS:=$(nproc 2>/dev/null || echo 4)}"
-: "${LT_SWIFT_ENV:=$HOME/.local/share/swiftly/env.sh}"                           # swiftly's Swift 6.4+
-: "${LT_SWIFT_ANDROID_SDK:=aarch64-unknown-linux-android29}"   # swift sdk install ...android.artifactbundle
-: "${LT_SWIFT_ANDROID_BUNDLE:=$HOME/.swiftpm/swift-sdks/swift-6.4.1-RELEASE_android.artifactbundle}"
 PCLIBDIR=
 export ANDROID_HOME JAVA_HOME
 
-OUT="$REPO/build"
+OUT="${LT_BUILD_ROOT:-$REPO/build}"
 OBJ="$OUT/obj"
 NDK_BIN="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
 log() { printf '== %s\n' "$*"; }
@@ -68,7 +64,7 @@ configure_engine() {
     chmod +x "$dir/target-pkg-config"
     (cd "$dir" && env PKG_CONFIG="$dir/target-pkg-config" PKG_CONFIG_PATH="$pcpath" \
         ${PCLIBDIR:+"PKG_CONFIG_LIBDIR=$PCLIBDIR"} "$QEMU_IOS/configure" --target-list=arm-softmmu --without-default-features --without-default-devices \
-        --with-devices-arm=portable --enable-tcg --enable-pixman --enable-gcrypt --python=/usr/bin/python3 \
+        --with-devices-arm=portable --enable-tcg --enable-pixman --enable-gcrypt --enable-slirp --python=/usr/bin/python3 \
         --disable-docs --disable-tools --disable-werror --disable-pie --audio-drv-list= \
         "--extra-cflags=-fPIC -DQEMU_IOS_PORTABLE_CRYPTO${LT_ENGINE_CFLAGS:+ $LT_ENGINE_CFLAGS}" \
         "--extra-ldflags=-L$deps/lib${LT_ENGINE_LDFLAGS:+ $LT_ENGINE_LDFLAGS}" "$@" \
@@ -99,21 +95,10 @@ build_linux_engine() {
     echo "$OUT/linux/libqemu-arm.so"
 }
 
-build_linux() {
-    build_linux_engine
-    log "linux frontend"
-    cmake -S "$REPO/Linux" -B "$OBJ/linux-frontend" -DLIGHTTOUCH_QEMU_SOURCE="$QEMU_IOS" > "$OBJ/linux-frontend.cmake.out"
-    cmake --build "$OBJ/linux-frontend" -j"$JOBS" --target lighttouch-linux > "$OBJ/linux-frontend.build.out" 2>&1 ||
-        { tail -30 "$OBJ/linux-frontend.build.out" >&2; exit 1; }
-    cp "$OBJ/linux-frontend/lighttouch-linux" "$OUT/linux/"
-    echo "$OUT/linux/lighttouch-linux"
-}
-
 build_android_engine() {
     log "android-engine (arm64-v8a)"
     local deps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" dir="$OBJ/android-engine-arm64${LT_ENGINE_VARIANT:+-$LT_ENGINE_VARIANT}"
     need "$deps" "Android engine dependency prefix"
-    need "$LT_ENGINE_KIT/notices" "engine notice bundle"
     need "$NDK_BIN" "Android NDK $ANDROID_NDK_VERSION"
     PCLIBDIR="$LT_INPUTS/backend/crypto/arm64-v8a/prefix/lib/pkgconfig:$deps/lib/pkgconfig"
     # Profile-guided optimization from a gameplay profile (docs/BUILDING.md, "Engine profile"): clang lays the
@@ -135,31 +120,40 @@ build_android_engine() {
         --cc="$NDK_BIN/aarch64-linux-android29-clang" --cxx="$NDK_BIN/aarch64-linux-android29-clang++" \
         --disable-containers
     PCLIBDIR=
+    # Record the very runtime AGP packages from the selected NDK in the engine
+    # manifest, before generating notices (not a previous engine kit's copy).
+    cp "$NDK_BIN/../sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$dir/"
     link_engine "$dir"
     local e="$OUT/android/engine/arm64-v8a"
     rm -rf "$e"; mkdir -p "$e"
     cp "$dir/libqemu-arm.so" "$e/"
-    cp "$LT_ENGINE_KIT/libc++_shared.so" "$e/"
-    cp "$dir/portable-manifest.json" "$e/" 2>/dev/null || cp "$LT_ENGINE_KIT/portable-manifest.json" "$e/"
-    cp -rL "$LT_ENGINE_KIT/notices" "$e/notices"
-    # The APK build checks the notice bundle names this library by hash.
-    python3 - "$e" <<'PY'
-import hashlib, json, pathlib, sys
-e = pathlib.Path(sys.argv[1]); m = e / "notices/manifest.json"; d = json.loads(m.read_text())
-d["library_sha256"] = hashlib.sha256((e / "libqemu-arm.so").read_bytes()).hexdigest()
-m.write_text(json.dumps(d, indent=2) + "\n")
-PY
+    cp "$dir/libc++_shared.so" "$e/"
+    cp "$dir/portable-manifest.json" "$e/"
+    # Notices must describe the selected sources and dependencies of this build,
+    # including bundled slirp, rather than a previous engine's notice bundle.
+    python3 "$QEMU_IOS/contrib/portable/audit-selected-sources.py" "$dir"
+    local revision
+    revision=$(git -C "$QEMU_IOS" rev-parse HEAD)
+    python3 "$QEMU_IOS/contrib/portable/package-notices.py" "$dir" "$e/notices" \
+        --deps "$LT_INPUTS/backend/deps/arm64-v8a" --crypto-deps "$LT_INPUTS/backend/crypto/arm64-v8a" \
+        --ndk "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" \
+        --source-reference "https://github.com/blake-lucas/qemu-ios/tree/$revision"
     echo "$e"
 }
 
 build_android() {
-    build_android_engine
+    # LT_ANDROID_ENGINE=DIR (holding arm64-v8a/: libqemu-arm.so, libc++_shared.so, notices/, an android-engine
+    # output) packages that engine instead of building one.
+    local engine="${LT_ANDROID_ENGINE:-$OUT/android/engine}"
+    if [ -n "${LT_ANDROID_ENGINE:-}" ]; then need "$engine/arm64-v8a/libqemu-arm.so" "LT_ANDROID_ENGINE engine"
+    else build_android_engine; fi
+    mkdir -p "$OBJ" "$OUT/android"
     log "android APK (arm64-v8a, debug)"
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
-    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (SwiftPM is
-    # incremental), or the APK carries whatever firmwarekit and lighttouch-oneshot were last built.
+    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (cargo is
+    # incremental), or the APK carries whatever firmwarekit was last built.
     build_firmwarekit_android
     # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
     # prepares); without them the APK still builds, but new devices get no guest tools and preparation cannot run.
@@ -172,8 +166,10 @@ build_android() {
     (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
-        -PengineRoot="$OUT/android/engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
-        -PengineNoticeArm64="$OUT/android/engine/arm64-v8a/notices" \
+        -PnetworkDeps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" \
+        -PengineRoot="$engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
+        -PengineNoticeArm64="$engine/arm64-v8a/notices" \
+        -PappIdSuffix="${LT_APP_ID_SUFFIX:-}" -PappLabel="${LT_APP_LABEL:-LightTouch}" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
         -PsourceReference="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}" \
         -PbuildRoot="$OBJ/android-gradle" -PmobileServicesArm64="$w/mobile-android/arm64-v8a" \
@@ -198,34 +194,27 @@ build_portable_tests() {
     (cd "$OBJ/portable-tests" && ctest --output-on-failure | tail -3)
 }
 
-# firmwarekit (Packages/FirmwareKit) builds a device from an IPSW off the Mac too; its build-time boots go through
-# lighttouch-oneshot, which loads the engine library ($LTM_QEMU_DYLIB, else libqemu-arm.so beside it).
+# firmwarekit (crates/lighttouch-firmware, Rust) builds a device from an IPSW on every platform. Its preparation boots
+# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it), Android's too.
 build_firmwarekit() {
     log "firmwarekit (linux)"
-    . "$LT_SWIFT_ENV"
-    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit 2>&1 | tail -3)
+    (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/linux"
-    cp "$REPO/Packages/FirmwareKit/.build/release/firmwarekit" "$OUT/firmwarekit/linux/"
-    cc -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/linux/lighttouch-oneshot" "$REPO/Portable/oneshot/lighttouch-oneshot.c" -ldl -lpthread
+    cp "$REPO/target/release/firmwarekit" "$OUT/firmwarekit/linux/"
     ls -la "$OUT/firmwarekit/linux"
 }
 
-# The Swift SDK for Android's static runtime wants NDK r30's libc++ (setup-android-sdk.sh with ANDROID_NDK_HOME at
-# r30); build-support/android-pkgconfig keeps the host's zlib off the link and takes libc++ statically.
+# The Rust target aarch64-linux-android (rustup target add) with the NDK's clang for the crate's C (activation.c,
+# the vendored iBoot32Patcher, SQLite) and as the linker.
 build_firmwarekit_android() {
     log "firmwarekit (android arm64)"
-    . "$LT_SWIFT_ENV"
-    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
-        --scratch-path .build-android --static-swift-stdlib --pkg-config-path build-support/android-pkgconfig \
-        -Xlinker -lssl -Xlinker -lcrypto 2>&1 | tail -3)
+    (cd "$REPO" && CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang" AR_aarch64_linux_android="$NDK_BIN/llvm-ar" \
+        CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android29-clang" \
+        cargo build --release --target aarch64-linux-android -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/android"
-    cp "$REPO/Packages/FirmwareKit/.build-android/out/Products/Release-android-aarch64/firmwarekit" "$OUT/firmwarekit/android/"
+    cp "$REPO/target/aarch64-linux-android/release/firmwarekit" "$OUT/firmwarekit/android/"
     "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
-    "$NDK_BIN/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/android/lighttouch-oneshot" \
-        "$REPO/Portable/oneshot/lighttouch-oneshot.c"
-    python3 "$REPO/Packages/FirmwareKit/build-support/stage-notices.py" "$OUT/firmwarekit/android/licenses" \
-        --checkouts "$REPO/Packages/FirmwareKit/.build-android/checkouts" \
-        --swift-license "$LT_SWIFT_ANDROID_BUNDLE/swift-android/swift-resources/usr/share/swift/LICENSE.txt" \
+    python3 "$REPO/crates/lighttouch-firmware/stage-notices.py" "$OUT/firmwarekit/android/licenses" --target aarch64-linux-android \
         --source-reference "${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}"
     ls -la "$OUT/firmwarekit/android"
 }
@@ -281,8 +270,8 @@ for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
     -h|--help) sed -n 2,25p "$0"; exit 0 ;;
-    all) targets+=(linux android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|linux|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
+    linux-engine|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
@@ -291,7 +280,6 @@ for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in
         linux-engine) rm -rf "$OBJ/linux-engine" ;;
-        linux) rm -rf "$OBJ/linux-engine" "$OBJ/linux-frontend" ;;
         android-engine) rm -rf "$OBJ/android-engine-arm64" ;;
         android) rm -rf "$OBJ/android-engine-arm64" "$OBJ/android-gradle" ;;
         portable-tests) rm -rf "$OBJ/portable-tests" ;;

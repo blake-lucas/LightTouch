@@ -1,0 +1,15 @@
+iBoot32Patcher, LukeZGD's fork (the one Legacy-iOS-Kit ships), commit
+1ff9bd14648efae691ed23ae0abb55a4635111e3.
+
+  url:    https://github.com/LukeZGD/iBoot32Patcher/archive/1ff9bd14648efae691ed23ae0abb55a4635111e3.tar.gz
+  sha256: 8e6740aa1a248af8cf26aa7af1d785dbc089c67f510db282cc4c9dd529d4cb2f (the archive)
+  license: GPL-3.0-or-later (LICENSE alongside)
+
+iBoot32Patcher-ltm.patch (alongside; the same file as build-support/patches/) is applied to src/ and
+include/ here: word-aligned xref matches only (smoke #48) and the ABI-checked legacy RSA bypass with
+include/rsa_result.h (smoke #50).
+
+build.rs compiles these four .c files (with -Dmain=lt_iboot32_main) into the crate and FirmwareKit's Rust port
+calls lt_iboot32_main the way firmwarekit ran the separate binary: `--rsa --debug -b <boot-args>`, over two
+temporary files. The pins and the patch match build-support/dependencies.json's "iBoot32Patcher" entry, so the
+output is byte-for-byte the Legacy-iOS-Kit binary's (K48IBootTests).

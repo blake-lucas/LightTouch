@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=LightTouch
-Comment=Run a prepared iOS device with persistent private state
-Exec=AppRun
-Icon=lighttouch
-Terminal=false
-Categories=System;Emulator;
-StartupNotify=true

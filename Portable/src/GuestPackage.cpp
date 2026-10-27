@@ -1,7 +1,7 @@
 #include "Internal.hpp"
 #include "GuestPackageJudge.hpp"
 #include <zlib.h>
-#include <unistd.h>
+#include "Os.hpp"
 #include <set>
 #include <algorithm>
 namespace lt {
@@ -36,6 +36,11 @@ void record_guest_verdict(lt_device *d, bool good, int64_t serial) {
             seed = int64_t(s->integer());
     if (verdicts.judge(good ? GuestPackageJudge::Verdict::good : GuestPackageJudge::Verdict::bad, serial, seed))
         atomic_write(path, verdicts.text());
+}
+bool guest_agent_expected(lt_device *d) {
+    auto path = d->state / "guest-verdicts";
+    std::error_code missing;
+    return fs::exists(path, missing) && GuestVerdicts::parse(read_file(path, 4096)).good >= 0;
 }
 std::string guest_offer(lt_device *d, const char *pack) {
     require(fs::is_regular_file(fs::symlink_status(pack)), "guest package must be a regular .itpack");
@@ -135,7 +140,7 @@ std::string guest_offer(lt_device *d, const char *pack) {
     std::string pattern = (d->state / "work/.offer-stage-XXXXXX").string();
     std::vector<char> tmp(pattern.begin(), pattern.end());
     tmp.push_back(0);
-    io(mkdtemp(tmp.data()) != nullptr, "guest offer stage");
+    io(lt::os::mkdtemp(tmp.data()) != nullptr, "guest offer stage");
     fs::path stage = tmp.data();
     try {
         std::string offer = "ltpkg 1\nbuild " + build + "\nserial " + manifest.at("serial").text + " " +

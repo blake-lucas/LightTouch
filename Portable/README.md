@@ -1,7 +1,7 @@
 The portable product domain and runtime expose ABI 1 through `include/lighttouch.h`.
 The runtime negotiates upstream QEMU API major 2 and portable engine extension 1.
 It includes only exported engine headers; QEMU/platform internals stay out of the
-public product ABI. Kotlin/JNI and Linux SDL consume the same native implementation.
+public product ABI. Android (Kotlin/JNI) and the Rust desktop app consume the same native implementation.
 
 Prepared imports validate the expected archive SHA256, strict JSON index, relative
 paths, duplicates, prefix conflicts, zlib checksum and exact compressed/uncompressed
@@ -55,8 +55,7 @@ use the even/equal generation check around copies. Slow consumers lose old frame
 The FD mapping and all handles have explicit ownership in the header. PCM capture
 is the existing real QEMU 44100Hz stereo S16LE mixer capture, drained into sixteen
 bounded packets; overflow drops oldest host packets and increments dropped_frames.
-Linux sends PCM on a separate bounded socket and SDL queues at most approximately
-100ms. Silence/host queues do not prove audible guest output; real acceptance is
+The desktop worker plays PCM with cpal. Silence/host queues do not prove audible guest output; real acceptance is
 required. Frame/PCM transport does not use JSON or Binder frame parcels.
 
 Touch preserves stable IDs, phased whole batches and monotonic timestamps. Native

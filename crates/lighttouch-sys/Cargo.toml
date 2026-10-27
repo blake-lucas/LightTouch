@@ -1,0 +1,20 @@
+[package]
+name = "lighttouch-sys"
+description = "Raw bindings to the shared LightTouch C++ core (Portable/), compiled from source"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "lighttouch_portable"
+build = "build.rs"
+
+[features]
+# Build OpenSSL from source (packaged builds); otherwise the system's OpenSSL 3 is used. Cargo builds one openssl-sys
+# for the whole app, so lighttouch-services/vendored-openssl turns this on too.
+vendored-openssl = ["openssl-sys/vendored"]
+
+[dependencies]
+libz-sys = { version = "1", default-features = false, features = ["static", "libc"] }
+openssl-sys = "0.9"
+
+[build-dependencies]
+cc = "1"

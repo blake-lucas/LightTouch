@@ -51,9 +51,10 @@ struct AdmissionAssetCheck {
 std::unique_ptr<lt_device> open_device_checked(const lt_device_config *, lt_progress_fn, void *,
                                                const std::vector<AdmissionAssetCheck> &);
 void atomic_write(const fs::path &, const std::string &);
+// A synced, sparse copy of a regular file's bytes, as a new file (O_EXCL) of the app's own mode.
+void copy_contents(const fs::path &, const fs::path &);
 // A preparer's output folder moved in as a record's base (lt_library_adopt_prepared): validated against its own
-// lock's digests (structure, listing and every file the lock names; nothing it names is read again), flushed and
-// frozen read-only.
+// lock's digests (structure, listing and every file the lock names; nothing it names is read again) and flushed.
 void adopt_base(const fs::path &, lt_import_phase_fn, void *);
 // A new record's state, pinned to its base and holding the lock's digests, so its first start reads nothing either.
 void seed_admission(const fs::path &base, const fs::path &state);
@@ -62,6 +63,8 @@ std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);
 // A boot's verdict on the guest package it ran (GuestPackageJudge), for later offers.
 void record_guest_verdict(lt_device *, bool good, int64_t serial);
+// Whether a boot has called this device's guest package good, which takes its agent answering: its guest has one.
+bool guest_agent_expected(lt_device *);
 void clean_device(lt_device *, bool);
 } // namespace lt
 struct lt_device {

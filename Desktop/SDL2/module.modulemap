@@ -1,5 +1,0 @@
-module CDesktopSDL [system] {
-    header "shim.h"
-    link "SDL2"
-    export *
-}

@@ -66,7 +66,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                 Spacer(Modifier.width(16.dp))
                 Column {
                     Text("Add device", style = MaterialTheme.typography.titleSmall)
-                    Text("From an IPSW, or a device image you have", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

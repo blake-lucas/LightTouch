@@ -8,7 +8,6 @@ interface IEngine {
     Bundle debugQmpSnapshot();
     Bundle[] records();
     String select(String recordId);
-    String importBase(String source, String displayName);
     String importPrepared(String source, String displayName, String rom);
     /** importPrepared for this app's own firmwarekit output: moved in as the base, not copied or hashed again. */
     String adoptPrepared(String source, String displayName, String rom);
@@ -42,8 +41,6 @@ interface IEngine {
     String debugSelectTcgIrCache(boolean enabled);
     String rename(String recordId, String name);
     String remove(String recordId);
-    /** sha256: the archive's checksum when the caller hashed it while copying; empty to hash it here. */
-    String importDevice(String source, String displayName, String rom, String guest, String sha256);
     Bundle frameStats(long sinceSequence);
     void setPresentScale(int mode);
     void setPresentVisible(boolean visible);
@@ -51,4 +48,6 @@ interface IEngine {
     Bundle hitchSnapshot();
     /** The iOS app in front: bundleId and appName, both "" when the guest tools cannot say (a paused guest). */
     Bundle frontmostApp();
+    /** Reload the atomic saved network document and apply to this session. */
+    void applyNetworkSettings();
 }

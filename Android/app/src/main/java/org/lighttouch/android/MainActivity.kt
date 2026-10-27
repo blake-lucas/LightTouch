@@ -68,6 +68,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
+    override var networkSessionStatus by mutableStateOf(NetworkSessionStatus())
+        private set
+    override var networkChangeNotice by mutableStateOf("")
+        private set
     private val installer by lazy { StoreInstaller.of(applicationContext) }
     private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
     // Android 13+ shows an install queue's progress and result in notifications only once allowed.
@@ -147,7 +151,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun workerExitedRun() = Bundle().apply { putString("state", "failed"); putString("error", "The preparation worker stopped unexpectedly. Try again.") }
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }
     private val prepRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importPrepRom(uri) }
-    private val preparedCopy = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) addPreparedCopy(uri) }
     private var active = false
     private var displayOwnerTicket = 0L
     private var displayResumed = false
@@ -231,6 +234,20 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
                             if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
+                            networkSessionStatus = NetworkSessionStatus(
+                                available = b.containsKey("networkSetup"),
+                                mode = b.getInt("networkMode"),
+                                archiveDate = b.getString("networkArchiveDate").orEmpty(),
+                                setup = b.getString("networkSetup").orEmpty(),
+                                setupError = b.getBoolean("networkSetupError"),
+                                activity = b.getString("networkActivity").orEmpty(),
+                                connections = b.getLong("networkConnections"),
+                                completed = b.getLong("networkCompleted"),
+                                failed = b.getLong("networkFailed"),
+                                lastResult = b.getString("networkLastResult").orEmpty(),
+                                lastResultError = b.getBoolean("networkLastResultError"),
+                            )
+                            networkChangeNotice = b.getString("networkChangeNotice") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
@@ -276,9 +293,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (window.attributes.preferredDisplayModeId != mode) window.attributes = window.attributes.apply { preferredDisplayModeId = mode }
         if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(!guestInFront)
     }
-    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) scanFolder(uri) }
-    private val pickSystem = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.system = picked(uri) }
-    private val pickRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.rom = picked(uri) }
     private val pickGuestToolsFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) copyAsset(uri, "guest.itpack") }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -306,9 +320,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val catalog = FirmwareCatalog.load(this)
                 firmwareTargets = catalog.associate { "${it.board}-${it.build}" to StoreTarget.of(it.productType, it.version) }
-                // firmwarekit prepares every catalog firmware; an APK built without it only adds copies prepared elsewhere.
-                val supported = if (File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute()) catalog.map { it.id }.toSet() else emptySet()
-                handler.post { prep.catalog = catalog; prep.supported = supported; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(selectedRecordId(), recordTarget()); if (engine != null) refreshDevices() }
+                handler.post { prep.catalog = catalog; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(selectedRecordId(), recordTarget()); if (engine != null) refreshDevices() }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
@@ -327,7 +339,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             LaunchedEffect(status) { if (base == Screen.FULLSCREEN && status in listOf("stopped", "failed")) base = Screen.HOME }
             // First run: no devices yet, so set one up.
             LaunchedEffect(recordsLoaded, records.isEmpty()) {
-                if (recordsLoaded && overlay == Screen.LOADING) overlay = if (records.isEmpty()) Screen.SETUP.also { setup.reset(firstRun = true) } else null
+                if (recordsLoaded && overlay == Screen.LOADING) overlay = if (records.isEmpty()) Screen.SETUP.also { setup.reset() } else null
             }
             val showOverlay = settings.overlay != OverlayLevel.OFF && status == "running" &&
                 ((overlay == null && (base == Screen.FULLSCREEN || settings.overlayInDeviceView)) || overlay == Screen.SETTINGS)
@@ -358,10 +370,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                         Screen.LOADING -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
                         }
-                        Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(),
-                            onPickFolder = { pickFolder.launch(null) }, onPickSystem = { pickSystem.launch(arrayOf("application/octet-stream", "*/*")) },
-                            onPickRom = { pickRom.launch(arrayOf("application/octet-stream", "*/*")) },
-                            onCreate = ::createDevice, onPrepare = { openPreparation() },
+                        Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(), onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
                         Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
@@ -418,7 +427,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
-        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed) } catch (_: RemoteException) { } }, "apply-settings").start()
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
         busy = true
@@ -483,36 +492,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share hitch report"))
     }
 
-    // Setup wizard: find the files, copy them in, create and name the device.
     private fun displayName(uri: Uri) = DocumentFile.fromSingleUri(this, uri)?.name ?: uri.lastPathSegment ?: "file"
-    private fun picked(uri: Uri) = PickedFile(uri, displayName(uri))
-    /** Finds the iOS system and boot file in [tree]; [onFound] then runs on the main thread if an iOS system was found. */
-    private fun scanFolder(tree: Uri, onFound: (() -> Unit)? = null) {
-        val root = DocumentFile.fromTreeUri(this, tree) ?: return
-        Thread({
-            // The folder itself, then one level down (e.g. LightTouch-assets/ inside the chosen folder).
-            val candidates = root.listFiles().toList() + root.listFiles().filter { it.isDirectory }.flatMap { it.listFiles().toList() }
-            val files = candidates.filter { it.isFile }
-            // Light Touch for Mac's packed base is a folder (index.json, files/, nand/); older ones are one .itbase file.
-            val folders = listOf(root) + root.listFiles().filter { it.isDirectory }
-            // The board, from the device lock, decides whether a boot file is needed.
-            fun board(lock: DocumentFile?) = try {
-                lock?.let { contentResolver.openInputStream(it.uri)?.use { s -> org.json.JSONObject(s.bufferedReader().readText()).optString("board") } } ?: ""
-            } catch (_: Exception) { "" }
-            val system = folders.firstOrNull { it.findFile("index.json") != null && it.findFile("files")?.isDirectory == true }
-                ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true, board = board(it.findFile("files")?.findFile("device.lock.json"))) }
-                ?: files.firstOrNull { it.name?.endsWith(".itbase", true) == true }?.let { PickedFile(it.uri, it.name ?: "") }
-                ?: folders.firstOrNull { it.findFile("device.lock.json") != null }
-                    ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true, board = board(it.findFile("device.lock.json"))) }
-            val rom = files.firstOrNull { it.name?.lowercase()?.startsWith("bootrom") == true }?.let { PickedFile(it.uri, it.name ?: "") }
-            handler.post {
-                system?.let { setup.system = it }; rom?.let { setup.rom = it }
-                val found = listOfNotNull("iOS system".takeIf { system != null }, "boot file".takeIf { rom != null })
-                setup.scanned = if (found.isEmpty()) "Nothing found in ${root.name}" else "Found " + found.joinToString(", ") + " in ${root.name}"
-                if (onFound != null) { if (system != null) onFound() else setup.error = "No prepared iOS system in ${root.name}" }
-            }
-        }, "setup-scan").start()
-    }
     /** What the engine's import is doing, as shown under the progress bar. */
     private fun importPhaseText(phase: String) = when (phase) {
         "hashing" -> "Checking the file…"
@@ -536,73 +516,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }, "import-progress").start()
         return { running.set(false) }
-    }
-    /** Copies [uri] to [target] and returns the copy's SHA-256 (hex). */
-    private fun copyWithProgress(uri: Uri, target: File, label: String): String {
-        val total = DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { output ->
-            val buffer = ByteArray(1 shl 20); var done = 0L; var shown = -1L
-            while (true) {
-                val n = input.read(buffer); if (n < 0) break
-                output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
-                val percent = if (total > 0) done * 100 / total else -1
-                if (percent != shown) { shown = percent; handler.post { setup.phase = if (percent >= 0) "$label…" else "$label… ${done shr 20} MB"; setup.progress = if (percent >= 0) percent / 100f else -1f } }
-            }
-        } } ?: error("Cannot read $label")
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-    private fun createDevice() {
-        val system = setup.system ?: return
-        val worker = engine ?: run { setup.error = "LightTouch is still starting; try again in a moment."; return }
-        val rom = setup.rom; val requested = setup.name.trim()
-        val before = records.mapNotNull { it.getString("id") }.toSet()
-        setup.step = SetupStep.CREATING; setup.error = ""; setup.phase = ""; busy = true
-        Thread({
-            val staging = File(filesDir, "setup-${System.nanoTime()}").apply { mkdirs() }
-            var imported = false
-            try {
-                val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
-                var sha256 = ""
-                val source = if (system.folder) File(staging, "base").also { copyTree(system.uri, it) { done, total ->
-                        handler.post { setup.phase = "Copying the iOS system…"; setup.progress = if (total > 0) done.toFloat() / total else -1f } } }
-                    else File(staging, "system.itbase").also { sha256 = copyWithProgress(system.uri, it, "Copying the iOS system") }
-                handler.post { setup.phase = "Setting up the iOS system…"; setup.progress = -1f }
-                val started = System.nanoTime()
-                val stopWatching = watchImport(worker) { text, fraction -> setup.phase = text; setup.progress = fraction }
-                val result = try { worker.importDevice(source.absolutePath, "", romPath, "", sha256) } finally { stopWatching() }
-                android.util.Log.i("LightTouch", "Device import took ${(System.nanoTime() - started) / 1_000_000} ms")
-                require(result.isEmpty()) { result }
-                // The record exists from here on: a failed rename or select keeps it (under its
-                // firmware name, unselected) rather than sending the user back to import it again.
-                imported = true
-                val all = worker.records().toList()
-                val created = all.firstOrNull { it.getString("id") !in before } ?: error("The new device did not appear in the library")
-                val id = created.getString("id") ?: ""
-                // The guest tools built into LightTouch, matched to the new device's board and build.
-                val tools = GuestTools.forDevice(this, created.getString("board") ?: "", created.getString("build") ?: "")
-                val toolsResult = tools?.let { handler.post { setup.phase = "Adding guest tools…"; setup.progress = -1f }; worker.setGuestPackage(id, it.absolutePath) } ?: ""
-                val name = requested.ifEmpty { defaultDeviceName(created.getString("board") ?: "", created.getString("build") ?: "", firmwareTargets,
-                    all.filter { it.getString("id") != id }.mapNotNull { it.getString("name") }) }
-                val renamed = worker.rename(id, name)
-                val shown = if (renamed.isEmpty()) name else created.getString("name") ?: name
-                // Selecting under a running session would show this device while the old one runs.
-                val selected = status !in listOf("running", "paused", "starting", "stopping") && worker.select(id).isEmpty()
-                handler.post {
-                    refreshDevices()
-                    if (selected) { setup.created = shown; setup.step = SetupStep.DONE }
-                    else { overlay = null; notice = "Added $shown; stop the running device to switch to it" }
-                    if (renamed.isNotEmpty()) error = "Added the device, but could not name it \"$name\": $renamed"
-                    else if (toolsResult.isNotEmpty()) error = "Added the device, but could not add LightTouch's guest tools: $toolsResult"
-                }
-            } catch (e: Exception) {
-                handler.post {
-                    // Offering Start here could start whichever device was selected before.
-                    if (imported) { overlay = null; error = "Added the device, but could not finish setting it up: ${e.message}"; refreshDevices() }
-                    else { setup.error = e.message ?: "Could not create the device"; setup.step = SetupStep.FILES }
-                }
-            } finally { staging.deleteRecursively(); handler.post { busy = false } }
-        }, "setup-create").start()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -644,7 +557,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val alive = try { File("/proc/$pid/cmdline").readText().contains(":firmware") } catch (_: Exception) { false }
                 if (alive) { preparationOpen = true; bindFirmware() }
                 else {
-                    Thread({ File(job).takeIf { it.isDirectory }?.let { dir -> dir.walkTopDown().forEach { it.setWritable(true, true) }; dir.deleteRecursively() } }, "stale-preparation").start()
+                    Thread({ File(job).takeIf { it.isDirectory }?.deleteRecursively() }, "stale-preparation").start()
                     failed("Android stopped the preparation before it finished. Try again.")
                 }
             }
@@ -704,22 +617,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         PrepareScreen(prep, busy, preparationActive(),
             onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
-            onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
-            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onAdvanced = ::openDeviceFiles, onClose = ::closePreparation)
-    }
-    /** The advanced path from the device list: add device files the user already has (the setup wizard's import). */
-    private fun openDeviceFiles() {
-        if (busy || preparationActive()) return
-        preparationOpen = false; releaseFirmware()
-        setup.reset(firstRun = false); overlay = Screen.SETUP
-    }
-    /** A firmware prepared on a computer, chosen in the prepare flow: added through the device files import. */
-    private fun addPreparedCopy(uri: Uri) {
-        if (busy || preparationActive()) return
-        preparationOpen = false; releaseFirmware()
-        setup.reset(firstRun = false); setup.step = SetupStep.FILES; overlay = Screen.SETUP
-        scanFolder(uri) { createDevice() }
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
     }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
@@ -813,7 +712,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) { e.message ?: "Device worker exited during import" }
             if (result.isEmpty()) {
                 // The device holds its own copy now; the prepared output and the IPSW only take space.
-                File(destination).walkTopDown().forEach { it.setWritable(true, true) }
                 File(destination).deleteRecursively(); File("$destination.native.log").delete()
                 if (ipsw.startsWith(filesDir.absolutePath)) File(ipsw).delete()
             }
@@ -826,7 +724,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").remove("ipsw").apply()
                     refreshDevices(); releaseFirmware(); preparationOpen = false; prep.preparation = null; prep.step = PrepareStep.DEVICE
                     if (selected) {
-                        setup.reset(firstRun = false); setup.created = name; setup.step = SetupStep.DONE; overlay = Screen.SETUP
+                        setup.reset(); setup.created = name; setup.step = SetupStep.DONE; overlay = Screen.SETUP
                         setup.timings = timings + "Adding the device\t${(SystemClock.elapsedRealtime() - started) / 100 / 10.0}\n"
                     }
                     else notice = "Added $name; stop the running device to switch to it"
@@ -916,7 +814,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 }
                 handler.post {
                     records = loaded; recordsLoaded = true
-                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = true); overlay = Screen.SETUP }
+                    if (afterDelete && loaded.isEmpty()) { setup.reset(); overlay = Screen.SETUP }
                 }
             } catch (e: RemoteException) { handler.post { error = "Device library unavailable: ${e.message}" } }
         }, "device-library").start()
@@ -1063,50 +961,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
         }, "asset-import").start()
     }
-    /**
-     * Copies the folder [tree] (a tree URI, or a folder inside one) to [destination], several files at a
-     * time; [progress] gets the bytes copied and the total. A packed base is over a thousand files, and
-     * one at a time through the document provider took half a minute.
-     */
-    private fun copyTree(tree: Uri, destination: File, progress: (Long, Long) -> Unit) {
-        data class Entry(val uri: Uri, val target: File, val size: Long)
-        val files = mutableListOf<Entry>()
-        fun list(documentId: String, into: File) {
-            check(into.mkdirs()) { "Cannot create ${into.name}" }
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
-            val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE)
-            val folders = mutableListOf<Pair<String, File>>()
-            contentResolver.query(children, columns, null, null, null)?.use { c ->
-                while (c.moveToNext()) {
-                    val name = c.getString(1) ?: error("Missing entry name")
-                    require(name != "." && name != ".." && '/' !in name) { "Invalid entry name" }
-                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) folders += c.getString(0) to File(into, name)
-                    else files += Entry(DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)), File(into, name), c.getLong(3))
-                }
-            } ?: error("Cannot read the folder")
-            for ((id, folder) in folders) list(id, folder)
-        }
-        list(if (DocumentsContract.isDocumentUri(this, tree)) DocumentsContract.getDocumentId(tree) else DocumentsContract.getTreeDocumentId(tree), destination)
-        val total = files.sumOf { it.size }; val copied = java.util.concurrent.atomic.AtomicLong(); var shown = -1L
-        progress(0, total)
-        val pool = Executors.newFixedThreadPool(4)
-        try {
-            // Largest first so one big file does not finish last on its own.
-            val jobs = files.sortedByDescending { it.size }.map { entry -> pool.submit {
-                contentResolver.openInputStream(entry.uri)?.use { input -> entry.target.outputStream().use { output ->
-                    val buffer = ByteArray(1 shl 20)
-                    while (true) {
-                        val n = input.read(buffer); if (n < 0) break
-                        output.write(buffer, 0, n)
-                        val done = copied.addAndGet(n.toLong())
-                        if (total > 0 && done * 100 / total != shown) { shown = done * 100 / total; progress(done, total) }
-                    }
-                } } ?: error("Cannot read ${entry.target.name}")
-            } }
-            for (job in jobs) try { job.get() } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? Exception) ?: e }
-        } finally { pool.shutdownNow() }
-    }
     private var listening = false
     // Sensor callbacks arrive here, not on the UI thread; motion() is a oneway Binder call.
     private val sensorThread by lazy { HandlerThread("guest-motion").apply { start() } }
@@ -1155,7 +1009,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; installer.visible = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; installer.visible = true; DownloadService.clearFinished(this); DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
     override fun onResume() {
         super.onResume(); displayResumed = true
         displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())

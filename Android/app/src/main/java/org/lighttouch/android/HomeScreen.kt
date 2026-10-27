@@ -111,8 +111,10 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
             host.status == "running" -> null
             else -> host.status
         }
+        // An asleep display is black, as on the device and on every board: the engine sends no frames while it is
+        // off, and the iPod touch 3G's and iPhone 3GS's models don't dim the last one with the backlight.
         AnimatedContent(state, Modifier.matchParentSize(), label = "guest-state") { shown ->
-            if (shown != null) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (shown == "asleep") 0.35f else 0.7f)),
+            if (shown != null) Box(Modifier.fillMaxSize().background(if (shown == "asleep") Color.Black else Color.Black.copy(alpha = 0.7f)),
                 contentAlignment = Alignment.Center) {
                 when (shown) {
                     "starting" -> Busy("Starting iOS…")

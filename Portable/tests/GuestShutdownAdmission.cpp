@@ -71,6 +71,24 @@ int main() {
     assert(!awake.request(0, false));
     assert(awake.admit(1, 0));
 
+    // Stop during boot on a guest whose agent answered on earlier boots: wait for this boot's agent (no wake: the
+    // display isn't asleep, iOS is starting), then admit it; give up at the boot budget.
+    GuestShutdownAdmission booting;
+    booting.expect_agent(); booting.observe(0);
+    assert(!booting.request(3 * second, true));
+    assert(!booting.admit(0, 3 * second));
+    assert(!booting.admit(0, 15 * second));
+    assert(booting.admit(1, 16 * second));
+    GuestShutdownAdmission never_up;
+    never_up.expect_agent();
+    never_up.request(3 * second);
+    assert(!never_up.admit(0, 3 * second + GuestShutdownAdmission::boot_budget_ns - 1));
+    assert(never_up.admit(0, 3 * second + GuestShutdownAdmission::boot_budget_ns));
+    // Once seen, a lost lease keeps the short refresh budget.
+    GuestShutdownAdmission expected_stale;
+    expected_stale.expect_agent(); expected_stale.observe(2); expected_stale.request(0);
+    assert(expected_stale.admit(2, GuestShutdownAdmission::refresh_budget_ns));
+
     GuestShutdownAdmission sleepy_overflow;
     sleepy_overflow.observe(2);
     assert(sleepy_overflow.request(maximum - 1, true));

@@ -13,7 +13,7 @@ class IpaError(message: String) : Exception(message)
 data class IpaInfo(val bundleId: String, val name: String, val version: String?, val minimumOS: String?, val bytes: Long)
 
 /**
- * Port of Desktop/app_services/ipa.py: bounded ZIP, Info.plist and Mach-O checks against the
+ * As the desktop app's crates/lighttouch-catalog/src/ipa.rs: bounded ZIP, Info.plist and Mach-O checks against the
  * guest, then a copy whose main executable's Unix mode is 0755. Archives from old collections
  * often store no mode bits, and installd then installs an app SpringBoard cannot launch.
  * Never extracts the archive; the repair rewrites only central-directory fields of a copy.

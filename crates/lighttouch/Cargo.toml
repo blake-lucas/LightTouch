@@ -1,0 +1,29 @@
+[package]
+name = "lighttouch"
+description = "LightTouch for Linux, Windows and macOS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lighttouch"
+path = "src/main.rs"
+
+[dependencies]
+lighttouch-core = { path = "../lighttouch-core" }
+serde = { version = "1", features = ["derive"] }
+lighttouch-catalog = { path = "../lighttouch-catalog" }
+lighttouch-model = { path = "../lighttouch-model" }
+lighttouch-services = { path = "../lighttouch-services" }
+cpal = "0.18"
+egui_extras = { version = "0.37", default-features = false, features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.17"
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }

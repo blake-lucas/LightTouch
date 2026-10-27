@@ -1,17 +1,10 @@
 package org.lighttouch.android
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -19,71 +12,51 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-internal enum class SetupStep { WELCOME, FILES, CREATING, DONE }
-/** A chosen file or folder; [board] is the prepared system's board when its device lock could be read. */
-internal data class PickedFile(val uri: Uri, val name: String, val folder: Boolean = false, val board: String = "")
+internal enum class SetupStep { WELCOME, DONE }
 
-/** Wizard state; the activity owns it so pickers and the import worker can update it. */
+/** Wizard state; the activity owns it so a finished preparation can show "ready". */
 internal class SetupState {
     var step by mutableStateOf(SetupStep.WELCOME)
-    var system by mutableStateOf<PickedFile?>(null)
-    var rom by mutableStateOf<PickedFile?>(null)
-    var name by mutableStateOf("")
-    var phase by mutableStateOf("")
-    /** How far the current phase is, 0 to 1; negative while its size is unknown. */
-    var progress by mutableFloatStateOf(-1f)
-    var error by mutableStateOf("")
     var created by mutableStateOf<String?>(null)
     /** How long each stage of a preparation took ("stage\tseconds" lines), shown folded on the finished screen. */
     var timings by mutableStateOf("")
-    var scanned by mutableStateOf<String?>(null)
-    fun reset(firstRun: Boolean) {
-        step = if (firstRun) SetupStep.WELCOME else SetupStep.FILES
-        system = null; rom = null; name = ""; phase = ""; progress = -1f; error = ""; created = null; scanned = null; timings = ""
+    fun reset() {
+        step = SetupStep.WELCOME; created = null; timings = ""
     }
 }
 
 /**
- * First launch: a welcome that leads into preparing a device from an IPSW on the phone (PrepareScreen). Its advanced
- * path, also reached from Add a device, adds device files the user already has: an iOS system and boot file, or one
- * folder holding them. Then the device is created and offered to start. Guest tools come with LightTouch.
+ * First launch: a welcome that leads into preparing a device from an IPSW on the phone (PrepareScreen), and the
+ * "ready" screen a preparation ends on, offering to start the device. Guest tools come with LightTouch.
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: () -> Unit, onPickSystem: () -> Unit,
-                         onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit,
+internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () -> Unit,
                          onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit) {
     BackHandler {
         when {
-            state.step == SetupStep.CREATING -> {}  // consumed: the import keeps running behind the wizard
-            state.step == SetupStep.FILES && !canCancel && state.system == null -> state.step = SetupStep.WELCOME
-            canCancel && state.step != SetupStep.DONE -> onCancel()
             state.step == SetupStep.DONE -> onFinish(false)
+            canCancel -> onCancel()
         }
     }
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }.testTag("setup"), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), Color.Transparent))))
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            if (canCancel && state.step != SetupStep.CREATING) Row(Modifier.fillMaxWidth().padding(4.dp)) {
+            if (canCancel) Row(Modifier.fillMaxWidth().padding(4.dp)) {
                 IconButton(onClick = { if (state.step == SetupStep.DONE) onFinish(false) else onCancel() }) { Icon(Icons.Filled.Close, "Close") }
             }
             AnimatedContent(state.step, Modifier.weight(1f), label = "setup-step") { step ->
                 when (step) {
-                    SetupStep.WELCOME -> Welcome(onPrepare) { state.step = SetupStep.FILES }
-                    SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickRom, onCreate, onPrepare)
-                    SetupStep.CREATING -> Creating(state.phase, state.progress)
+                    SetupStep.WELCOME -> Welcome(onPrepare)
                     SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish)
                 }
             }
@@ -92,7 +65,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
 }
 
 @Composable
-private fun Welcome(onPrepare: () -> Unit, onFiles: () -> Unit) {
+private fun Welcome(onPrepare: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center) {
         Box(Modifier.size(72.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
             Icon(LtIcons.Phone, null, Modifier.size(38.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -112,9 +85,6 @@ private fun Welcome(onPrepare: () -> Unit, onFiles: () -> Unit) {
         Button(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
         }
-        TextButton(onClick = onFiles, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp).testTag("setup_advanced")) {
-            Text("I already have the device files")
-        }
     }
 }
 
@@ -127,85 +97,6 @@ private fun Need(icon: ImageVector, title: String, detail: String) {
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-private fun GuideLink(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW,
-        Uri.parse("https://github.com/blake-lucas/LightTouch/blob/main/docs/ASSETS.md"))) }, modifier = modifier) {
-        Text("Where do I get these?")
-    }
-}
-
-@Composable
-private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () -> Unit,
-                  onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
-        Spacer(Modifier.height(24.dp))
-        Text("Add device files", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text("For a device prepared elsewhere, such as on a computer: its iOS system (.itbase) and, for the iPod touch 1G and 2G and the original iPhone, its boot file.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(20.dp))
-        FileRow(LtIcons.Folder, "Choose a folder", state.scanned ?: "LightTouch finds the files in it", null, onPickFolder, "setup_folder", action = true)
-        FileRow(LtIcons.Layers, "iOS system", "Required · .itbase", state.system, onPickSystem, "setup_system")
-        // Only the iPod touch 1G and 2G and the original iPhone boot from a boot ROM; a system known to be for
-        // another device needs none.
-        val board = state.system?.board ?: ""
-        val rom = Bootrom.forBoard(board)
-        if (board.isEmpty() || rom != null) FileRow(LtIcons.Chip, "Boot file",
-            rom?.let { "Required · the ${it.label} boot ROM" } ?: "Required for iPod touch 1G and 2G, and the original iPhone · bootrom.bin", state.rom, onPickRom, "setup_rom")
-        if (state.system != null && state.rom == null && rom != null) Text("Without the boot file this device will not start; you can still add it now.",
-            style = MaterialTheme.typography.bodySmall, color = LtColors.Warning, modifier = Modifier.padding(top = 4.dp))
-        Spacer(Modifier.height(16.dp))
-        OutlinedTextField(state.name, { if (fitsDeviceName(it)) state.name = it }, Modifier.fillMaxWidth().testTag("setup_name"), singleLine = true,
-            label = { Text("Name (optional)") }, placeholder = { Text("Named after the model and iOS version") })
-        if (state.error.isNotEmpty()) Text(state.error, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.height(20.dp))
-        Button(onClick = onCreate, enabled = state.system != null, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_create"),
-            contentPadding = PaddingValues(horizontal = 32.dp)) { Text("Create device", style = MaterialTheme.typography.titleMedium) }
-        GuideLink(Modifier.align(Alignment.CenterHorizontally))
-        TextButton(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("setup_prepare")) {
-            Text("Prepare from an IPSW instead")
-        }
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-/** A file to choose, with a check once chosen; [action] rows (the folder scan) have no check. */
-@Composable
-private fun FileRow(icon: ImageVector, title: String, hint: String, picked: PickedFile?, onPick: () -> Unit, tag: String, action: Boolean = false) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
-        .background(MaterialTheme.colorScheme.surfaceContainer).clickable(onClick = onPick).padding(16.dp).testTag(tag),
-        verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, Modifier.size(24.dp), tint = if (picked != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(picked?.name ?: hint, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (picked != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (picked != null) Icon(Icons.Filled.CheckCircle, "Chosen", tint = MaterialTheme.colorScheme.primary)
-        else if (!action) Box(Modifier.size(22.dp).border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
-    }
-}
-
-@Composable
-private fun Creating(phase: String, progress: Float) {
-    Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Creating your device", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(phase.ifEmpty { "Copying files…" } + if (progress >= 0) " ${(progress * 100).toInt()}%" else "",
-            Modifier.testTag("setup_phase"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center)
-        Spacer(Modifier.height(24.dp))
-        if (progress >= 0) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
-        else LinearProgressIndicator(Modifier.fillMaxWidth())
-        Spacer(Modifier.height(12.dp))
-        Text("Keep LightTouch open until it finishes.", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 

@@ -3,8 +3,8 @@
  *
  * A short-lived, private child of the app. It talks ONLY to the app's own
  * usbmuxd-qemu daemon (--socket, an owner-only Unix socket) and never to a
- * system usbmuxd or a physical device. Port of Desktop/app_services/helper.py
- * and mobile.py:
+ * system usbmuxd or a physical device. As the desktop app's
+ * crates/lighttouch-services:
  *
  *   liblt_appservice.so info    --socket <mux.sock>
  *   liblt_appservice.so install --socket <mux.sock> --ipa <path> --bundle-id <id>

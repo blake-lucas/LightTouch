@@ -21,5 +21,10 @@ docs/*
 !docs/BUILDING.md
 !docs/PROFILING.md
 !docs/COMPATIBILITY.md
+!docs/DESKTOP.md
+!docs/NETWORK.md
 scripts/build.env
 *.profraw
+
+# Rust desktop app
+/target/

@@ -13,7 +13,7 @@ This guide follows the verified candidate20 build. It is a Debug development APK
 | Portable domain, firmware and CActivation | `53ea530954411460d915aace69249398801c4101` |
 | QEMU engine and JNI bridge headers/helper, both ABIs | `b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2` |
 
-All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `Portable/firmware/firmware-catalog.json`.
+All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `Portable/firmware/firmware-catalog.json`. (That applies to those revisions; today the preparer is the Rust `crates/` workspace, CActivation included, and `Portable` builds without it.)
 
 For an archived Android build, export the catalog explicitly alongside Android:
 
@@ -51,7 +51,7 @@ Use the tool versions in [README](README.md#pinned-tools): JDK17, NDK28.2.136763
 The verified build requires these supplied local inputs:
 
 - Real Bionic engine inputs for **both** ABIs: each directory contains `libqemu-arm.so`, its producer manifest, the matching NDK `libc++_shared.so`, and its audited notice bundle. Build/relink recipes are in QEMU's `contrib/portable/README.md`; host/glibc libraries cannot substitute.
-- `build/firmwarekit/android` from `scripts/build.sh firmwarekit-android` (firmwarekit and lighttouch-oneshot, arm64), passed as `-PfirmwareKitDir`.
+- `build/firmwarekit/android` from `scripts/build.sh firmwarekit-android` (firmwarekit, arm64), passed as `-PfirmwareKitDir`.
 - The frozen candidate02 x86 ANGLE three-library/closure/notice inputs and frontend notice bundle. Use their sealed producer manifest SHA256 pins; keep these legal build inputs separate from firmware/ROM/guest assets. ARM uses the platform provider; packaging ANGLE does not enable it automatically.
 
 Set the following placeholders to your verified source/input directories and to the publisher's sealed manifest pins. The recipe below is the candidate20 command with machine-local paths parameterized; all properties were used in the tested build.
@@ -155,21 +155,15 @@ adb -s "$LT_DEVICE_SERIAL" install -r "$LT_TEST_APK"
 adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
 ```
 
-Normal use: import the legitimate matching guest package and optional ROM through the pickers, then import a prepared `.itbase`/folder. Each validated import creates a new record and independent state; select the intended board/build. n72's ROM is a separately supplied legitimate input. Prepared-kernel boards use native validated `kboot.bin` and do not require an arbitrary boot ROM. Start, Home, Power, Pause/Resume, Screenshot and Stop are semantic controls. Backgrounding pauses/cancels input; reopen and explicitly Resume. Guest Home/Photos readiness requires inspecting real guest pixels and response.
+Normal use: **Get started** or **Add device** prepares a device from an IPSW on the phone (RUNNING.md, "Add a device"). Each preparation creates a new record and independent state. Start, Home, Power, Pause/Resume, Screenshot and Stop are semantic controls. Backgrounding pauses/cancels input; reopen and explicitly Resume. Guest Home/Photos readiness requires inspecting real guest pixels and response.
 
-For the fixed private-fixture harness, the owner may provision verified inputs into Debug app storage at `files/private-fixtures/n72ap-7E18.itbase`, `files/bootrom.bin`, and `files/guest.itpack`; the harness expects its specific verified baseline, not arbitrary assets. Use a local authorized transfer into those paths, or the normal pickers. For example, a verified private package can be streamed without staging it in public/shared storage:
-
-```sh
-adb -s "$LT_DEVICE_SERIAL" shell "run-as org.lighttouch.android sh -c 'cat > files/guest.itpack'" < /path/to/private/matching-guest.itpack
-```
-
-Verify transferred bytes against the owner's trusted inventory before invoking the opt-in import test. Keep guest sources, prepared outputs, app-private state, logs and captures outside Git and cloud uploads. Do not delete `.dirty` or replace a baseline to recover a session. Ordinary Start rejects interrupted state; **Recover retained state** explicitly cold-boots preserved writable data in a fresh worker. Confirmed guest halt and successful engine cleanup, not timeout/exit0 alone, clear dirty state.
+Keep guest sources, prepared outputs, app-private state, logs and captures outside Git and cloud uploads. Do not delete `.dirty` or replace a baseline to recover a session. Ordinary Start rejects interrupted state; **Recover retained state** explicitly cold-boots preserved writable data in a fresh worker. Confirmed guest halt and successful engine cleanup, not timeout/exit0 alone, clear dirty state.
 
 ## Preparation, tests and current limits
 
-**Prepare from an IPSW** uses the shared native userspace recipe in a separate same-UID firmware service. The app downloads or copies the stock IPSW and checks it against the catalog, and builds the recipe's guest tools folder (`inventory.json` plus `release-guest-unpacked/guest-tools`) from the `armv6.itpack` the APK carries (`-PguestToolsDir`). Native discovers supported catalog routes, validates outputs/package hashes and writes the NAND as one ITNAND01 file; the app imports it as a new record. Completion/import is distinct from boot acceptance.
+**Prepare from an IPSW** runs the APK's `firmwarekit` in a separate same-UID firmware service. The app downloads or copies the stock IPSW and checks it against the catalog; the guest tools come from the APK (`-PguestToolsDir`). The output is moved into the library as a new record. Completion is distinct from boot acceptance.
 
-Linux uses the same preparer and Portable domain; see [firmware preparation](../Portable/firmware/README.md) and [Linux frontend](../Linux/README.md). There is no Android-specific firmware recipe or boot-argument list. A locally prepared base must still boot, accept input, halt cleanly and preserve state on each required target.
+The desktop app uses the same preparer and Portable domain; see [firmware preparation](../Portable/firmware/README.md) and [the desktop app](../docs/DESKTOP.md). There is no Android-specific firmware recipe or boot-argument list. A locally prepared base must still boot, accept input, halt cleanly and preserve state on each required target.
 
 Foreground MainActivity before every `am instrument --no-restart` test. Inspect JUnit output and private receipts: shell exit0 is not a JUnit pass. Ordinary instrumentation completion can terminate the target; choose session holds/stop/recovery deliberately. The following owner invocation is planned against candidate20. Run it before starting a guest. It exercises three real-View/fake-endpoint cases and six synthetic frame-policy cases; it does not exercise a guest:
 

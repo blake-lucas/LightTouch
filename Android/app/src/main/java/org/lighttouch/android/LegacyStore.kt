@@ -46,9 +46,9 @@ class StoreError(message: String, val status: Int = 0) : Exception(message)
 data class StoreCopy(val ipaId: Int, val version: String, val size: Long?, val minimumOS: String?)
 
 /**
- * Legacy Store (legacystore.app) client: a port of Desktop/app_services/catalog.py and
- * LightTouchCore's CatalogClient/CatalogCopy. Nothing is downloaded until download() is
- * called, and a copy is rechecked against the target immediately before transfer.
+ * Legacy Store (legacystore.app) client, as the desktop app's crates/lighttouch-catalog/src/store.rs.
+ * Nothing is downloaded until download() is called, and a copy is rechecked against the target
+ * immediately before transfer.
  * MD5 checks archive integrity, not publisher authenticity.
  */
 object LegacyStore {

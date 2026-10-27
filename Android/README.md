@@ -59,25 +59,19 @@ Bionic ABI closures; missing engine libraries fail explicitly, and an arm64-only
 build cannot qualify the AVD gates. Review pinned dependency verification changes
 when intentionally updating versions/checksums.
 
-## Private imports and state
+## Devices and state
 
-The UI accepts a prepared `.itbase` archive or prepared base directory selected
-through Android’s document picker; the native domain validates archive entries,
-locked outputs and metadata and atomically publishes an independent copy. The
-archive SHA256 is computed before native import to detect changes during
-processing; it is a local integrity digest, not a publisher authenticity claim.
-It also imports the matching guest tool package and, only for recipes requiring
-it, the legitimate boot ROM into app-private
-`files/bootrom.bin` and `files/guest.itpack` as inputs for the next import. Firmware
+Devices are added only by preparing them from an IPSW on the phone (RUNNING.md, "Add a device"); the native domain
+validates the preparer's locked outputs and metadata and atomically publishes them as a new record. Firmware
 is never bundled. Every native record under `files/library` receives its own
 immutable base, matching package/optional ROM copies, writable state and serial
 log. The native library generates record IDs, persists selection atomically and
-exposes board/build/capabilities to the device selector. Importing a second device
-never replaces the first. The original selected files stay intact. A legacy
+exposes board/build/capabilities to the device selector. Adding a second device
+never replaces the first. A legacy
 `files/base`/`files/state` pair is transactionally adopted only into an empty
 library, preserving its dirty marker, overlay and source copies.
 Prepared-kernel routes use the base’s validated kboot.bin and do not require a
-hardware boot ROM. The native catalog/recipe owns compatibility checks; import success is not boot
+hardware boot ROM. The native catalog/recipe owns compatibility checks; adding a device is not boot
 acceptance. The first UI deliberately preserves an existing device rather than
 replacing its state.
 
@@ -193,18 +187,11 @@ selected by native code. Recipes, architecture/tool selection and boot arguments
 remain native. Each new job uses a fresh firmware worker. Interrupted staging trees
 are never admitted as devices, and an existing device is preserved on failure.
 
-Preparation runs `firmwarekit` (Packages/FirmwareKit) and `lighttouch-oneshot` from the APK's
-nativeLibraryDir; `scripts/build.sh firmwarekit-android` builds them and `-PfirmwareKitDir` packages
-them. Preparation is not G6 acceptance until the resulting base boots on
+Preparation runs `firmwarekit` (Rust, crates/lighttouch-firmware) from the APK's nativeLibraryDir; its
+boots load the APK's engine themselves (`firmwarekit oneshot`). `scripts/build.sh firmwarekit-android`
+builds it and `-PfirmwareKitDir` packages it. Preparation is not G6 acceptance until the resulting base boots on
 Linux and unrooted Android with actual guest rendering and usable input.
 
-Private fixture import is explicit opt-in instrumentation:
-`-e class org.lighttouch.android.PrivateFixtureImportTest -e importPrivateFixture true`.
-Provision `files/private-fixtures/n72ap-7E18.itbase`, `files/bootrom.bin`, and
-`files/guest.itpack` privately with the verified handoff hashes. The harness
-uses production `IEngine.importBase`, checks record preservation and selection,
-checks that status remains responsive during native validation, and writes
-`files/import-evidence-*/result.json`. Import success does not prove guest boot.
 UI status polling uses one background request at a time; native startup does
 integrity admission outside the frame/control mutex and publishes handles only
 when ready. Stop during admission is retained and applied when startup returns.

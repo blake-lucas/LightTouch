@@ -1,4 +1,6 @@
 #include "lighttouch.h"
+#include "Network.hpp"
+#include <filesystem>
 #include <jni.h>
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -643,6 +645,96 @@ JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *en
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
+// The listener and CA live for this worker; route/date/policy can change live. The engine forwards to the socket
+// path from boot whatever the mode, and the proxy is made the first time networking is on (at boot or live).
+static std::mutex network_guard;
+static std::unique_ptr<lt::network::Proxy> network_proxy;
+static uint32_t network_mode = 0;
+static uint32_t network_local = 0;
+static std::string network_socket;
+static std::string network_identity;
+static std::string network_roots;
+static void network_listen(const lt::network::Configuration &config) {
+    network_proxy=std::make_unique<lt::network::Proxy>(network_identity,config,network_roots);
+    std::filesystem::remove(network_socket);
+    try { network_proxy->listen(network_socket); } catch(...) { network_proxy.reset(); throw; }
+}
+JNI(networkPrepare) jstring JNICALL Java_org_lighttouch_android_Native_networkPrepare(JNIEnv *env,jobject,jstring root,jstring record,jint mode,jstring date,jboolean local,jstring roots) {
+    Utf directory(env,root),id(env,record),day(env,date),certificates(env,roots);
+    try {
+        if(mode<0 || mode>2 || !id.value || std::string(id.value).empty() ||
+           std::string(id.value).find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")!=std::string::npos)
+            return string(env,"Invalid network configuration");
+        std::lock_guard<std::mutex> lock(network_guard);
+        network_proxy.reset();network_mode=uint32_t(mode);network_local=local;
+        network_identity=std::string(directory.value)+"/network/"+id.value;network_roots=certificates.value;
+        network_socket=std::string(directory.value)+"/network-proxy.sock";
+        std::filesystem::remove(network_socket);
+        if(mode) {
+            lt::network::Configuration config;config.mode=mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
+            config.archive_date=day.value;config.local_network=local;
+            network_listen(config);
+        }
+        return string(env,"");
+    } catch(const std::exception &e) { return string(env,e.what()); }
+}
+JNI(networkCertificate) jbyteArray JNICALL Java_org_lighttouch_android_Native_networkCertificate(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(network_guard);
+    auto der=network_proxy?network_proxy->certificate():std::string();
+    auto bytes=env->NewByteArray(jsize(der.size()));
+    if(!der.empty())env->SetByteArrayRegion(bytes,0,jsize(der.size()),reinterpret_cast<const jbyte *>(der.data()));
+    return bytes;
+}
+JNI(networkUpdate) jobjectArray JNICALL Java_org_lighttouch_android_Native_networkUpdate(JNIEnv *env,jobject,jint mode,jstring date,jboolean local) {
+    Utf day(env,date);
+    lt_error error=LT_INIT(lt_error);
+    lt_status status=LT_OK;
+    std::string message;
+    try {
+        const bool valid=mode>=0 && mode<=2 && day.value && lt::network::Configuration::valid_date(day.value);
+        lt::network::Configuration config;
+        if(valid) {
+            config.mode=mode==0?lt::network::Mode::off:mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
+            config.archive_date=day.value;config.local_network=local;
+        }
+        // Turning networking on for the first time this session makes the proxy, outside the presenter's guard
+        // (a first identity takes a key generation).
+        if(valid && mode) {
+            std::lock_guard<std::mutex> lock(network_guard);
+            if(!network_proxy && !network_socket.empty())network_listen(config);
+        }
+        std::scoped_lock lock(guard,network_guard);
+        if(!valid) {
+            status=LT_INVALID;message="Invalid network configuration";
+        } else if(!network_proxy && mode) {
+            status=LT_UNSUPPORTED;message="Networking isn't available in this session; stop and start the device";
+        } else {
+            status=lt_runtime_network_policy(runtime,uint32_t(mode),local,&error);
+            if(status==LT_OK) {
+                if(network_proxy)network_proxy->configure(std::move(config));
+                network_mode=uint32_t(mode);network_local=local;
+            } else message=result(status,error);
+        }
+    } catch(const std::exception &e) { status=LT_IO;message=e.what(); }
+    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,std::to_string(status)));
+    env->SetObjectArrayElement(output,1,string(env,message));
+    return output;
+}
+JNI(networkStatus) jobjectArray JNICALL Java_org_lighttouch_android_Native_networkStatus(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(network_guard);
+    auto activity=network_proxy?network_proxy->activity():lt::network::Activity{};
+    auto output=env->NewObjectArray(8,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,network_proxy?activity.summary():"Off"));
+    env->SetObjectArrayElement(output,1,string(env,network_proxy?network_proxy->fingerprint():""));
+    env->SetObjectArrayElement(output,2,string(env,std::to_string(activity.connections)));
+    env->SetObjectArrayElement(output,3,string(env,std::to_string(activity.active)));
+    env->SetObjectArrayElement(output,4,string(env,std::to_string(activity.completed)));
+    env->SetObjectArrayElement(output,5,string(env,std::to_string(activity.failed)));
+    env->SetObjectArrayElement(output,6,string(env,activity.last_result));
+    env->SetObjectArrayElement(output,7,string(env,activity.last_result_error?"1":"0"));return output;
+}
+
 static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty,bool headphones) {
     bool qmp_requested=false;
     bool touch_trace_requested=false;
@@ -707,6 +799,8 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
     engine.boot.headphones=headphones && (prepared_board.capabilities&LT_BOARD_HEADPHONES);
+    engine.boot.network_mode=network_mode;engine.boot.network_local=network_local;
+    engine.boot.network_socket=network_socket.empty()?nullptr:network_socket.c_str();
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
     if(status==LT_OK)status=lt_runtime_set_frame_listener(prepared_runtime,frame_published,nullptr,&error);
 #ifdef LT_ANDROID_DEBUG
@@ -1104,8 +1198,9 @@ JNI(guestRequest) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestR
     std::lock_guard<std::mutex> lock(guard);Utf text(env,argument);lt_error error=LT_INIT(lt_error);uint64_t id=0;
     lt_guest_request request=LT_INIT(lt_guest_request);request.operation=operation;request.timeout_ms=timeout;request.argument=text.value;
     auto status=runtime?lt_runtime_guest_request(runtime,&request,&id,&error):LT_AGAIN;
-    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
-    env->SetObjectArrayElement(output,0,string(env,std::to_string(id)));env->SetObjectArrayElement(output,1,string(env,result(status,error)));return output;
+    auto output=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,std::to_string(id)));env->SetObjectArrayElement(output,1,string(env,result(status,error)));
+    env->SetObjectArrayElement(output,2,string(env,std::to_string(status)));return output;
 }
 JNI(guestPoll) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestPoll(JNIEnv *env,jobject,jlong id) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);lt_guest_result completed=LT_INIT(lt_guest_result);

@@ -1,8 +1,0 @@
-# For Android cross builds (swift build --pkg-config-path build-support/android-pkgconfig): ZIPFoundation asks
-# pkg-config for zlib, and the host's zlib.pc would put the host's library folder on the Android link. The NDK's
-# libz is on the SDK's own search path. It also puts ../android-libcxx first on the link (libc++ statically).
-Name: zlib
-Description: zlib from the Android NDK sysroot
-Version: 1.3
-Libs: -L${pcfiledir}/../android-libcxx -lz
-Cflags:

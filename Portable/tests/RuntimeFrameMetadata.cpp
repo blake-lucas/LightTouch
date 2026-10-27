@@ -18,6 +18,20 @@ static lt_frame_info metadata(uint64_t sequence) {
 }
 
 int main() {
+    // Live policy cannot open an offline boot, accept invalid settings, or
+    // schedule engine work before start/after shutdown admission.
+    {
+        auto offline = std::make_unique<lt_runtime>(nullptr);
+        lt_error error{sizeof(error), LT_ABI_VERSION, 0, {}};
+        assert(lt_runtime_network_policy(nullptr, 1, 0, &error) == LT_AGAIN);
+        assert(lt_runtime_network_policy(offline.get(), 3, 0, &error) == LT_INVALID);
+        assert(lt_runtime_network_policy(offline.get(), 1, 2, &error) == LT_INVALID);
+        assert(lt_runtime_network_policy(offline.get(), 1, 0, &error) == LT_AGAIN);
+        offline->started = true;
+        assert(lt_runtime_network_policy(offline.get(), 1, 0, &error) == LT_UNSUPPORTED);
+        offline->stopping = true;
+        assert(lt_runtime_network_policy(offline.get(), 1, 0, &error) == LT_AGAIN);
+    }
     // Exercise the actual Stop/cancel entry points without any engine: after
     // Stop owns input, the watchdog's immediate cancel and later surface-loss
     // cancels must not enqueue an engine-wide release that clips its wake pulse.

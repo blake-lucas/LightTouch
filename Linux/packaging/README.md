@@ -1,140 +1,17 @@
-# x86_64 AppImage runtime packaging
+# Linux packaging pieces
 
-`stage-appimage.py` consumes an explicit, hash-pinned runtime manifest. It never
-fetches dependencies or includes firmware, guest tools, writable state or fixture
-folders. Already prepared bases remain outside the AppImage and are referenced by
-private launcher profiles. The same native frontend/shared engine used by other
-Linux acceptance runs is the product payload; a different backend is not silently
-substituted.
+The desktop app's Linux AppImage is built by `scripts/build-release.sh` (its `linux` and `desktop` steps) and
+`scripts/release/package-desktop.py`. This folder keeps what those use and the USB bridge's own build:
 
-Build frontend, engine, dependencies and a relocatable Python 3.9+ with Tk 8.6 in
-a glibc 2.31 x86_64 build environment. The compatibility target is kernel 5.4+,
-glibc 2.31+ and X11/XWayland. Current-host artifacts must pass the symbol check;
-relabelling a binary does not lower its glibc requirement. Host glibc, GCC runtime libraries and graphics
-providers are deliberately excluded. Keeping the host's libstdc++/libgcc avoids
-loading an older bundled C++ runtime into modern vendor graphics drivers; the
-payload's required GLIBCXX/CXXABI symbols are recorded in runtime-manifest.json. Generic EGL/GLES/GL dispatch and vendor
-GPU drivers must be supplied by the host; no software fallback is selected.
-The host also supplies GBM, DRM and Wayland libraries. Mesa's EGL provider can
-link Wayland even for a surfaceless context; bundling an older Wayland client can
-prevent that provider from loading before any guest drawing occurs.
+| File | What it is |
+|---|---|
+| `build-mobile-deps.py` | Builds the hash-pinned libplist, libimobiledevice, libusbmuxd and OpenSSL stack and the private `usbmuxd-qemu` daemon (the USB bridge between the engine and the app's services), in the Debian 11 (glibc 2.31) build image. Pins come from `build-support/dependencies.json`. `--prepare-only` fetches and checks the sources; `--daemon-only-from DIR` rebuilds only the daemon against a stack built before. Its output is the `mobile-private-runtime-*` input the release's `linux` step mounts. |
+| `patches/` | The daemon's patches: standard Linux headers, and the private QEMU socket configuration. Android's USB bridge build (`Android/packaging/build-mobile-android.py`) applies them too. |
+| `refresh-private-daemon.py` | Rebuilds only the daemon (`build-mobile-deps.py --daemon-only-from`), runs `test-private-daemon.py` on it, then the command given after `--`. |
+| `test-private-daemon.py` | Exercises the built daemon without a guest or a physical USB device. |
+| `seal-appimage.py` | Seals an AppDir into an AppImage with the pinned appimagetool and runtime (`package-desktop.py --appimage`). |
+| `lighttouch.svg` | The app icon in the AppImage. |
 
-Manifest schema (each file has a real absolute source, destination, SHA-256 and
-license provenance):
-
-```json
-{
-  "schema": 1,
-  "architecture": "x86_64",
-  "glibc_max": "2.31",
-  "python_stdlib": "python3.9",
-  "files": [
-    {
-      "source": "/private/frozen/lighttouch-linux",
-      "destination": "usr/bin/lighttouch-linux",
-      "sha256": "ACTUAL_SHA256",
-      "license": "GPL-2.0-or-later; see bundled notices and corresponding source"
-    }
-  ]
-}
-```
-
-The complete list must also include `usr/lib/lighttouch/libqemu-arm.so`,
-`usr/bin/python3`, `usr/lib/python3.9/` stdlib/extension modules including tkinter
-and `_tkinter`, Tcl/Tk scripts under `usr/share/tcltk/{tcl8.6,tk8.6}`, required shared
-libraries under `usr/lib/`, license texts and
-`usr/share/licenses/LightTouch/SOURCE.txt` with the matching source/rebuild notice.
-Resolve source symlinks before auditing. Do not use broad copies of `/usr`, HOME,
-SDKs or private asset directories. Python's encoding modules and extension-module
-runtime dependencies are required; the few mandatory-file checks are a minimum,
-not a substitute for actual launched Python/Tk and guest tests. A manifest is not
-an assertion of legal source completeness or runtime qualification.
-
-```sh
-/usr/bin/python3 Linux/packaging/stage-appimage.py \
-  --manifest /private/audited-runtime-inputs.json \
-  --output /private/package/LightTouch.AppDir
-```
-
-The stage verifies SHA-256 before and after copying, rejects private guest asset
-names/path traversal/duplicate targets/host-specific RPATHs, checks every ELF is
-x86_64 with GLIBC requirements at most 2.31, and checks declared ELF NEEDED closure.
-It writes `runtime-manifest.json` with exact bundled hashes and host dependencies.
-`dlopen` dependencies still require explicit runtime inventory and actual tests.
-
-Use `seal-appimage.py` with its hash-pinned tool and runtime to seal the AppDir:
-
-```sh
-python3 Linux/packaging/seal-appimage.py \
-  --appdir /private/package/LightTouch.AppDir \
-  --tool /private/tools/appimagetool-x86_64.AppImage \
-  --runtime /private/tools/runtime-x86_64 \
-  --output /private/package/LightTouch-x86_64.AppImage \
-  --evidence /private/package/seal-01
-```
-
-Record tool/version/hash, package hash, source revisions and complete payload in
-private build receipts. AppImage sealing and binary builds require the shared
-heavy-resource slot; do not run them concurrently with a guest. The sealer uses a
-writable scratch copy, zstd compression, two compression threads and a five-minute
-deadline. A real experimental AppImage was sealed on 2026-10-15 after all 12 native
-Debian 11 CTests and the 163-ELF/1,281-file staging audit passed. Actual launcher,
-same-engine guest boot/render/multi-touch/audio/clean restart and targeted distro
-qualification remain required before claiming broad Linux compatibility.
-AppImage FUSE is optional: users can use `--appimage-extract` and `squashfs-root/AppRun`
-when FUSE is unavailable. The native guest worker semantics remain unchanged.
-
-The Debian 11 build recipe uses the signed archived Debian repositories and a
-bounded Docker container. Keep its build product directory separate from a fresh
-per-attempt evidence directory; the runner refuses to overwrite evidence. It
-limits memory and memory+swap to 4 GiB, CPUs to two and PIDs to 256, samples the
-actual cgroup, and stops at 25 minutes or below 6 GiB available host memory.
-Admission requires 8 GiB available. All supplied source mounts stay read-only;
-QEMU's editable Python setup writes only into a private source clone retaining
-the exact commit. GCC 10 uses an explicitly stamped `gnu++17` override; upstream's
-default is unchanged.
-
-```sh
-python3 Linux/packaging/run-bounded-build.py \
-  --app /absolute/committed/LightTouch \
-  --qemu /absolute/committed/qemu-ios \
-  --output /private/build-products \
-  --evidence /private/build-products/attempt-01 \
-  --name lighttouch-bullseye-build01
-```
-
-The QEMU recipe must support `--cpp-standard=gnu++17`. Dependencies must first be
-hash-verified and extracted by the pinned portable `--prepare-only` recipes using
-a host Python with the safe tar extraction filter; Debian 11's Python 3.9 lacks
-that API. Put these prepared public source trees in `OUTPUT/deps-full` and
-`OUTPUT/crypto`; prepare the mobile dependencies with `build-mobile-deps.py
-OUTPUT/mobile-v3 --prepare-only`. Never place private guest material in this build directory.
-`collect-bullseye-runtime.py` records actual ELF dependency closure, also includes
-SDL's dynamically loaded ALSA/Pulse roots, and bundles Python/Tcl/Tk, copyright
-texts and native/dependency source archives. Its inventory records precise Debian
-source versions. Distribution additionally requires retaining the complete
-matching Debian/runtime source closure; an inventory alone is not that closure.
-The AppDir still requires actual relocation, display/audio and guest tests.
-
-If compilation completed but collection failed, retain that attempt and save its
-stopped container with `docker commit`. The runner's explicit
-`--collect-only-image IMAGE --runtime-name runtime-next` mode runs only collection
-with the same resource guards, producing a fresh runtime directory and evidence.
-Readonly recursive Git alternates are mounted to preserve shared-clone source
-archives without mutating the supplied repositories.
-
-Fetch exact Debian source archives into a separate corresponding-source bundle:
-
-```sh
-python3 Linux/packaging/fetch-debian-sources.py \
-  --inventory /private/package/debian-source-inventory.json \
-  --output /private/source-bundle/debian \
-  --apt-workdir /private/source-bundle/apt \
-  --keyring /private/verified/debian-archive-keyring.gpg
-```
-
-This uses signed archive indices and private APT state, installs nothing, records
-hashes, and has a 20-minute total deadline. Preserve its complete source bundle
-beside the AppImage. The AppImage runtime's additional static-library source and
-license requirements must also be audited; Debian source completion alone does
-not qualify the whole artifact.
+The AppImage needs glibc 2.31 or later and X11 or Wayland. The host supplies the GPU drivers (EGL/GL), glibc
+and the C++ runtime; the AppImage bundles the engine, the USB bridge and the seven libraries they load beyond the
+base system. Without FUSE, run it with `--appimage-extract` and then `squashfs-root/AppRun`.

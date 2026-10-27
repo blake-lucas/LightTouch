@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
+    var networkOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (networkOpen) { NetworkSettingsScreen(host) { networkOpen = false }; return }
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
@@ -47,22 +49,25 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).testTag("settings")) {
-                Group("Controls") {
+                SettingsGroup("Controls") {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
                     SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
                     SwitchRow(LtIcons.Vibrate, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
                 }
-                Group("Audio") {
+                SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
                 }
-                Group("Display") {
+                SettingsGroup("Connection") {
+                    ActionRow(LtIcons.Network, "Network", s.network.summary, tag = "open_network") { networkOpen = true }
+                }
+                SettingsGroup("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
                     ChoiceRow(LtIcons.Layers, "Screen scaling", ScreenScaling.entries, s.scaling, { it.label },
                         if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
-                Group("Performance overlay") {
+                SettingsGroup("Performance overlay") {
                     ChoiceRow(LtIcons.Speed, "Detail", OverlayLevel.entries, s.overlay, { it.label }, tag = "overlay_level") { s.overlay = it }
                     if (s.overlay != OverlayLevel.OFF) {
                         OverlayPreview(host)
@@ -75,7 +80,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         SwitchRow(null, "Show in device view", "Also show it on the drawn device, not only in full screen", s.overlayInDeviceView) { s.overlayInDeviceView = it }
                     }
                 }
-                Group("Diagnostics") {
+                SettingsGroup("Diagnostics") {
                     SwitchRow(LtIcons.Timeline, "Inspect button", "A button that pauses iOS and opens the frame inspector, to pick apart a hitch you just saw", s.hitchButton, "hitch_toggle") { s.hitchButton = it }
                     SwitchRow(LtIcons.Chip, "Detailed frame timing", "Records each frame's guest CPU, GL and lock time so the overlay and inspector can explain slow frames. Costs about 6% speed while on.", s.detailedTiming, "detailed_timing") { s.detailedTiming = it; host.applySettings() }
                     if (!s.detailedTiming) ActionRow(LtIcons.Save, if (host.profileRecording) "Stop profile recording" else "Record a profile",
@@ -84,13 +89,13 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
                         "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                 }
-                Group("Device") {
+                SettingsGroup("Device") {
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
                         enabled = host.selected != null && !host.active && !host.busy) { host.pickGuestTools() }
                     ActionRow(LtIcons.Download, "Prepare from an IPSW", "Choose a device and iOS version; LightTouch downloads Apple's firmware and builds it here",
                         enabled = !host.active && !host.busy) { host.openPreparation() }
                 }
-                Group("About") {
+                SettingsGroup("About") {
                     ActionRow(LtIcons.Info, "LightTouch ${BuildConfig.VERSION_NAME}", "Classic iOS for Android") {}
                     ActionRow(LtIcons.Code, "Source code", "github.com/blake-lucas/LightTouch") {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/blake-lucas/LightTouch")))
@@ -104,7 +109,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
 }
 
 @Composable
-private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 6.dp), content = content)
@@ -117,7 +122,7 @@ private fun RowIcon(icon: ImageVector?, alpha: Float = 1f) {
 }
 
 @Composable
-private fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
+internal fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
                       info: (() -> Unit)? = null, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         RowIcon(icon)
@@ -154,7 +159,7 @@ private fun <T> ChoiceRow(icon: ImageVector?, title: String, options: List<T>, s
 }
 
 @Composable
-private fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enabled: Boolean = true, tag: String? = null, onClick: () -> Unit) {
+internal fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enabled: Boolean = true, tag: String? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).then(if (tag != null) Modifier.testTag(tag) else Modifier)
         .padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         val alpha = if (enabled) 1f else 0.4f

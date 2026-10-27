@@ -1,9 +1,7 @@
 # Running the Android port
 
-This development port uses locally supplied, matching guest assets. The APK and
-public source do not provide Apple firmware, boot ROMs, guest packages, prepared
-NAND, SDKs or personal device state. You can run an already prepared base without
-a Mac, root, a stock IPSW or an Apple SDK.
+The APK and public source do not provide Apple firmware, boot ROMs, prepared NAND, SDKs or personal device state:
+the app downloads the IPSW and boot ROM and prepares each device on the phone, without a Mac, root or an Apple SDK.
 
 ## Current artifact and compatibility
 
@@ -60,68 +58,20 @@ substitutes. Do not run a historical guest-control test against an arbitrary new
 main APK. See the test guidance in
 [BUILD-AND-RUN.md](BUILD-AND-RUN.md).
 
-## Import a prepared n72 base
+## Add a device
 
-Obtain your legitimate clean `n72ap-7E18` prepared `.itbase`, its matching n72 boot
-ROM and matching ARMv6 `.itpack`. Check them against the owner's trusted inventory.
-Keep the original assets read-only. A reference prepared base and a base generated
-from stock firmware have different identities/provenance; neither is an export of
-the other's writable photographs or preferences.
+**Get started** (first launch) or **Add device** picks a device, then an iOS version; every catalog firmware
+prepares on the phone. The app downloads the IPSW (the link ipsw.me lists, else the catalog's mirrors and the
+Internet Archive) or copies one the user chooses, checking it against the catalog's SHA-1 either way. The iPod touch
+1G and 2G and the original iPhone also need their boot ROM: it comes from another device on the phone, a download
+(securerom.fun, its GitHub mirror or devos50's qemu-ios release, pinned by SHA-256), or a file the user chooses. The
+guest tools come from the APK.
 
-In **Add a device** (the setup screen on first launch), under **Or add a prepared device
-image**, choose the `.itbase` as the **iOS system** and the boot ROM as the **Boot file**, or
-**Choose a folder** holding both, then **Create device**. The iPod touch 2G does not start
-without its boot ROM. The app gives the new device its built-in guest tools for the board and
-build; **Settings › Update guest tools** replaces them for a stopped device.
-
-The importer creates an immutable base and independent writable state for the new
-record. It binds the selected assets at import; choosing another ROM/package later
-does not rewrite an existing record's assets. Starting an existing record reuses
-its state. Re-importing creates another record and is not a persistence test.
-
-**Choose a folder** also accepts the native prepared-directory form:
-the lock/identity metadata and all declared boot, NAND, NOR and package files must
-agree. The domain validates hashes, geometry, paths and route; retain that metadata
-instead of constructing a boot command in the UI. Import copies/stages assets, so
-allow storage for the imported base and subsequent writable changes. An `.itbase`
-is the supported prepared-base container, not an arbitrary renamed ZIP.
-
-## Prepared n81 assets
-
-Use a complete, matching prepared n81 directory containing `kboot.bin`, its
-NAND stores/geometry, NOR, lock/identity configuration and the matching ARMv7
-`.itpack`. This route needs **no separate hardware boot ROM**. Do not substitute
-an n72 ROM/package or combine boot material from different firmware versions.
-
-The native route pairs the immutable NAND/base with isolated writable NAND overlay
-and NOR state. Host paths, guest-package offers and host endpoints are regenerated
-for the new record; copied Mac absolute paths are not reusable host configuration.
-Keep any verified source state/overlay separate from the base. The Android UI has
-no no-copy state-fork action: folder import may copy a very large fixture. Do not
-treat an 18 GB n81 import as a small metadata-only adaptation, and do not manipulate
-library files to simulate a new state. See [retained state](STATE-CONTROL.md).
-
-## Prepare the supported stock baseline locally
-
-**Prepare from an IPSW** (in **Add a device**, or Settings) picks a device, then an iOS version.
-Only `n72ap-7E18` prepares on the phone; the other catalog rows show as not supported yet. The app
-downloads the IPSW (the link ipsw.me lists, else the catalog's mirrors and the Internet Archive) or
-copies one the user chooses, checking it against the catalog's SHA-1 either way. The boot file
-comes from another device on the phone, a download from securerom.fun (pinned by SHA-256), or a
-file the user chooses. The guest files the recipe installs come from the APK's own `armv6.itpack`:
-the app writes them and an `inventory.json` of their SHA-256s to `files/preparer-tools/`.
-
-Preparation runs the packaged native library in a separate same-UID process, with no root,
-mounts, macOS utilities or execution of extracted binaries. It writes the NAND as one ITNAND01
-file and takes about 25 s on a Poco F3. The completed output is imported and selected, then it
-and the IPSW are deleted; if import fails the output is kept for **Try adding it again**.
-Cancellation or failure leaves no usable output.
-
-The Linux CLI uses the same native recipe. Its input layout, build commands,
-checksum checks and cancellation limits are documented in
-[native preparation](../Portable/firmware/README.md). Actual baseline preparation
-and historical boots are scoped evidence, not a fresh25 prepare/boot acceptance
-claim or wider board coverage.
+Preparation runs the APK's `firmwarekit` in a separate same-UID process, with no root, mounts or macOS utilities; its
+iOS boots run the APK's engine with performance hints. The completed output is moved into the library as a new
+record and selected, then the IPSW copy is deleted; if adding it fails the output is kept for **Try adding it
+again**. Cancellation or failure leaves no usable output. Devices are only added this way: importing a prepared
+`.itbase` is gone. [Portable/firmware](../Portable/firmware/README.md) documents the preparer.
 
 ## Controls, stopping and retained state
 
@@ -175,13 +125,12 @@ do not silently label their binaries or pins as 25. Reproducing 25 requires the 
 engine revisions above, the actual matching per-ABI input manifests and build
 records, and the declared same-revision test-source staging if building that test
 APK. Native exports
-must retain all `Portable`, `Packages/FirmwareKit/Sources/CActivation`, Android JNI
+must retain all `Portable`, `crates` (firmwarekit, with its C), Android JNI
 and helper/header inputs, the tracked firmware catalog, and root README/LICENSE.
 Host compilation does not require private guest firmware, ROMs or Apple SDKs.
 
-Read [APK dependency coverage](DEPENDENCY-NOTICES.md),
-[frontend notices](FRONTEND-NOTICES.md) and
-[firmware source distribution](../Portable/firmware/SOURCE-DISTRIBUTION.md).
+Read [APK dependency coverage](DEPENDENCY-NOTICES.md)
+and [frontend notices](FRONTEND-NOTICES.md).
 The app's **Licenses** viewer preserves offline notices and source references;
 those references and the firmware component kit do not establish complete APK
 source/relink availability, a full source rebuild or public distribution clearance.
