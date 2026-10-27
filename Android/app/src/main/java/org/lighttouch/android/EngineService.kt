@@ -84,8 +84,10 @@ class EngineService : Service() {
         override fun applyNetworkSettings() {
             synchronized(networkSession) {
                 if (!started.isConsumed() || stopping.get()) return
-                networkSession.request(NetworkConfiguration.load(applicationContext))
-                refreshNetworkSettings()
+                try {
+                    networkSession.request(NetworkConfiguration.load(applicationContext))
+                    refreshNetworkSettings()
+                } catch (failure: Exception) { networkSetup = failure.message ?: "Network settings invalid" }
             }
         }
         /** Freeze what led up to now for the hitch inspector: the frame timeline, and the detailed
@@ -157,7 +159,16 @@ class EngineService : Service() {
         override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
         override fun start(recordId: String): Bundle = startRecord(recordId, coldRecovery = false)
         override fun recoverStart(recordId: String): Bundle = startRecord(recordId, coldRecovery = true)
-        private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle {
+        /** A Java failure here used to kill the worker with nothing written; now it says what it was. */
+        private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle = try {
+            startRecordOrThrow(recordId, coldRecovery)
+        } catch (failure: Throwable) {
+            val message = ("Guest worker could not start: " + (failure.message ?: failure.javaClass.simpleName)).take(4096)
+            error = message
+            persistStopError(message)
+            Bundle().apply { putString("state", "failed"); putString("error", message) }
+        }
+        private fun startRecordOrThrow(recordId: String, coldRecovery: Boolean): Bundle {
             if (stopping.get()) return Bundle().apply {
                 putString("state", "stopping"); putString("error", "This worker is disposing; recovery and Start require a fresh worker.")
             }
@@ -374,12 +385,16 @@ class EngineService : Service() {
     }
     private fun refreshNetworkSettings() {
         if (stopping.get()) return
-        networkSession.refresh { config ->
-            val result = Native.networkUpdate(config.nativeMode, config.archiveDate, config.localNetwork)
-            (result.getOrNull(0)?.toIntOrNull() ?: 2) to result.getOrElse(1) { "Network worker unavailable" }
-        }
-        // Turned on live for the first time this session: set the guest up as a networked start does.
-        if (networkSession.snapshot().active.enabled) startGuestNetwork()
+        // A failure applying policy must not take the worker down with it: the poll that reports status is
+        // the only channel the screen has, and it runs even when networking is untouched.
+        try {
+            networkSession.refresh { config ->
+                val result = Native.networkUpdate(config.nativeMode, config.archiveDate, config.localNetwork)
+                (result.getOrNull(0)?.toIntOrNull() ?: 2) to result.getOrElse(1) { "Network worker unavailable" }
+            }
+            // Turned on live for the first time this session: set the guest up as a networked start does.
+            if (networkSession.snapshot().active.enabled) startGuestNetwork()
+        } catch (failure: Exception) { networkSetup = failure.message ?: "Network settings unavailable" }
     }
 
     private fun startGuestNetwork() {

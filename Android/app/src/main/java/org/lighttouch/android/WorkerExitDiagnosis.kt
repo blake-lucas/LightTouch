@@ -1,6 +1,5 @@
 package org.lighttouch.android
 
-import android.app.ActivityManager
 import android.content.Context
 import java.io.File
 import java.io.RandomAccessFile
@@ -19,38 +18,60 @@ internal object WorkerExitDiagnosis {
     /** One line: Android's exit reason and description, then the last thing the engine said. */
     fun summarize(context: Context, files: File): String {
         val parts = mutableListOf<String>()
-        system(context)?.let { parts += it }
-        engineLogTail(files)?.let { parts += "engine: $it" }
+        val (receipt, tombstone) = system(context)
+        // Most specific first, in case the screen cuts the line: the crash's frames, then the engine's last
+        // words, then how Android saw the exit.
+        tombstone?.let { parts += it }
+        engineLogTail(files)?.let { parts += it }
+        receipt?.let { parts += it }
         return parts.joinToString(" · ")
     }
 
-    /** The newest own-worker exit receipt, as Android recorded it. */
-    private fun system(context: Context): String? {
+    /** The newest own-worker exit receipt, as Android recorded it, and its tombstone when it has one. */
+    private fun system(context: Context): Pair<String?, String?> {
         val newest = File(context.filesDir, "worker-exits").listFiles()
             ?.filter { it.name.endsWith(".json") && !it.name.contains("unavailable") && !it.name.contains("capture-error") }
-            ?.maxByOrNull { it.lastModified() } ?: return null
+            ?.maxByOrNull { it.lastModified() } ?: return null to null
         return runCatching {
             val json = org.json.JSONObject(newest.readText())
+            val tombstone = json.optString("tracePath").takeIf { it.isNotEmpty() }?.let { signalAndFrames(File(it)) }
             val reason = json.optInt("reason", -1)
             val description = json.optString("description")
+            // ApplicationExitInfo's values; spelled out so nothing here needs API 30 at run time.
             val name = when (reason) {
-                ActivityManager.REASON_EXIT_SELF -> "exit_self"
-                ActivityManager.REASON_SIGNALED -> "signaled"
-                ActivityManager.REASON_LOW_MEMORY -> "low_memory"
-                ActivityManager.REASON_CRASH -> "crash"
-                ActivityManager.REASON_CRASH_NATIVE -> "native crash"
-                ActivityManager.REASON_ANR -> "not responding"
-                ActivityManager.REASON_INITIALIZATION_FAILURE -> "initialization failure"
-                ActivityManager.REASON_PERMISSION_CHANGE -> "permission change"
-                ActivityManager.REASON_EXCESSIVE_RESOURCE_USAGE -> "excessive resource usage"
-                ActivityManager.REASON_USER_REQUESTED -> "user requested"
-                ActivityManager.REASON_OTHER, -1 -> "reason $reason"
+                1 -> "exit_self"
+                2 -> "signaled"
+                3 -> "low_memory"
+                4 -> "crash"
+                5 -> "native crash"
+                6 -> "not responding"
+                7 -> "initialization failure"
+                8 -> "permission change"
+                9 -> "excessive resource usage"
+                10 -> "user requested"
+                11 -> "user stopped"
+                12 -> "dependency died"
+                13 -> "other"
                 else -> "reason $reason"
             }
             val status = json.optInt("status", 0)
-            "android: $name" + (if (status != 0) " (status $status)" else "") +
-                (if (description.isNotEmpty()) " $description" else "")
-        }.getOrNull()
+            ("android: $name" + (if (status != 0) " (status $status)" else "") +
+                (if (description.isNotEmpty()) " $description" else "")) to tombstone
+        }.getOrNull() ?: (null to null)
+    }
+
+    /**
+     * A native crash's tombstone: the abort message and the top of the backtrace, where the library and
+     * function that faulted are named.
+     */
+    private fun signalAndFrames(file: File): String? {
+        if (!file.isFile || file.length() == 0L) return null
+        val lines = runCatching { file.useLines { it.take(400).toList() } }.getOrNull() ?: return null
+        val interesting = lines.firstOrNull { it.contains("signal ") || it.contains("Aborted") }
+            ?.trim()?.take(120)
+        val frames = lines.filter { it.trimStart().startsWith("#") }.take(3).map { it.trim().take(120) }
+        val text = (listOfNotNull(interesting) + frames).joinToString(" / ")
+        return text.ifEmpty { null }
     }
 
     /**
