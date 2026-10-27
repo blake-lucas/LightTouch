@@ -179,9 +179,10 @@ private fun OverlayPreview(host: GuestHost) {
     val sample = if (host.running && host.perf.fps > 0) host.perf else remember {
         PerfSnapshot(fps = 59f, frameMs = 16.9f, lowFps = 48f, maxFrameMs = 24.1f, presentMs = 0.4f, latencyMs = 3.2f, vcpuPercent = 86f,
             vcpuCore = 7, vcpuMHz = 2840, workerPercent = 131f, pssMiB = 412f, glMsPerFrame = 3.1f, bqlMsPerFrame = 0.3f, runPercent = 82f,
+            storage = StorageRates(12.4e6, 1580.0, 9.8e6, 1210.0, 38.0, 6.0, 41.0),
             intervals = FloatArray(160) { i -> 16.7f + (if (i % 37 == 0) 18f else 0f) + (i % 5) * 0.4f }, detailedAvailable = s.detailedTiming)
     }
-    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(when (s.overlay) { OverlayLevel.FULL -> 196.dp; OverlayLevel.COMPACT -> 72.dp; else -> 48.dp })
+    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(when (s.overlay) { OverlayLevel.FULL -> 238.dp; OverlayLevel.COMPACT -> 72.dp; else -> 48.dp })
         .clip(RoundedCornerShape(14.dp)).background(Color(0xFF1B3A4B)).testTag("overlay_preview")) {
         PerformanceOverlay(sample, s.overlay, s.overlayGraph, s.overlayOpacity, s.detailedTiming,
             Modifier.align(Alignment.of(s.overlayCorner)).padding(8.dp))

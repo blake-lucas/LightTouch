@@ -180,6 +180,16 @@ abi_struct!(lt_runtime_io_stats {
     pcm_queued_packets: u32,
     reserved: u32,
 });
+abi_struct!(lt_runtime_storage_stats {
+    read_ops: u64,
+    read_bytes: u64,
+    read_ns: u64,
+    write_ops: u64,
+    write_bytes: u64,
+    write_ns: u64,
+    erase_ops: u64,
+    erase_ns: u64,
+});
 abi_struct!(lt_frame_info {
     width: u32,
     height: u32,
@@ -314,6 +324,11 @@ unsafe extern "C" {
     pub fn lt_runtime_io_statistics(
         runtime: *mut lt_runtime,
         stats: *mut lt_runtime_io_stats,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_storage_statistics(
+        runtime: *mut lt_runtime,
+        stats: *mut lt_runtime_storage_stats,
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_runtime_profile(runtime: *mut lt_runtime, path: *const c_char, error: *mut lt_error) -> lt_status;
@@ -472,6 +487,7 @@ mod tests {
             size_of::<lt_runtime_config>(),
             size_of::<lt_runtime_diagnostics>(),
             size_of::<lt_runtime_io_stats>(),
+            size_of::<lt_runtime_storage_stats>(),
             size_of::<lt_frame_info>(),
             size_of::<lt_contact>(),
             size_of::<lt_touch_batch>(),

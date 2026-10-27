@@ -97,6 +97,15 @@ void qemu_ios_profile_lock(uint64_t start, uint64_t end, bool wait,
 void qemu_ios_profile_callback(void *fn, const char *name, int64_t ns);
 /* Session-latched host NAND I/O failure; thread-safe to poll from the UI. */
 bool qemu_ios_ui_storage_failed(void);
+/* Guest storage traffic since the engine started, as the board's NAND controller performs it (every board, both
+ * NAND formats): page reads, page programs and block erases, the bytes they moved and the host time they took.
+ * Counters only grow; the app turns two readings into rates. Thread-safe. Engines before it lack the symbol. */
+typedef struct QemuIosStorageStats {
+    uint64_t read_ops, read_bytes, read_ns;
+    uint64_t write_ops, write_bytes, write_ns;
+    uint64_t erase_ops, erase_ns;
+} QemuIosStorageStats;
+void qemu_ios_storage_stats(QemuIosStorageStats *out);
 
 /* True only after the guest writes the final PMU power-off command. */
 bool qemu_ios_ui_guest_shutdown_confirmed(void);

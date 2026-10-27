@@ -23,6 +23,10 @@ import java.util.Locale
 
 private fun f1(value: Float) = String.format(Locale.ROOT, "%.1f", value)
 private fun f0(value: Float) = String.format(Locale.ROOT, "%.0f", value)
+private fun bytesPerSecond(bytes: Double) =
+    if (bytes >= 1e6) String.format(Locale.ROOT, "%.1f MB/s", bytes / 1e6) else String.format(Locale.ROOT, "%.0f KB/s", bytes / 1e3)
+private fun count(perSecond: Double) =
+    if (perSecond >= 1000) String.format(Locale.ROOT, "%.1fk", perSecond / 1000) else String.format(Locale.ROOT, "%.0f", perSecond)
 
 /**
  * MangoHud-style readout over the guest screen. [level] picks how much: FPS alone; FPS, frame
@@ -74,6 +78,13 @@ internal fun PerformanceOverlay(snapshot: PerfSnapshot, level: OverlayLevel, gra
                     snapshot.latencyMs?.let { append(" · lat ${f1(it)} ms") }
                 })
                 snapshot.pssMiB?.let { row("MEM", LtColors.OverlayMem, "${f0(it)} MiB") }
+                // The guest's NAND traffic as its flash controller issues it, and the host time spent serving it.
+                snapshot.storage?.let { io ->
+                    row("DISK", LtColors.OverlayDisk, "read  ${bytesPerSecond(io.readBytes)} · ${count(io.readOps)} IO/s")
+                    row("", LtColors.OverlayDisk, "write ${bytesPerSecond(io.writeBytes)} · ${count(io.writeOps)} IO/s")
+                    row("", LtColors.OverlayDisk,
+                        "host  ${f0(io.busyPercent.toFloat())}% · ${f0(io.usPerOp.toFloat())} µs/IO · ${count(io.eraseOps)} erase/s")
+                }
             }
         }
     }

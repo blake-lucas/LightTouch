@@ -3,7 +3,7 @@ use crate::Waker;
 use lighttouch_core::frames::{FrameMeta, FrameReader, segment_name};
 use lighttouch_core::network::NetworkConfig;
 use lighttouch_core::protocol::{Command, Event, NetworkArgs, NetworkStatus, StatusEvent, WorkerArgs};
-use lighttouch_core::runtime::{BoardInfo, Contact, State};
+use lighttouch_core::runtime::{BoardInfo, Contact, State, StorageCounters};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -251,6 +251,7 @@ impl Session {
             }
             Event::Status(status) => {
                 self.stats.cpu(status.cpu_ns);
+                self.stats.storage(status.storage);
                 self.status = Some(status);
                 if self.phase.active() {
                     self.phase = match status.state {
@@ -573,6 +574,41 @@ pub struct FrameStats {
     pub cpu_percent: f32,
     /// Frame latency: worker publish to UI read, milliseconds (smoothed).
     pub latency_ms: f32,
+    /// Storage counter readings over the last second, oldest first.
+    storage_samples: VecDeque<(StorageCounters, Instant)>,
+    /// The guest's storage traffic over the last second; `None` from engines without the counters.
+    pub storage: Option<StorageRates>,
+}
+
+/// Guest storage per second, from the engine's NAND counters.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StorageRates {
+    pub read_bytes: f64,
+    pub read_ops: f64,
+    pub write_bytes: f64,
+    pub write_ops: f64,
+    pub erase_ops: f64,
+    /// Host time spent serving NAND operations, percent of wall time.
+    pub busy_percent: f64,
+    /// Host time per operation, microseconds; 0 while idle.
+    pub us_per_op: f64,
+}
+
+impl StorageRates {
+    pub fn between(old: &StorageCounters, new: &StorageCounters, seconds: f64) -> Self {
+        let d = |a: u64, b: u64| b.saturating_sub(a) as f64;
+        let ops = d(old.read_ops, new.read_ops) + d(old.write_ops, new.write_ops) + d(old.erase_ops, new.erase_ops);
+        let ns = d(old.read_ns, new.read_ns) + d(old.write_ns, new.write_ns) + d(old.erase_ns, new.erase_ns);
+        Self {
+            read_bytes: d(old.read_bytes, new.read_bytes) / seconds,
+            read_ops: d(old.read_ops, new.read_ops) / seconds,
+            write_bytes: d(old.write_bytes, new.write_bytes) / seconds,
+            write_ops: d(old.write_ops, new.write_ops) / seconds,
+            erase_ops: d(old.erase_ops, new.erase_ops) / seconds,
+            busy_percent: ns / (seconds * 1e7),
+            us_per_op: if ops > 0.0 { ns / ops / 1e3 } else { 0.0 },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -624,6 +660,25 @@ impl FrameStats {
             }
         }
         self.last_cpu = Some((cpu_ns, now));
+    }
+
+    fn storage(&mut self, counters: Option<StorageCounters>) {
+        let Some(counters) = counters else {
+            self.storage = None;
+            return;
+        };
+        let now = Instant::now();
+        self.storage_samples.push_back((counters, now));
+        // Rates over the last second: steadier than one 250 ms status apart, and still live.
+        while self.storage_samples.len() > 2 && now.duration_since(self.storage_samples[1].1) >= Duration::from_secs(1)
+        {
+            self.storage_samples.pop_front();
+        }
+        let (old, at) = self.storage_samples[0];
+        let seconds = now.duration_since(at).as_secs_f64();
+        if seconds > 0.1 {
+            self.storage = Some(StorageRates::between(&old, &counters, seconds));
+        }
     }
 
     pub fn summary(&self) -> FrameSummary {

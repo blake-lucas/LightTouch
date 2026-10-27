@@ -16,6 +16,7 @@ internal object Native {
     external fun rename(libraryRoot: String, id: String, name: String): String
     external fun remove(libraryRoot: String, id: String): String
     external fun frameTimeline(since: Long): LongArray
+    external fun storageStats(): LongArray
     external fun setPresentScale(mode: Int)
     external fun setPresentVisible(visible: Boolean)
     external fun networkPrepare(root: String, record: String, mode: Int, date: String, local: Boolean, roots: String): String

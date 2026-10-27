@@ -39,6 +39,7 @@ pub const FPS: Color32 = Color32::from_rgb(0xFF, 0xB8, 0x6B);
 pub const CPU: Color32 = Color32::from_rgb(0x6B, 0xB8, 0xFF);
 pub const GPU: Color32 = Color32::from_rgb(0x7C, 0xE3, 0x8B);
 pub const MEM: Color32 = Color32::from_rgb(0xD5, 0x9B, 0xFF);
+pub const DISK: Color32 = Color32::from_rgb(0xFF, 0x8F, 0xA8);
 pub const LABEL: Color32 = Color32::from_rgb(0xB8, 0xBC, 0xC4);
 
 pub const DARK: Palette = Palette {

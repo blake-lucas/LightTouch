@@ -1,7 +1,7 @@
 //! The worker protocol: one JSON object per line. Commands go to the worker's stdin, events come from its stdout,
 //! and its stderr is the session log. Frames travel separately through shared memory (`frames`).
 use crate::network::NetworkConfig;
-use crate::runtime::{BoardInfo, Contact, State};
+use crate::runtime::{BoardInfo, Contact, State, StorageCounters};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -167,6 +167,9 @@ pub struct StatusEvent {
     /// The worker's resident memory, for the performance overlay.
     #[serde(default)]
     pub resident_bytes: u64,
+    /// The guest's storage traffic so far, for the performance overlay; `None` from engines without the counters.
+    #[serde(default)]
+    pub storage: Option<StorageCounters>,
 }
 
 /// What this session's networking is doing, apart from the saved settings: the route it applied, the guest's setup,

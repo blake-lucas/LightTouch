@@ -1297,6 +1297,16 @@ JNI(debugEnableTouchTrace) jstring JNICALL Java_org_lighttouch_android_Native_de
     return string(env,"Debug diagnosis is unavailable in this build");
 #endif
 }
+// The guest's NAND traffic so far: read ops, bytes, ns, write ops, bytes, ns, erase ops, ns; empty
+// when no device runs or its engine lacks the counters.
+JNI(storageStats) jlongArray JNICALL Java_org_lighttouch_android_Native_storageStats(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_runtime_storage_stats s=LT_INIT(lt_runtime_storage_stats);lt_error error=LT_INIT(lt_error);
+    if(!runtime || lt_runtime_storage_statistics(runtime,&s,&error)!=LT_OK)return env->NewLongArray(0);
+    const jlong values[]={jlong(s.read_ops),jlong(s.read_bytes),jlong(s.read_ns),jlong(s.write_ops),jlong(s.write_bytes),
+                          jlong(s.write_ns),jlong(s.erase_ops),jlong(s.erase_ns)};
+    auto array=env->NewLongArray(8);env->SetLongArrayRegion(array,0,8,values);return array;
+}
 // Frames in each of the last 240 complete 250 ms buckets, oldest first (0 = none published).
 JNI(guestFrameBuckets) jintArray JNICALL Java_org_lighttouch_android_Native_guestFrameBuckets(JNIEnv *env,jobject) {
     constexpr int n=240;jint values[n];const uint64_t now=monotonic_ns()/fps_bucket_ns;

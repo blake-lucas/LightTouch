@@ -70,6 +70,7 @@ class EngineService : Service() {
             putLongArray("frames", Native.frameTimeline(sinceSequence))
             putLong("nowNs", System.nanoTime())
             putLongArray("cpu", cpuSampler.sample())
+            putLongArray("storage", Native.storageStats())
             profileTail.follow(if (detailedTiming && profileCapture.automatic) profileCapture.currentEvents() else null)
             profileTail.summary()?.let { putBundle("detailed", it) }
             if (detailedTiming && detailedTimingError.isNotEmpty()) putString("detailedError", detailedTimingError)

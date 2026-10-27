@@ -132,6 +132,8 @@ struct Engine {
     decltype(&qemu_ios_ui_attach) attach = nullptr;
     // Optional: engines before the guest-package hypercalls lack it.
     decltype(&qemu_ios_guest_package_report) package_report = nullptr;
+    // Optional: engines before the storage counters lack it.
+    decltype(&qemu_ios_storage_stats) storage_stats = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -208,6 +210,8 @@ struct Engine {
             net_lan = reinterpret_cast<decltype(net_lan)>(lt::os::library_symbol(library, "qemu_ios_ui_net_lan"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(lt::os::library_symbol(library, "qemu_ios_guest_package_report"));
+            storage_stats =
+                reinterpret_cast<decltype(storage_stats)>(lt::os::library_symbol(library, "qemu_ios_storage_stats"));
         } catch (...) {
             lt::os::library_close(library);
             library = nullptr;
@@ -876,6 +880,17 @@ lt_status lt_runtime_io_statistics(lt_runtime *r, lt_runtime_io_stats *out, lt_e
                 r->input_id,
                 uint32_t(r->pcm.packets.size()),
                 0};
+    });
+}
+lt_status lt_runtime_storage_statistics(lt_runtime *r, lt_runtime_storage_stats *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        lt::require(r->engine->storage_stats, "engine has no storage counters", LT_UNSUPPORTED);
+        QemuIosStorageStats s{};
+        r->engine->storage_stats(&s);
+        *out = {sizeof(*out), 1, s.read_ops, s.read_bytes, s.read_ns, s.write_ops, s.write_bytes, s.write_ns,
+                s.erase_ops, s.erase_ns};
     });
 }
 lt_status lt_runtime_destroy(lt_runtime *r, lt_error *e) {

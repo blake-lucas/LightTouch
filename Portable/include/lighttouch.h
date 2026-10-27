@@ -247,6 +247,16 @@ typedef struct {
     uint32_t pcm_queued_packets, reserved;
 } lt_runtime_io_stats;
 lt_status lt_runtime_io_statistics(lt_runtime *, lt_runtime_io_stats *, lt_error *);
+/* Guest storage since the engine loaded: the NAND page reads, programs and erases
+ * its flash controller issued, with the host ns spent serving each kind. Running
+ * totals; difference two samples for rates. LT_UNSUPPORTED from older engines. */
+typedef struct {
+    uint32_t size, version;
+    uint64_t read_ops, read_bytes, read_ns;
+    uint64_t write_ops, write_bytes, write_ns;
+    uint64_t erase_ops, erase_ns;
+} lt_runtime_storage_stats;
+lt_status lt_runtime_storage_statistics(lt_runtime *, lt_runtime_storage_stats *, lt_error *);
 
 /* Optional engine recording; one active host-path capture per worker. Empty
  * path stops and flushes it. Status is 1 active, 0 idle, negative host errno. */

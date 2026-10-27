@@ -27,6 +27,7 @@ internal object LtColors {
     val OverlayCpu = Color(0xFF6BB8FF)
     val OverlayGpu = Color(0xFF7CE38B)
     val OverlayMem = Color(0xFFD59BFF)
+    val OverlayDisk = Color(0xFFFF8FA8)
     val OverlayLabel = Color(0xFFB8BCC4)
 }
 

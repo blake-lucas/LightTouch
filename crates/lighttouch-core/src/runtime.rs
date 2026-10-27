@@ -197,6 +197,20 @@ pub struct Diagnostics {
     pub shutdown_route: u32,
 }
 
+/// The guest's NAND traffic since the engine loaded, and the host time spent serving it. Running totals: the
+/// performance overlay turns two readings into rates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageCounters {
+    pub read_ops: u64,
+    pub read_bytes: u64,
+    pub read_ns: u64,
+    pub write_ops: u64,
+    pub write_bytes: u64,
+    pub write_ns: u64,
+    pub erase_ops: u64,
+    pub erase_ns: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameInfo {
     pub width: u32,
@@ -283,6 +297,22 @@ impl Runtime {
             dirty: status.dirty != 0,
             engine_exit: status.engine_exit,
             frames: status.frames,
+        })
+    }
+
+    /// Fails as unsupported on engines without the storage counters.
+    pub fn storage(&self) -> Result<StorageCounters> {
+        let mut c = sys::lt_runtime_storage_stats::new();
+        self.call(|r, e| unsafe { sys::lt_runtime_storage_statistics(r, &mut c, e) })?;
+        Ok(StorageCounters {
+            read_ops: c.read_ops,
+            read_bytes: c.read_bytes,
+            read_ns: c.read_ns,
+            write_ops: c.write_ops,
+            write_bytes: c.write_bytes,
+            write_ns: c.write_ns,
+            erase_ops: c.erase_ops,
+            erase_ns: c.erase_ns,
         })
     }
 

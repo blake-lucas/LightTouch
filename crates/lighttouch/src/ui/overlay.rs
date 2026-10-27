@@ -3,7 +3,7 @@ use super::theme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, Ui, pos2, vec2};
 use lighttouch_model::Model;
 use lighttouch_model::inspector::LiveTiming;
-use lighttouch_model::session::{FrameStats, FrameSummary, Session};
+use lighttouch_model::session::{FrameStats, FrameSummary, Session, StorageRates};
 use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Settings};
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,7 @@ struct Readings {
     latency_ms: f32,
     live: Option<LiveTiming>,
     resident_bytes: u64,
+    storage: Option<StorageRates>,
     /// Frame intervals in milliseconds, newest last.
     intervals: Vec<f32>,
 }
@@ -28,6 +29,7 @@ impl Readings {
             latency_ms: stats.latency_ms,
             live: session.live_timing,
             resident_bytes: session.status.as_ref().map_or(0, |s| s.resident_bytes),
+            storage: stats.storage,
             intervals: stats.intervals.iter().copied().collect(),
         }
     }
@@ -62,7 +64,7 @@ pub fn preview(ui: &mut Ui, settings: &Settings, session: Option<&Session>) {
         OverlayLevel::Off => return,
         OverlayLevel::Fps => 56.0,
         OverlayLevel::Basic => 86.0,
-        OverlayLevel::Full => 236.0,
+        OverlayLevel::Full => 287.0,
     };
     let live = session.filter(|s| !s.stats.summary().idle);
     let readings = match live {
@@ -78,6 +80,15 @@ pub fn preview(ui: &mut Ui, settings: &Settings, session: Option<&Session>) {
                 vcpu_percent: Some(86.0),
             }),
             resident_bytes: 412 << 20,
+            storage: Some(StorageRates {
+                read_bytes: 12.4e6,
+                read_ops: 1580.0,
+                write_bytes: 9.8e6,
+                write_ops: 1210.0,
+                erase_ops: 38.0,
+                busy_percent: 6.0,
+                us_per_op: 41.0,
+            }),
             intervals: (0..160).map(|i| 16.7 + if i % 37 == 0 { 18.0 } else { 0.0 } + (i % 5) as f32 * 0.4).collect(),
         },
     };
@@ -171,6 +182,31 @@ fn draw(ui: &Ui, settings: &Settings, readings: &Readings, screen: Rect, scale: 
                     (format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64), Color32::WHITE, mono(12.0)),
                 ]);
             }
+            // The guest's NAND traffic as its flash controller issues it, and the host time spent serving it.
+            if let Some(io) = readings.storage {
+                rows.push(vec![
+                    ("DISK ".into(), theme::DISK, bold(11.0)),
+                    ("read  ".into(), theme::LABEL, mono(10.0)),
+                    (bytes_per_second(io.read_bytes), Color32::WHITE, mono(12.0)),
+                    (format!("  {} IO/s", count(io.read_ops)), theme::LABEL, mono(10.0)),
+                ]);
+                rows.push(vec![
+                    ("     ".into(), theme::DISK, bold(11.0)),
+                    ("write ".into(), theme::LABEL, mono(10.0)),
+                    (bytes_per_second(io.write_bytes), Color32::WHITE, mono(12.0)),
+                    (format!("  {} IO/s", count(io.write_ops)), theme::LABEL, mono(10.0)),
+                ]);
+                rows.push(vec![
+                    ("     ".into(), theme::DISK, bold(11.0)),
+                    ("host  ".into(), theme::LABEL, mono(10.0)),
+                    (format!("{:.0}%", io.busy_percent), Color32::WHITE, mono(12.0)),
+                    (
+                        format!("  {:.0} µs/IO · {} erase/s", io.us_per_op, count(io.erase_ops)),
+                        theme::LABEL,
+                        mono(10.0),
+                    ),
+                ]);
+            }
         }
         OverlayLevel::Off => {}
     }
@@ -212,6 +248,14 @@ fn draw(ui: &Ui, settings: &Settings, readings: &Readings, screen: Rect, scale: 
         let area = Rect::from_min_size(pos2(rect.left() + pad, y + 6.0 * scale), size);
         graph(&painter, area, &readings.intervals, settings.overlay_graph, scale);
     }
+}
+
+fn bytes_per_second(bytes: f64) -> String {
+    if bytes >= 1e6 { format!("{:.1} MB/s", bytes / 1e6) } else { format!("{:.0} KB/s", bytes / 1e3) }
+}
+
+fn count(per_second: f64) -> String {
+    if per_second >= 1000.0 { format!("{:.1}k", per_second / 1000.0) } else { format!("{per_second:.0}") }
 }
 
 fn graph(painter: &egui::Painter, area: Rect, samples: &[f32], kind: OverlayGraph, scale: f32) {
