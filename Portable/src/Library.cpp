@@ -82,10 +82,10 @@ static void discard(const fs::path &p) {
     if (fs::remove_all(p, error) != static_cast<std::uintmax_t>(-1) && !error)
         return;
     // Records made before NAND containers froze their base and assets read-only (0500 folders), which an unlink
-    // inside them needs undone. Nothing made since is read-only.
+    // inside them needs undone. Nothing made since is read-only. Files too: on Windows only a file's read-only
+    // attribute blocks its delete.
     for (const auto &e : fs::recursive_directory_iterator(p, error))
-        if (e.is_directory())
-            lt::os::chmod(e.path().c_str(), 0700);
+        lt::os::chmod(e.path().c_str(), 0700);
     lt::os::chmod(p.c_str(), 0700);
     fs::remove_all(p, error);
 }
@@ -285,16 +285,42 @@ static void remove_record(lt_library *l, const std::string &id) {
     io(lease >= 0, "device lease");
     struct Closer {
         int fd;
-        ~Closer() { lt::os::close(fd); }
+        ~Closer() {
+            if (fd >= 0)
+                lt::os::close(fd);
+        }
     } closer{lease};
     require(lt::os::lock_exclusive(lease) == 0, "stop the device before deleting it", LT_BUSY);
+#ifdef _WIN32
+    // Windows won't rename a directory with a file open inside it, the lease included. The library lock, held
+    // until the record is gone, still keeps the device from opening; a process with the record's files open
+    // makes the rename fail instead.
+    lt::os::close(lease);
+    closer.fd = -1;
+#endif
+    // Trash left by a delete that crashed or failed before.
+    std::vector<fs::path> stale;
+    std::error_code ignored;
+    for (const auto &e : fs::directory_iterator(l->root / "records", ignored))
+        if (e.path().filename().string().rfind(".record-trash-", 0) == 0)
+            stale.push_back(e.path());
+    for (const auto &p : stale)
+        discard(p);
     // Out of the record namespace first, so a crash mid-delete leaves no half record.
     std::string pattern = (l->root / "records/.record-trash-XXXXXX").string();
     std::vector<char> tmp(pattern.begin(), pattern.end());
     tmp.push_back(0);
     io(lt::os::mkdtemp(tmp.data()) != nullptr, "record trash");
     fs::path trash = tmp.data();
-    fs::rename(directory, trash / "record");
+    std::error_code moved;
+    fs::rename(directory, trash / "record", moved);
+    if (moved) {
+        discard(trash);
+        require(false,
+                "its files couldn't be moved (" + moved.message() +
+                    "); if another program has them open, close it and try again",
+                LT_IO);
+    }
     sync_dir(l->root / "records");
     if (selected(l) == id) {
         auto rest = records(l);

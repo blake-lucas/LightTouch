@@ -399,8 +399,11 @@ int main() {
     assert(lt_library_device_open(l, second_record.id, 0, &d, &e) == LT_OK);
     assert(lt_library_remove(l, second_record.id, &e) == LT_BUSY);
     lt_device_close(d);
+    // A delete also clears trash an earlier one left behind.
+    put(fs::path(libroot) / "records/.record-trash-stale/record/record.json", "{}");
     assert(lt_library_remove(l, second_record.id, &e) == LT_OK);
     assert(!fs::exists(second_record.state_path));
+    assert(!fs::exists(fs::path(libroot) / "records/.record-trash-stale"));
     assert(lt_library_count(l, &count, &e) == LT_OK && count == 1);
     assert(lt_library_selected(l, &selected_record, &e) == LT_OK && std::string(selected_record.id) == first.id);
     assert(lt_library_remove(l, second_record.id, &e) == LT_INVALID);
