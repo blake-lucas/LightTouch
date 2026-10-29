@@ -77,6 +77,18 @@ class GuestCrashReportTest {
         assertTrue(report.verdict.contains("no faulting frame"))
     }
 
+    @Test fun aDroppedGlCallExplainsACrashInTheAppsOwnCode() {
+        val engine = listOf(
+            "[gles] REFUSED draw-error:0x500",
+            "[gles] REFUSED slot:649",
+            "[gles] UNHANDLED glMapBuffer (id 649) argc=2 -- returning 0; the guest will render wrong",
+            "[USBTCP] handshake: protocol v1")
+        val hint = GuestCrashDiagnosis.engineHint(engine)
+        assertNotNull(hint)
+        assertTrue("the dropped entry point is the answer", hint!!.contains("glMapBuffer"))
+        assertNull(GuestCrashDiagnosis.engineHint(listOf("[boot] first lit frame after 0.0 s wall")))
+    }
+
     @Test fun diagnosisIncludesTheEnginesOwnLogTail() {
         val state = File.createTempFile("state", "").let { it.delete(); it.mkdirs(); it }
         try {

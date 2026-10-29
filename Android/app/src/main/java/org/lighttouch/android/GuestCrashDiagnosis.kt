@@ -35,6 +35,23 @@ internal object GuestCrashDiagnosis {
             ?.maxByOrNull { it.lastModified() }
 
     /**
+     * What the engine said it dropped on the floor. A guest crash in the app's own code right after one of these
+     * is not the app's mistake: an emulated GL entry point that returns 0 hands the app a null it has no way to
+     * check, and the app uses it. Asphalt 8's SIGSEGV in libsystem_c came exactly here, behind
+     * `UNHANDLED glMapBuffer (id 649) -- returning 0`.
+     */
+    fun engineHint(engine: List<String>): String? {
+        // An entry point that answered nothing is the stronger evidence of the two, so it wins wherever it is.
+        engine.asReversed().firstNotNullOfOrNull { Regex("""UNHANDLED (\w+) \(id (\d+)\)""").find(it) }
+            ?.let { return "The engine's own log says the GL bridge does not implement ${it.groupValues[1]} " +
+                "(id ${it.groupValues[2]}) and answered 0: if this crash came right after that, the value the app " +
+                "used was ours, not the app's." }
+        engine.asReversed().firstNotNullOfOrNull { Regex("""REFUSED (\S+)""").find(it) }
+            ?.let { return "The engine's own log says it refused ${it.groupValues[1]}: the crash may follow from that." }
+        return null
+    }
+
+    /**
      * [crashName]/[crashBody] is the guest's newest crash report (null when it has none), [guestLog] the captured
      * system log of the last launch (null when nothing was captured). Everything else is read from [stateDir].
      */
@@ -42,9 +59,14 @@ internal object GuestCrashDiagnosis {
         val summary = crashBody?.takeIf { it.isNotBlank() }?.let { GuestCrashReport.summarize(crashName ?: "", it) }
         val engine = tail(engineLog(stateDir))
         val serial = tail(File(stateDir, "guest-serial.log"), 40)
+        val hint = engineHint(engine)
         return buildString {
             appendLine(summary?.verdict ?: "No crash report, so the app did not crash: iOS or the system killed it, " +
                 "or it is still running.")
+            if (hint != null) {
+                appendLine()
+                appendLine(hint)
+            }
             if (guestLog != null) {
                 appendLine()
                 appendLine("——— Guest system log, last launch ———")
