@@ -15,12 +15,12 @@ internal object GuestCrashDiagnosis {
     private const val LOG_TAIL = 60
 
     /** The last [lines] lines of [file] without reading the whole thing: a record's log grows to megabytes. */
-    fun tail(file: File?, lines: Int = LOG_TAIL, maxBytes: Long = 64 * 1024): List<String> {
+    fun tail(file: File?, lines: Int = LOG_TAIL, maxBytes: Long = 64L * 1024): List<String> {
         if (file == null || !file.isFile) return emptyList()
         return try {
             RandomAccessFile(file, "r").use { handle ->
                 val length = handle.length()
-                val start = (length - maxBytes).coerceAtLeast(0)
+                val start = (length - maxBytes).coerceAtLeast(0L)
                 val bytes = ByteArray((length - start).toInt())
                 handle.seek(start)
                 handle.readFully(bytes)
