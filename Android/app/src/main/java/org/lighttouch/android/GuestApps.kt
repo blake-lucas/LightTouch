@@ -20,6 +20,21 @@ data class InstalledApp(val bundleId: String, val name: String?, val build: Stri
 internal class GuestApps(private val context: Context) {
     class Failure(message: String) : Exception(message)
 
+    /** Words that mark a line as part of the story: what dyld wanted, what killed the app, what failed. */
+    private val INTERESTING = listOf("dyld", "libobjc", "SpringBoard", "backboardd", "launchd", "Jetsam", "watchdog",
+        "EXC_", "Termination", "code signature", "sandbox", "assert", "abnormal", "not found", "no such file",
+        "unable to", "failed", "error")
+
+    private fun decodeHex(hex: String): ByteArray {
+        val out = ByteArray(hex.length / 2)
+        for (i in out.indices) {
+            val high = hex[i * 2].digitToIntOrNull(16) ?: return out.copyOf(i)
+            val low = hex[i * 2 + 1].digitToIntOrNull(16) ?: return out.copyOf(i)
+            out[i] = ((high shl 4) or low).toByte()
+        }
+        return out
+    }
+
     private val helper get() = File(context.applicationInfo.nativeLibraryDir, "liblt_appservice.so")
     val available get() = helper.canExecute()
 
@@ -81,6 +96,28 @@ internal class GuestApps(private val context: Context) {
         val body = Regex("<key>description</key>\\s*<string>(.*?)</string>", RegexOption.DOT_MATCHES_ALL).find(text)?.groupValues?.get(1)
             ?.replace("&lt;", "<")?.replace("&gt;", ">")?.replace("&amp;", "&") ?: text
         return name to body
+    }
+
+    /**
+     * Up to [seconds] of the guest's own system log, trimmed to the lines that explain a launch: dyld's
+     * complaints, SpringBoard or the kernel killing an app, a missing service. This is the channel an app writes
+     * to in the seconds before iOS writes its crash report, and the only one that shows a launch that never got
+     * far enough to crash. Its chunks arrive hex-encoded with NUL separators, so a line may span two of them.
+     */
+    fun guestLog(socket: String, seconds: Int, cancelled: () -> Boolean = { false }, progress: (Int) -> Unit = {}): String {
+        val text = StringBuilder()
+        run(socket, listOf("syslog", "--seconds", seconds.toString()), seconds + 30L, cancelled) { event ->
+            event.optJSONObject("syslog_chunk")?.optString("hex")?.takeIf { it.isNotEmpty() }?.let { hex ->
+                text.append(String(decodeHex(hex), Charsets.UTF_8))
+                // Bounded: an idle launch prints little, a busy one prints faster than anything reads it.
+                if (text.length > 512 * 1024) text.delete(0, text.length - 256 * 1024)
+                progress(text.length)
+            }
+        }
+        val lines = text.toString().split('\u0000').flatMap { it.split('\n') }.map { it.trim() }.filter { it.isNotEmpty() }
+        val explained = lines.filter { line -> INTERESTING.any { line.contains(it, ignoreCase = true) } }
+        val chosen = if (explained.size > 60) explained.takeLast(60) else explained
+        return if (chosen.isNotEmpty()) chosen.joinToString("\n") else lines.takeLast(40).joinToString("\n")
     }
 
     fun install(socket: String, ipa: File, bundleId: String, cancelled: () -> Boolean, event: (JSONObject) -> Unit): JSONObject =

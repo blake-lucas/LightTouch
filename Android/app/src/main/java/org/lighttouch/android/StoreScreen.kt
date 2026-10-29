@@ -39,10 +39,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +79,7 @@ internal fun byteSize(bytes: Long): String = when {
 internal class StoreModel(context: Context, private val muxSocket: () -> String?, private val askNotifications: () -> Unit = {}) {
     private val handler = Handler(Looper.getMainLooper())
     private val apps = GuestApps(context)
+    private val appContext = context.applicationContext
     private val installer = StoreInstaller.of(context)
     var target by mutableStateOf<StoreTarget?>(null)
     var targetConfirmed by mutableStateOf(false)
@@ -234,21 +237,49 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     fun install(app: JSONObject) = enqueue(queueKey(app), app.optString("name"), InstallRequest.Catalog(app))
     fun installLocal(uri: Uri) = enqueue("local:$uri", "Local IPA", InstallRequest.Local(uri))
 
-    /** Why the last app quit: the useful lines of the guest's newest crash report. */
+    /** While a launch is being recorded: the capture owns the relay, so a second one is refused. */
+    var watching by mutableStateOf(false)
+        private set
+
+    /** Where the running device's own logs are (the record the store is showing). */
+    private fun stateDir() = File(appContext.filesDir, "library/records/$recordId/state")
+
+    /**
+     * Why the last app quit. The crash report's faulting-thread frames say where it died (the old report kept only
+     * the header, so every crash looked like the same null dereference), and the emulation's own logs say whether
+     * the system or our side came first.
+     */
     fun showLastCrash() {
         val socket = muxSocket() ?: run { crash = "Start the guest to read its crash reports."; return }
         crash = "Reading the guest's crash reports…"
         background("store-crash") {
             val text = try {
-                apps.lastCrash(socket)?.let { (name, body) ->
-                    val keep = Regex("^(Process|Date/Time|OS Version|Exception Type|Exception Codes|Crashed Thread|Dyld Error Message|  Symbol not found|  Referenced from|  Expected in|Termination Reason|Application Specific Information)")
-                    val lines = body.lines()
-                    val dyld = lines.indexOfFirst { it.startsWith("Dyld Error Message") }
-                    name + "\n\n" + lines.filterIndexed { i, l -> keep.containsMatchIn(l) || (dyld >= 0 && i in dyld + 1..dyld + 3) }
-                        .distinct().joinToString("\n").ifEmpty { body.take(1500) }
-                } ?: "The guest has no crash reports."
+                val last = runCatching { apps.lastCrash(socket) }.getOrNull()
+                GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, null)
             } catch (e: Exception) { "Could not read crash reports: ${e.message}" }
             post { crash = text }
+        }
+    }
+
+    /**
+     * The crash report is written after the fact, the system log is not: it has to be listened to while the app
+     * starts. Records 30 s of it, then reads the report and the logs into the same answer.
+     */
+    fun watchLaunch() {
+        if (watching) return
+        val socket = muxSocket() ?: run { crash = "Start the guest to record its system log."; return }
+        watching = true
+        crash = "Recording the guest's system log for 30 seconds. Open the app now and let it quit."
+        background("store-launch-log") {
+            var log: String? = null
+            var failure: String? = null
+            try { log = apps.guestLog(socket, 30) } catch (e: Exception) { failure = e.message }
+            val last = runCatching { apps.lastCrash(socket) }.getOrNull()
+            val text = GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, log)
+            post {
+                watching = false
+                crash = if (failure != null && log == null) "The system log could not be recorded ($failure).\n\n$text" else text
+            }
         }
     }
 
@@ -292,11 +323,16 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
             })
             Column(Modifier.padding(horizontal = 16.dp)) {
                 model.crash?.let { report ->
+                    val clipboard = LocalClipboardManager.current
                     StoreCard(Modifier.testTag("store_crash_report")) {
-                        Text("Last crash", style = MaterialTheme.typography.titleSmall)
+                        Text(if (model.watching) "Recording the launch…" else "Why it quit", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
-                        Text(report, style = MonoStyle, modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()))
-                        Row { Spacer(Modifier.weight(1f)); TextButton(onClick = { model.crash = null }) { Text("Close") } }
+                        Text(report, style = MonoStyle, modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
+                        Row {
+                            TextButton(onClick = { clipboard.setText(AnnotatedString(report)) }) { Text("Copy") }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { model.crash = null }) { Text("Close") }
+                        }
                     }
                 }
             }
@@ -361,8 +397,13 @@ private fun StoreTopBar(model: StoreModel, running: Boolean, onPickLocal: () -> 
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem(text = { Text("Install an IPA file…") }, leadingIcon = { Icon(LtIcons.File, null) },
                     onClick = { menu = false; onPickLocal() }, enabled = running && model.servicesAvailable)
-                DropdownMenuItem(text = { Text("Show last crash") }, leadingIcon = { Icon(LtIcons.Info, null) },
-                    onClick = { menu = false; model.showLastCrash() }, enabled = running && model.servicesAvailable, modifier = Modifier.testTag("store_crash"))
+                DropdownMenuItem(text = { Text(if (model.watching) "Recording the launch…" else "Why did it quit?") },
+                    leadingIcon = { Icon(LtIcons.Info, null) },
+                    onClick = { menu = false; model.showLastCrash() }, enabled = running && model.servicesAvailable && !model.watching,
+                    modifier = Modifier.testTag("store_crash"))
+                DropdownMenuItem(text = { Text("Record the next launch (30 s)") }, leadingIcon = { Icon(LtIcons.Info, null) },
+                    onClick = { menu = false; model.watchLaunch() }, enabled = running && model.servicesAvailable && !model.watching,
+                    modifier = Modifier.testTag("store_watch_launch"))
             }
         }
     }
