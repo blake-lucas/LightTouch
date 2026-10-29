@@ -92,6 +92,12 @@ impl GuestView {
         self.texture.is_some()
     }
 
+    /// The guest laid its portrait UI a quarter clockwise into a landscape scan (the iPad's panel), so the scan
+    /// stands a quarter-turn from upright: the frame is wider than tall while the cutout it fills is portrait.
+    fn scan_turned(&self) -> bool {
+        self.size[0] > self.size[1]
+    }
+
     /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
     /// as on the device: the engine sends no frames then, so the last one would otherwise stay up.
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &mut Model, interactive: bool) -> egui::Response {
@@ -101,11 +107,12 @@ impl GuestView {
         if let Some(texture) = self.texture.as_ref().filter(|_| !asleep) {
             // Each corner shows the guest pixel the rotation puts there.
             let rotation = model.settings.rotation;
+            let turned = self.scan_turned();
             let mut mesh = egui::Mesh::with_texture(texture.id());
             for corner in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
                 let u = ((corner.x - rect.left()) / rect.width()) as f64;
                 let v = ((corner.y - rect.top()) / rect.height()) as f64;
-                let (x, y) = rotation.to_guest(u, v);
+                let (x, y) = rotation.to_scan(u, v, turned);
                 mesh.vertices.push(egui::epaint::Vertex {
                     pos: corner,
                     uv: egui::pos2(x as f32, y as f32),
@@ -132,12 +139,13 @@ impl GuestView {
 
     fn pointer_input(&mut self, ui: &Ui, rect: Rect, response: &egui::Response, model: &mut Model) {
         let rotation = model.settings.rotation;
+        let turned = self.scan_turned();
         let Some(session) = &mut model.session else { return };
-        // Where on the guest's (portrait) screen a point lands, however the device is turned.
+        // Where in the guest's scan a point lands, however the device is turned and however its panel scans.
         let normalized = |p: Pos2| {
             let u = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64;
             let v = ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0) as f64;
-            let (x, y) = rotation.to_guest(u, v);
+            let (x, y) = rotation.to_scan(u, v, turned);
             Contact { id: 0, phase: MOVE, x, y }
         };
         let mut batch: Vec<Contact> = Vec::new();
@@ -223,7 +231,7 @@ impl GuestView {
                     let n = normalized(p);
                     let pair = self.pair.unwrap_or(Pair { start: (n.x, n.y), parallel: modifiers.shift });
                     let (x, y) = pair.partner(n.x, n.y);
-                    let (u, v) = rotation.from_guest(x, y);
+                    let (u, v) = rotation.from_scan(x, y, turned);
                     let other = rect.min + egui::vec2(u as f32 * rect.width(), v as f32 * rect.height());
                     let stroke = egui::Stroke::new(1.5, Color32::from_white_alpha(200));
                     for at in [p, other] {

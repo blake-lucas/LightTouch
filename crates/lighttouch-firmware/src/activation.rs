@@ -169,6 +169,37 @@ fn put_be32(b: &mut [u8], o: usize, v: u32) {
 /// not change the binary's size or its signing allocation.
 pub fn signed(data: &[u8]) -> Result<Vec<u8>> {
     let invalid = || crate::error::Error::new(crate::error::Code::ActivationFailed, "Unsupported code signature");
+    // A fat (universal) Mach-O carries several slices; sign each ARM slice in place. iOS 7's afcd is fat
+    // (armv7 + armv7s), and the previous thin-only path rejected it outright.
+    if data.len() >= 8 && be32(data, 0) == 0xCAFE_BABE {
+        let mut out = data.to_vec();
+        let nslices = be32(data, 4) as usize;
+        let mut signed_any = false;
+        for i in 0..nslices {
+            let o = 8 + 20 * i;
+            if o + 20 > data.len() {
+                break;
+            }
+            if be32(data, o) != 12 {
+                continue; // only ARM slices need (and can) be re-signed
+            }
+            let off = be32(data, o + 8) as usize;
+            let size = be32(data, o + 12) as usize;
+            if off.checked_add(size).is_none_or(|end| end > data.len()) {
+                continue;
+            }
+            let signed_slice = signed(&data[off..off + size])?;
+            if signed_slice.len() != size {
+                return Err(invalid());
+            }
+            out[off..off + size].copy_from_slice(&signed_slice);
+            signed_any = true;
+        }
+        if !signed_any {
+            return Err(invalid());
+        }
+        return Ok(out);
+    }
     let mut b = data.to_vec();
     let (start, size) = code_signature(data).ok_or_else(invalid)?;
     if size < 12 || start > b.len().wrapping_sub(size) || be32(&b, start) != 0xFADE_0CC0 {

@@ -49,7 +49,7 @@ class FirmwareAcceptanceTest {
                         assertTrue("firmwarekit ships in the APK", worker.supports(id))
                         scenario.onActivity { it.startForegroundService(Intent(it, FirmwareService::class.java)) }
                         val started = SystemClock.elapsedRealtime()
-                        val job = worker.start(id, stock.absolutePath, tools.absolutePath, "")
+                        val job = worker.start(id, stock.absolutePath, tools.absolutePath, "", false)
                         val destination = File(requireNotNull(job.getString("destination")))
                         var terminal = job
                         var lastStage = ""

@@ -15,7 +15,7 @@ use crate::hfs::{Editor, Volume};
 use crate::oneshot::{self, Helper, OneShot};
 use crate::system_edits::{self, helpers};
 use crate::identity::UnitIdentity;
-use crate::{files, k48iboot, k48nand, kboot, sandbox_patch};
+use crate::{files, k48iboot, k48nand, kboot, rootfs_patch, sandbox_patch};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +28,30 @@ pub const JAILBREAK_BOOT_ARG: &str = "amfi_get_out_of_my_way=1";
 pub fn boot_args(jailbreak: bool) -> String {
     let base = kboot::DEFAULT_BOOT_ARGS;
     if jailbreak { format!("{base} {JAILBREAK_BOOT_ARG}") } else { base.to_string() }
+}
+
+/// The kernel a jailbroken device boots. Two patches, each optional (a kernel whose bytes do not match keeps its stock
+/// behaviour): sb_evaluate is made to allow, so Substrate's inserted library loads inside the built-in app profiles;
+/// and on 7.x the rootfs remount check is cleared, so launchd's `mount -u -o rw /` from /etc/fstab succeeds and Cydia
+/// can write the root filesystem.
+fn jailbreak_kernel(kernel: &[u8], log: &dyn Fn(&str)) -> Vec<u8> {
+    let mut out = kernel.to_vec();
+    match sandbox_patch::apply(&out) {
+        Ok((patched, found)) => {
+            log(&format!("[sandbox] sb_evaluate patched at 0x{:x}", found.address));
+            out = patched;
+        }
+        Err(e) => log(&format!("[sandbox] left stock: {e}")),
+    }
+    match rootfs_patch::apply(&out) {
+        Ok((patched, found)) => {
+            log(&format!("[rootfs] remount patch at 0x{:x}", found.address));
+            out = patched;
+        }
+        Err(rootfs_patch::PatchError::NotFound) => {} // iOS before 7: nothing refuses the remount
+        Err(e) => log(&format!("[rootfs] left stock: {e}")),
+    }
+    out
 }
 
 /// The keybag ramdisk's helper: root's restored_external, which the ramdisk's rc.boot runs first.
@@ -301,11 +325,13 @@ impl Board for K48Board {
         let kernel = read(&c.dec_file("kernelcache.mach")?)?;
         fitcheck::check_boot_args(&c.fit, Some(&kernel), &args)?;
         // A jailbroken device's kernel is sandbox-patched so Substrate's inserted library loads inside the built-in app
-        // profiles; recorded here, applied to the boot kernel (kboot.bin below, or the iBoot kernelcache in volumes).
-        let mut jailbreak_kernel = None;
+        // profiles, and (7.x) rootfs-patched so launchd can remount / rw; recorded here, applied to the boot kernel
+        // (kboot.bin below, or the iBoot kernelcache in volumes).
+        let mut boot_kernel = None;
         if c.cydia.is_some() {
             c.fit.check(fitcheck::sandbox_patch(Some(&kernel)), false, "left out")?;
-            jailbreak_kernel = sandbox_patch::apply(&kernel).ok().map(|(k, _)| k);
+            let log = |s: &str| c.log(s);
+            boot_kernel = Some(jailbreak_kernel(&kernel, &log));
         }
         // both chains add it
         c.fit.check(fitcheck::device_tree_property(Some(&kernel), "arm-io/usb-complex", "hsic-enabled"), false, "left out")?;
@@ -315,7 +341,7 @@ impl Board for K48Board {
             let log = |s: &str| c.log(s);
             self.gid_components = k48iboot::write_boot_files(&c.ipsw()?, c.e(), c.decrypted()?, ident, &args, &c.o.out, &log)?;
         } else {
-            kboot::write(c.decrypted()?, &c.file("kboot.bin"), ident, &args, None, jailbreak_kernel.as_deref())?;
+            kboot::write(c.decrypted()?, &c.file("kboot.bin"), ident, &args, None, boot_kernel.as_deref())?;
             if self.kboot_nor() && !self.data_protection {
                 std::fs::write(c.file("nor.bin"), vec![0xFFu8; 1 << 20])?;
             }
@@ -338,13 +364,18 @@ impl Board for K48Board {
             let comp = crate::ipsw::build_components(&c.ipsw()?, &c.e().board)?;
             let kc = comp.get("KernelCache").ok_or_else(|| crate::unsupported!("{}: the IPSW names no KernelCache", c.e().id))?;
             let raw = c.ipsw()?.read(kc)?;
-            // A jailbroken iBoot-chain device boots a sandbox-patched kernelcache, re-encrypted with the component's
-            // key so iBoot decrypts it as it does the stock one.
+            // A jailbroken iBoot-chain device boots a sandbox- and rootfs-patched kernelcache, re-encrypted with the
+            // component's key so iBoot decrypts it as it does the stock one.
             if c.cydia.is_some() {
                 let k = c.e().key_for_path(kc)?;
                 if let (Some(iv), Some(key)) = (k.iv.as_deref().and_then(crate::entry::from_hex), crate::entry::from_hex(&k.key)) {
-                    if let Ok((img3, found)) = sandbox_patch::rewrap_kernelcache(&raw, &read(&c.dec_file("kernelcache.mach")?)?, &iv, &key) {
-                        c.log(&format!("[sandbox] kernelcache re-wrapped with sb_evaluate patched at 0x{:x}", found.address));
+                    let patched = {
+                        let kernel = read(&c.dec_file("kernelcache.mach")?)?;
+                        let log = |s: &str| c.log(s);
+                        jailbreak_kernel(&kernel, &log)
+                    };
+                    if let Ok(img3) = sandbox_patch::rewrap(&raw, &patched, &iv, &key) {
+                        c.log("[iBoot] kernelcache re-wrapped");
                         kernelcache_img3 = Some(img3);
                     }
                 }

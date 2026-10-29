@@ -28,6 +28,9 @@ pub struct PrepareRequest {
     /// A boot ROM file the user chose; otherwise one is reused or downloaded when the board needs it.
     pub bootrom: Option<PathBuf>,
     pub name: Option<String>,
+    /// Install the jailbreak (afc2 + Cydia) during preparation.
+    #[serde(default)]
+    pub jailbreak: bool,
 }
 
 /// Whether this build can prepare devices, and why not.
@@ -246,6 +249,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         &catalog_file,
         reporter,
         &mut timings,
+        request.jailbreak,
     );
     let _ = std::fs::remove_dir_all(&cache);
     if let Err(e) = result {
@@ -313,6 +317,7 @@ fn run_firmwarekit(
     catalog: &Path,
     reporter: &Reporter,
     timings: &mut Vec<(String, f64)>,
+    jailbreak: bool,
 ) -> Result<(), String> {
     let engine = ctx.resources.engine();
     let mut command = Command::new(ctx.resources.firmwarekit());
@@ -335,6 +340,9 @@ fn run_firmwarekit(
         .arg("--skip-setup");
     if let Some(rom) = bootrom {
         command.arg("--bootrom").arg(rom);
+    }
+    if jailbreak {
+        command.arg("--jailbreak");
     }
     if let Some(sibling) = sibling {
         command.arg("--sibling-ipsw").arg(sibling);

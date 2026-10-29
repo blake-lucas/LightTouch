@@ -29,53 +29,59 @@
 #define ARM32_THUMB_IT_EQ __builtin_bswap16(0x08BF)
 #define ARM32_THUMB_ITE_NE __builtin_bswap16(0x14BF)
 
+/* The 32-bit Thumb-2 instructions below are one little-endian word, so every bit-field is uint32_t: GCC starts a
+ * new storage unit when a field does not fit the remaining bits of its declared type (even in a packed struct), so
+ * uint8_t/uint16_t fields spanning a word split the layout and the decoders never match (arm32_thumb_MOVW came out
+ * 5 bytes and is_MOVW_insn() never fired). With uint32_t the layout is the intended LSB-first one under both clang
+ * and GCC: sizeof == 4, field n at bit offset sum of the widths before it. */
+
 struct arm32_thumb_LDR_T3 {
-	uint8_t rn : 4;
-	uint16_t pad : 12;
-	uint16_t imm12 : 12;
-	uint8_t rt : 4;
+	uint32_t rn : 4;
+	uint32_t pad : 12;
+	uint32_t imm12 : 12;
+	uint32_t rt : 4;
 } __attribute__ ((packed));
 
 struct arm32_thumb_MOVW {
-	uint8_t imm4 : 4;
-	uint8_t pad0 : 6;
-	uint8_t i : 1;
-	uint8_t pad1 : 5;
-	uint8_t imm8;
-	uint8_t rd : 4;
-	uint8_t imm3 : 3;
-	uint8_t bit31 : 1;
+	uint32_t imm4 : 4;
+	uint32_t pad0 : 6;
+	uint32_t i : 1;
+	uint32_t pad1 : 5;
+	uint32_t imm8 : 8;
+	uint32_t rd : 4;
+	uint32_t imm3 : 3;
+	uint32_t bit31 : 1;
 } __attribute__((packed));
 
 struct arm32_thumb_BL {
-	uint16_t offset : 11;
-	uint8_t h : 1;
-	uint8_t padd : 4;
-	uint16_t offset2 : 11;
-	uint8_t h2 : 1;
-	uint8_t padd2 : 4;
+	uint32_t offset : 11;
+	uint32_t h : 1;
+	uint32_t padd : 4;
+	uint32_t offset2 : 11;
+	uint32_t h2 : 1;
+	uint32_t padd2 : 4;
 } __attribute__((packed));
 
 struct arm32_thumb_MOVT_W {
-	uint8_t imm4 : 4;
-	uint8_t pad0 : 6;
-	uint8_t i : 1;
-	uint8_t pad1 : 5;
-	uint8_t imm8;
-	uint8_t rd : 4;
-	uint8_t imm3 : 3;
-	uint8_t bit31 : 1;
+	uint32_t imm4 : 4;
+	uint32_t pad0 : 6;
+	uint32_t i : 1;
+	uint32_t pad1 : 5;
+	uint32_t imm8 : 8;
+	uint32_t rd : 4;
+	uint32_t imm3 : 3;
+	uint32_t bit31 : 1;
 } __attribute__((packed));
 
 struct arm32_thumb_BW_T4 {
-	uint16_t imm10 : 10;
-	uint8_t s : 1;
-	uint8_t pad0 : 5;
-	uint16_t imm11 : 11;
-	uint8_t j2 : 1;
-	uint8_t bit12 : 1;
-	uint8_t j1 : 1;
-	uint8_t pad1 : 2;
+	uint32_t imm10 : 10;
+	uint32_t s : 1;
+	uint32_t pad0 : 5;
+	uint32_t imm11 : 11;
+	uint32_t j2 : 1;
+	uint32_t bit12 : 1;
+	uint32_t j1 : 1;
+	uint32_t pad1 : 2;
 } __attribute__((packed));
 
 struct arm32_thumb_IT_T1 {
@@ -109,14 +115,14 @@ struct arm32_thumb {
 } __attribute__((packed));
 
 struct arm32_thumb_MOVT {
-    uint16_t imm4 : 4;   // Top 4 bits of the immediate value
-    uint16_t pad0 : 6;   // Constant value bits (part of the encoding, usually fixed)
-    uint16_t i : 1;      // The highest bit of the immediate value
-    uint16_t pad1 : 5;   // Constant value bits (part of the encoding, usually fixed)
-    uint8_t imm8;        // Lower 8 bits of the immediate value
-    uint8_t rd : 4;      // Destination register
-    uint8_t imm3 : 3;    // Middle 3 bits of the immediate value
-    uint8_t bit31 : 1;   // Should be 0
+    uint32_t imm4 : 4;   // Top 4 bits of the immediate value
+    uint32_t pad0 : 6;   // Constant value bits (part of the encoding, usually fixed)
+    uint32_t i : 1;      // The highest bit of the immediate value
+    uint32_t pad1 : 5;   // Constant value bits (part of the encoding, usually fixed)
+    uint32_t imm8 : 8;   // Lower 8 bits of the immediate value
+    uint32_t rd : 4;     // Destination register
+    uint32_t imm3 : 3;   // Middle 3 bits of the immediate value
+    uint32_t bit31 : 1;  // Should be 0
 } __attribute__((packed));
 
 #endif

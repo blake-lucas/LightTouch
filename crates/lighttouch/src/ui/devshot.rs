@@ -82,6 +82,7 @@ pub fn start(app: &mut App) {
                 ipsw: lighttouch_model::prepare::IpswSource::File(ipsw),
                 bootrom: None,
                 name: None,
+                jailbreak: false,
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;
