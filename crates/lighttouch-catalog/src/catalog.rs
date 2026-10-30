@@ -127,6 +127,20 @@ impl Firmware {
         format!("{}_{}_{}_Restore.ipsw", self.product_type, self.version, self.build)
     }
 
+    /// Why the prepare screens show the Jailbreak switch turned off and locked for this firmware, or None where it
+    /// can be turned on. firmwarekit refuses the same firmwares (n45_recipe, n72_recipe). Android's
+    /// CatalogFirmware.jailbreakUnavailable says the same.
+    pub fn jailbreak_unavailable(&self) -> Option<&'static str> {
+        if self.version.split('.').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(0) < 2 {
+            Some("Needs iPhone OS 2.0 or later")
+        } else if self.board == "n72ap" {
+            // Substrate's launchd hook (cynject from /etc/launchd.conf) hangs every boot after the first: docs/TODO.md.
+            Some("Not on iPod touch 2G yet: it wouldn't start up again after its first restart")
+        } else {
+            None
+        }
+    }
+
     pub fn support(&self) -> Support {
         if SLOW.contains(&self.id.as_str()) {
             Support::TestedSlow
@@ -347,6 +361,18 @@ pub fn fits_device_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Jailbreak switch is locked on 1.x and on the iPod touch 2G, and open on the boards that restart jailbroken.
+    #[test]
+    fn jailbreak_is_locked_where_it_cannot_work() {
+        let catalog = Catalog::get();
+        let reason = |id: &str| catalog.find(id).unwrap().jailbreak_unavailable();
+        assert_eq!(reason("n45ap-4A102"), Some("Needs iPhone OS 2.0 or later"));
+        assert!(reason("n72ap-7E18").unwrap().contains("iPod touch 2G"));
+        assert!(reason("n72ap-8C148").unwrap().contains("iPod touch 2G"));
+        assert_eq!(reason("n81ap-10B500"), None);
+        assert_eq!(reason("n90ap-11D257"), None);
+    }
 
     #[test]
     fn catalog_parses_and_groups() {

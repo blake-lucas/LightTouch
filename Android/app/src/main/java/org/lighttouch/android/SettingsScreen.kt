@@ -123,8 +123,8 @@ private fun RowIcon(icon: ImageVector?, alpha: Float = 1f) {
 
 @Composable
 internal fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
-                      info: (() -> Unit)? = null, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                      info: (() -> Unit)? = null, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled) { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         RowIcon(icon)
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
@@ -132,7 +132,7 @@ internal fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, che
         }
         if (info != null) IconButton(onClick = info) { Icon(LtIcons.Info, "About this setting", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         else Spacer(Modifier.width(12.dp))
-        Switch(checked, onChange, modifier = if (tag != null) Modifier.testTag(tag) else Modifier)
+        Switch(checked, onChange, modifier = if (tag != null) Modifier.testTag(tag) else Modifier, enabled = enabled)
     }
 }
 

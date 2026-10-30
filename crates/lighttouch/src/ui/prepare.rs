@@ -344,16 +344,21 @@ fn files_step(app: &mut App, ui: &mut Ui) {
     );
 
     ui.add_space(8.0);
-    // The same row Android's prepare screen shows: icon, what it adds, and the switch.
+    // The same row Android's prepare screen shows: icon, what it adds, and the switch (off and locked, saying why,
+    // where the firmware can't be jailbroken).
+    let unavailable = firmware.jailbreak_unavailable();
+    if unavailable.is_some() {
+        app.prepare.jailbreak = false;
+    }
     widgets::card(ui, &p, |ui| {
         widgets::setting_row(
             ui,
             &p,
             icons::BAG,
             "Jailbreak",
-            "Cydia and afc2, installed during preparation",
+            unavailable.unwrap_or("Cydia and afc2, installed during preparation"),
             |ui| {
-                widgets::switch(ui, &p, &mut app.prepare.jailbreak);
+                ui.add_enabled_ui(unavailable.is_none(), |ui| widgets::switch(ui, &p, &mut app.prepare.jailbreak));
             },
         );
     });

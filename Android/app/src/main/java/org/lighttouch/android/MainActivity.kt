@@ -638,7 +638,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 // firmwarekit bakes the APK's own guest helpers and packages into the system.
                 val tools = GuestTools.firmwareTools(this)
-                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom, prep.jailbreak)
+                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom,
+                    prep.jailbreak && chosen.jailbreakUnavailable == null)
                 handler.post { prep.preparation = state }
             } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
         }, "prepare-start").start()

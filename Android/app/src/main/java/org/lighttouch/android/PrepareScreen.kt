@@ -291,10 +291,13 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
         }
     }
     Spacer(Modifier.height(12.dp))
-    // afc2 and Cydia with Substrate, from Legacy iOS Kit's bootstrap (firmwarekit downloads it while it prepares).
+    // afc2 and Cydia with Substrate, from Legacy iOS Kit's bootstrap (firmwarekit downloads it while it prepares). Off
+    // and locked, saying why, where the firmware can't be jailbroken.
+    val jailbreakUnavailable = firmware.jailbreakUnavailable
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
-        SwitchRow(LtIcons.Bag, "Jailbreak", "Cydia and afc2, installed during preparation", state.jailbreak,
-            tag = "prepare_jailbreak") { if (!busy) state.jailbreak = it }
+        SwitchRow(LtIcons.Bag, "Jailbreak", jailbreakUnavailable ?: "Cydia and afc2, installed during preparation",
+            state.jailbreak && jailbreakUnavailable == null, tag = "prepare_jailbreak",
+            enabled = jailbreakUnavailable == null) { if (!busy) state.jailbreak = it }
     }
     val cost = preparationCost(firmware)
     Text("Preparing runs on this phone, takes ${cost.time} and needs about ${cost.space} free. LightTouch's guest tools are added for you.",

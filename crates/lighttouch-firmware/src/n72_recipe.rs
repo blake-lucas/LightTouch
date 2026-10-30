@@ -533,6 +533,11 @@ impl Board for N72Board {
     }
 
     fn check(&mut self, c: &mut Context) -> Result<()> {
+        // Cydia's first boot installs Substrate, whose launchd hook (cynject from /etc/launchd.conf) then hangs
+        // launchctl on every later boot of this machine (docs/TODO.md): no jailbreak on the 2G until that is solved.
+        if self.recipe.option("jailbreak") == Some(true) {
+            return Err(crate::unsupported!("{}: no jailbreak on the iPod touch 2G yet", c.e().id));
+        }
         self.bootrom = bootrom_path(c.o.bootrom.as_deref(), &c.o.helper_path);
         if self.data_protection {
             if self.bootrom.is_none() {
