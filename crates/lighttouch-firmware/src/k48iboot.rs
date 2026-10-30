@@ -309,13 +309,20 @@ unsafe extern "C" {
     fn lt_iboot32_main(argc: std::os::raw::c_int, argv: *const *const std::os::raw::c_char) -> std::os::raw::c_int;
 }
 
+/// The patcher's scratch folder: this process's id and the clock in nanoseconds. SystemTime's Debug (used here before)
+/// is "SystemTime { intervals: … }", and the colon makes the name one Windows refuses ("the directory name is invalid").
+fn scratch() -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    std::env::temp_dir().join(format!("k48-iboot-{}-{nanos}", std::process::id()))
+}
+
 /// A pattern-patched iBoot (RSA/personalization bypass, debug boot, the boot-args string), byte-for-byte what
 /// `iBoot32Patcher --rsa --debug -b <boot-args>` produces. `-a` (environment boot args) crashes 817.29, so `-b`. The
 /// patcher returns status 1 even on success; the output existing, keeping its size and differing is the check. Runs the
 /// vendored sources in-process (build.rs); its stdout is left as is (diagnostics the tool prints).
 pub fn patch_iboot(iboot: &[u8], boot_args: &str, log: &dyn Fn(&str)) -> Result<Vec<u8>> {
     use std::ffi::CString;
-    let tmp = std::env::temp_dir().join(format!("k48-iboot-{}-{:?}", std::process::id(), std::time::SystemTime::now()));
+    let tmp = scratch();
     std::fs::create_dir_all(&tmp)?;
     let src = tmp.join("iBoot.in");
     let dst = tmp.join("iBoot.out");
@@ -461,6 +468,32 @@ mod tests {
     fn patcher_rejects_non_iboot() {
         let r = patch_iboot(&vec![0u8; 0x1000], "serial=3", &|_| {});
         assert!(r.is_err()); // not a 32-bit iBoot reset vector: no output, status -1
+    }
+
+    unsafe extern "C" {
+        /// The patcher's Thumb-2 decoders (functions.c), which read packed bit-fields from the instruction word.
+        fn is_MOVW_insn(offset: *const std::os::raw::c_void) -> bool;
+        fn get_MOVW_val(movw: *const std::os::raw::c_void) -> u16;
+    }
+
+    /// `movw r12, #0x5254` ('RT', bytes 45 f2 54 2c) is what find_bl_verify_shsh_5_6_7 searches for in a 5/6/7
+    /// iBoot. Its struct fields must be uint32_t (see arm32_defs.h): with uint8_t/uint16_t GCC starts a new storage
+    /// unit mid-word, the struct grows to 5 bytes and no MOVW ever matches, so patch_rsa_check fails on every iPad.
+    #[test]
+    fn patcher_decodes_movw() {
+        let bytes: [u8; 4] = [0x45, 0xf2, 0x54, 0x2c];
+        let at = bytes.as_ptr().cast();
+        assert!(unsafe { is_MOVW_insn(at) }, "is_MOVW_insn must match 45 f2 54 2c");
+        assert_eq!(unsafe { get_MOVW_val(at) }, 0x5254);
+    }
+
+    /// The scratch folder takes a name every platform accepts: SystemTime's Debug, once used here, carries a colon and
+    /// Windows refuses the folder (os error 267, "the directory name is invalid"), so no iPad was ever created there.
+    #[test]
+    fn scratch_folder_name_is_valid() {
+        let dir = scratch();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The real-iBoot chain byte for byte against LegacyPreparationGoldens.k48 (the Python pipeline's digests, frozen

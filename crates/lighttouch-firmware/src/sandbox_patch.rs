@@ -164,12 +164,18 @@ pub fn apply(kernel: &[u8]) -> std::result::Result<(Vec<u8>, Found), PatchError>
 /// original's tags (TYPE/KBAG/SHSH/… unchanged). The patched iBoot does not check the signature.
 pub fn rewrap_kernelcache(raw: &[u8], kernel: &[u8], iv: &[u8], key: &[u8]) -> Result<(Vec<u8>, Found)> {
     let (patched, found) = apply(kernel)?;
-    let mut payload = complzss_wrap(&patched);
+    Ok((rewrap(raw, &patched, iv, key)?, found))
+}
+
+/// Put an already-patched plaintext kernel back in its IMG3, as [`rewrap_kernelcache`] does after its own patch (the
+/// caller may have applied other kernel patches first).
+pub fn rewrap(raw: &[u8], patched: &[u8], iv: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+    let mut payload = complzss_wrap(patched);
     if payload.len() % 16 != 0 {
         payload.resize(payload.len() + (16 - payload.len() % 16), 0);
     }
     let cipher = aes_cbc_encrypt(&payload, iv, key)?;
-    Ok((rebuild_img3(raw, &cipher)?, found))
+    rebuild_img3(raw, &cipher)
 }
 
 /// A valid Apple-LZSS stream of all literals (flag byte then eight bytes), so no compressor is needed: iBoot's
@@ -335,14 +341,17 @@ impl<'a> Image<'a> {
         let end = (off as usize + size as usize).min(self.bytes.len());
         let info = String::from_utf8_lossy(&self.bytes[off as usize..end]);
         let anchor = info.find("com.apple.security.sandbox")?;
+        // "<key>_PrelinkExecutableLoadAddr</key><integer size="64">0x805f1000</integer>": the value follows the
+        // integer element's own '>' (the one before it closes </key>), and the element may carry attributes.
         let key = "_PrelinkExecutableLoadAddr</key><integer";
         let mut before: Option<(usize, u32)> = None; // last occurrence before the id
         let mut after: Option<(usize, u32)> = None; // first occurrence at or after the id
         let mut search = 0;
         while let Some(rel) = info[search..].find(key) {
             let k = search + rel;
-            if let Some(gtr) = info[k..].find('>') {
-                let gt = k + gtr + 1;
+            let value = k + key.len();
+            if let Some(gtr) = info[value..].find('>') {
+                let gt = value + gtr + 1;
                 if let Some(ltr) = info[gt..].find('<') {
                     let hex = info[gt..gt + ltr].trim();
                     if let Some(h) = hex.strip_prefix("0x")
@@ -411,6 +420,43 @@ fn cstr(b: &[u8], o: usize, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A kernelcache Mach-O whose __PRELINK_INFO.__info is `info`, for the prelink lookups.
+    fn prelinked_kernel(info: &str) -> Vec<u8> {
+        const SEGMENT: usize = 28; // LC_SEGMENT
+        const SECTION: usize = SEGMENT + 56;
+        const DATA: usize = 0x100;
+        let mut b = vec![0u8; DATA];
+        b[0..4].copy_from_slice(&0xFEED_FACEu32.to_le_bytes());
+        b[4..8].copy_from_slice(&12u32.to_le_bytes()); // CPU_TYPE_ARM
+        b[16..20].copy_from_slice(&1u32.to_le_bytes()); // ncmds
+        b[20..24].copy_from_slice(&(56u32 + 68).to_le_bytes()); // sizeofcmds
+        b[SEGMENT..SEGMENT + 4].copy_from_slice(&1u32.to_le_bytes()); // LC_SEGMENT
+        b[SEGMENT + 4..SEGMENT + 8].copy_from_slice(&(56u32 + 68).to_le_bytes());
+        b[SEGMENT + 8..SEGMENT + 22].copy_from_slice(b"__PRELINK_INFO");
+        b[SEGMENT + 48..SEGMENT + 52].copy_from_slice(&1u32.to_le_bytes()); // nsects
+        b[SECTION..SECTION + 6].copy_from_slice(b"__info");
+        b[SECTION + 16..SECTION + 30].copy_from_slice(b"__PRELINK_INFO");
+        b[SECTION + 36..SECTION + 40].copy_from_slice(&(info.len() as u32).to_le_bytes());
+        b[SECTION + 40..SECTION + 44].copy_from_slice(&(DATA as u32).to_le_bytes());
+        b.extend_from_slice(info.as_bytes());
+        b
+    }
+
+    /// The load address sits in an <integer> element that carries a size attribute: the value follows that element's
+    /// own '>'. Reading the first '>' after the key finds the one closing </key>, so no address ever parsed and every
+    /// kernel came back as "no com.apple.security.sandbox kext" — the sandbox patch never ran, and MobileSafari died
+    /// at dyld on MobileSubstrate's inserted library.
+    #[test]
+    fn prelink_load_addr_reads_the_integer_element() {
+        let info = concat!(
+            "<dict><key>CFBundleIdentifier</key><string>com.apple.security.sandbox</string>",
+            "<key>_PrelinkExecutableLoadAddr</key><integer size=\"64\">0x805f1000</integer></dict>"
+        );
+        let kernel = prelinked_kernel(info);
+        let img = Image::new(&kernel).unwrap();
+        assert_eq!(img.sandbox_kext_load_addr(), Some(0x805f1000));
+    }
 
     #[test]
     fn literal_lzss_round_trips() {

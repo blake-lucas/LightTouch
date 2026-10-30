@@ -161,7 +161,7 @@ pub fn install_jailbreak(system: &mut Editor, bootstrap: &Path, typein_by_substr
     let mut root = afc2_root;
     root.extend(cydia.root);
     let typein = "usr/lib/it_typein.dylib";
-    if typein_by_substrate && system.exists(typein) {
+    if typein_by_substrate && system.exists(typein) && system.exists("Library/MobileSubstrate") {
         plistedit::rewrite(system, SPRINGBOARD_JOB, |d| {
             if d.get("Label").and_then(Value::as_string) != Some("com.apple.SpringBoard") {
                 return Err(crate::unsupported!("{SPRINGBOARD_JOB}: not SpringBoard's job"));

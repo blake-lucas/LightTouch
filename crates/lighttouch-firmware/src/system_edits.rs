@@ -377,8 +377,10 @@ pub fn build_k48(
     let product_version = system_version.get("ProductVersion").and_then(Value::as_string).unwrap_or("").to_string();
     let product_build = system_version.get("ProductBuildVersion").and_then(Value::as_string).unwrap_or("").to_string();
     let product_major: u32 = product_version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(0);
-    // 7.x's launchd cannot remount / rw (mount_hfs: Operation not permitted) and reboots; keep its stock ro root
-    ed.write(FSTAB, (if product_major >= 7 { FSTAB_RO } else { FSTAB_RW }).as_bytes().to_vec(), None)?;
+    // 7.x's launchd cannot remount / rw on a stock kernel (mount_hfs: Operation not permitted) and reboots; keep its
+    // stock ro root unless the jailbreak's rootfs_patch unblocks the remount.
+    let fstab = if product_major >= 7 && !o.jailbreak { FSTAB_RO } else { FSTAB_RW };
+    ed.write(FSTAB, fstab.as_bytes().to_vec(), None)?;
     if o.web_proxy {
         let now_fw = Firmware::new(ed.snapshot()?, "armv7", None);
         fit.check(fitcheck::web_proxy(&now_fw), false, "kept: the PAC is unused")?;

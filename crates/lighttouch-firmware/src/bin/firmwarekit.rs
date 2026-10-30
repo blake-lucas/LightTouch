@@ -78,6 +78,14 @@ fn hfs_list(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// One file out of an HFS+ volume, to stdout: `hfs-cat IMG PATH`.
+fn hfs_cat(args: &[String]) -> Result<(), String> {
+    let (Some(image), Some(path)) = (args.first(), args.get(1)) else { return Err("hfs-cat IMG PATH".into()) };
+    let ed = Editor::open_read_only(&PathBuf::from(image)).map_err(|e| e.to_string())?;
+    let data = ed.read(path).map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut std::io::stdout().lock(), &data).map_err(|e| e.to_string())
+}
+
 fn hfs_edit(args: &[String]) -> Result<(), String> {
     let Some(image) = args.first() else { return Err("hfs-edit IMG [EDIT...]".into()) };
     let started = std::time::Instant::now();
@@ -553,6 +561,7 @@ fn main() -> ExitCode {
         Some("k48-rebuild") => k48_rebuild(&args[1..]),
         Some("k48-check") => k48_check(&args[1..]),
         Some("hfs-list") => hfs_list(&args[1..]),
+        Some("hfs-cat") => hfs_cat(&args[1..]),
         Some("hfs-edit") => hfs_edit(&args[1..]),
         Some("hfs-grow") => hfs_grow(&args[1..]),
         Some("hfs-format") => hfs_format(&args[1..]),
