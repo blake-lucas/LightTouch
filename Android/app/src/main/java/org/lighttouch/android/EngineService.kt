@@ -564,6 +564,11 @@ class EngineService : Service() {
         Thread({
             val samples = ShortArray(8192)
             var format = ""
+            // A silent guest (all of a boot, most of the Home screen) hands over nothing, and asking a hundred
+            // times a second was a JNI call and a wake each time. After half a second of silence the wait grows
+            // to 60 ms; a gap between packets inside a sound keeps 10 ms, so playback never waits on it, and the
+            // first packet after a silence is at most one long wait late (the runtime queues 16).
+            var silentSinceNs = 0L
             while (alive.get()) {
                 // This ticket predates both the native PCM read and format read.
                 // Pause/resume can run while either JNI call is outside the sink lock.
@@ -576,6 +581,8 @@ class EngineService : Service() {
                     continue
                 }
                 if (count > 0) synchronized(audioGuard) { audioObservations.samples(samples, 0, count, false) }
+                val now = System.nanoTime()
+                if (count > 0) silentSinceNs = 0L else if (silentSinceNs == 0L) silentSinceNs = now
                 if (count > 0 && audioOn && !focusPaused && !userPaused && !stopping.get()) {
                     try {
                         val spec = Native.audioInfo()
@@ -624,7 +631,7 @@ class EngineService : Service() {
                     if (count > 0) synchronized(audioGuard) {
                         audioObservations.discardedReadPackets++; audioObservations.discardedReadSamples += count
                     }
-                    Thread.sleep(10)
+                    Thread.sleep(if (silentSinceNs != 0L && now - silentSinceNs > 500_000_000L) 60 else 10)
                 }
             }
             synchronized(audioGuard) { audio?.release(); audio = null }
