@@ -237,6 +237,12 @@ enum Message {
     /// The guest's app list after an install.
     AfterInstall(Vec<InstalledApp>),
     Crash(String),
+    /// A removal finished: the bundle id, and the guest's list after it or why it failed.
+    Removed {
+        socket: PathBuf,
+        bundle_id: String,
+        result: Result<Vec<InstalledApp>, String>,
+    },
     Icon {
         url: String,
         bytes: Option<Vec<u8>>,
@@ -273,6 +279,9 @@ pub struct Store {
     /// The install queue as of the last tick.
     pub queue: Vec<QueueItem>,
     pub crash: Option<String>,
+    /// The app being removed from the guest, and why the last removal failed.
+    pub removing: Option<String>,
+    pub remove_error: Option<String>,
     /// Why the running device has no USB link for installs.
     pub usb_problem: Option<String>,
     installer: InstallQueue<InstallRequest>,
@@ -357,6 +366,8 @@ impl Store {
             browser: Browser::default(),
             queue: Vec::new(),
             crash: None,
+            removing: None,
+            remove_error: None,
             usb_problem: None,
             installer: InstallQueue::new(work, move || wake()),
             socket,
@@ -623,6 +634,24 @@ impl Store {
                 }
             }
             Message::Crash(text) => self.crash = Some(text),
+            Message::Removed { socket, bundle_id, result } => {
+                self.removing = None;
+                if self.guest_socket.as_ref() != Some(&socket) {
+                    return;
+                }
+                match result {
+                    Ok(apps) => {
+                        self.set_installed(apps);
+                        if self.chosen.as_ref().is_some_and(|a| a.bundle_id == bundle_id) {
+                            self.close();
+                        }
+                        if self.installed_apps.plain.as_ref().is_some_and(|a| a.bundle_id == bundle_id) {
+                            self.installed_apps.plain = None;
+                        }
+                    }
+                    Err(e) => self.remove_error = Some(format!("Couldn't remove it: {e}")),
+                }
+            }
             Message::Icon { url, bytes } => {
                 self.icons.insert(url, bytes.map(|b| Icon::Ready(Arc::from(b))).unwrap_or(Icon::Missing));
             }
@@ -775,6 +804,26 @@ impl Store {
                 Err(e) => format!("Couldn't read crash reports: {e}"),
             };
             Message::Crash(text)
+        });
+    }
+
+    /// Remove an app and its data from the running guest, then read its list again and leave the app's page.
+    pub fn remove(&mut self, bundle_id: &str) {
+        let Some(socket) = self.guest_socket.clone() else { return };
+        if self.removing.is_some() || self.queued_bundle(bundle_id).is_some_and(|q| q.active()) {
+            return;
+        }
+        self.removing = Some(bundle_id.to_string());
+        self.remove_error = None;
+        let bundle_id = bundle_id.to_string();
+        self.spawn("store-remove", move || {
+            let result = Guest::connect(&socket, Duration::from_secs(30))
+                .and_then(|mut g| {
+                    g.uninstall(&bundle_id)?;
+                    g.installed()
+                })
+                .map_err(service_error);
+            Message::Removed { socket, bundle_id, result }
         });
     }
 

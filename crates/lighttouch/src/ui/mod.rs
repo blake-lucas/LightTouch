@@ -59,6 +59,11 @@ pub enum Dialog {
     Controls,
     /// The window was closed while a device is being prepared or added.
     CloseWhileBusy,
+    /// Remove an installed app from the running device (from its store page).
+    RemoveApp {
+        bundle_id: String,
+        name: String,
+    },
 }
 
 pub struct App {
@@ -433,6 +438,26 @@ impl App {
                             if self.model.devices.is_empty() {
                                 prepare::open(self);
                             }
+                        }
+                        if widgets::text_button(ui, &p, "Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                }
+                Dialog::RemoveApp { bundle_id, name } => {
+                    ui.label(widgets::icon_text(icons::TRASH, 26.0).color(theme::DANGER));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(format!("Remove {name}?")).font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(
+                        &p,
+                        "The app and its data are deleted from the device. You can install it again from the Legacy Store.",
+                    ));
+                    ui.add_space(16.0);
+                    widgets::dialog_buttons(ui, |ui| {
+                        if widgets::danger(ui, "Remove").clicked() {
+                            self.model.store.remove(&bundle_id);
+                            close = true;
                         }
                         if widgets::text_button(ui, &p, "Cancel").clicked() {
                             close = true;

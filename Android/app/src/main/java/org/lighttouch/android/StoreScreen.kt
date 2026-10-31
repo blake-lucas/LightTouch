@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -106,6 +107,9 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     var queue by mutableStateOf(installer.queue.snapshot())
     var searchOpen by mutableStateOf(false)
     var crash by mutableStateOf<String?>(null)
+    /** The bundle id being removed from the guest, and what went wrong with the last removal. */
+    var removing by mutableStateOf<String?>(null)
+    var removeError by mutableStateOf<String?>(null)
     private var searchGeneration = 0
     private var checkGeneration = 0
 
@@ -195,6 +199,25 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     fun openInstalled(app: InstalledApp) {
         val found = (installedList.lookups[app.bundleId] as? Lookup.Found)?.known
         if (found != null) open(found.app) else installedList.plain = app
+    }
+
+    /** Remove an app and its data from the running guest, then read its list again and leave the app's page. */
+    fun remove(bundleId: String) {
+        val socket = muxSocket() ?: return
+        if (removing != null || queuedBundle(bundleId)?.active == true) return
+        removing = bundleId; removeError = null
+        background("store-remove") {
+            val failure = runCatching { apps.uninstall(socket, bundleId) }.exceptionOrNull()
+            post {
+                removing = null
+                if (muxSocket() != socket) return@post
+                if (failure != null) { removeError = "Couldn't remove it: ${failure.message}"; return@post }
+                installed = installed - bundleId
+                installedList.list?.let { list -> installedList.set(list.filter { it.bundleId != bundleId }) }
+                installedList.refresh(force = true)
+                close(); installedList.plain = null
+            }
+        }
     }
 
     /** The app's queue entry by bundle id, for lists that don't have the store's row. */
@@ -533,6 +556,7 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
             contentPadding = PaddingValues(horizontal = 40.dp), enabled = running && model.servicesAvailable && model.candidate != null && inQueue == null) {
             Text(if (inQueue != null) "In the queue" else if (installedVersion != null) "Reinstall" else "Install", style = MaterialTheme.typography.titleMedium)
         }
+        if (installedVersion != null) RemoveApp(model, app.optString("bundle_id"), app.optString("name"), running && inQueue == null)
         Spacer(Modifier.height(12.dp))
     }
 }
@@ -623,4 +647,22 @@ private fun QueueRow(item: QueueItem, model: StoreModel) {
         }
         if (item.state == QueueState.DOWNLOADING || item.state == QueueState.INSTALLING) QueueProgress(item)
     }
+}
+
+/** Remove an installed app from the device, after asking. */
+@Composable
+internal fun ColumnScope.RemoveApp(model: StoreModel, bundleId: String, name: String, enabled: Boolean) {
+    var asking by remember { mutableStateOf(false) }
+    val busy = model.removing == bundleId
+    model.removeError?.let { Text(it, Modifier.padding(horizontal = 4.dp, vertical = 2.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    TextButton(onClick = { asking = true }, Modifier.align(Alignment.CenterHorizontally).testTag("store_remove"),
+        enabled = enabled && model.servicesAvailable && model.removing == null, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+        Text(if (busy) "Removing…" else "Remove from device")
+    }
+    if (asking) AlertDialog(onDismissRequest = { asking = false }, modifier = DialogTags, icon = { Icon(Icons.Filled.Delete, null) },
+        title = { Text("Remove $name?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
+        text = { Text("The app and its data are deleted from the device. You can install it again from the Legacy Store.") },
+        confirmButton = { Button(onClick = { asking = false; model.remove(bundleId) },
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("confirm_remove")) { Text("Remove") } },
+        dismissButton = { TextButton(onClick = { asking = false }) { Text("Cancel") } })
 }

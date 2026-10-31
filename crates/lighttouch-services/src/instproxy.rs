@@ -1,5 +1,5 @@
-//! The installation proxy (`com.apple.mobile.installation_proxy`): lists installed apps and installs a package
-//! staged in `PublicStaging`. Requests and replies are lockdown-framed plists.
+//! The installation proxy (`com.apple.mobile.installation_proxy`): lists installed apps, installs a package
+//! staged in `PublicStaging`, and removes apps. Requests and replies are lockdown-framed plists.
 use crate::lockdown::Conn;
 use crate::{Error, Result, string};
 use plist::{Dictionary, Value};
@@ -74,4 +74,15 @@ pub fn install_status(conn: &mut Conn) -> Result<InstallStatus> {
             percent: reply.get("PercentComplete").and_then(|v| v.as_unsigned_integer()),
         },
     })
+}
+
+/// Remove `bundle_id` and its data. The proxy answers with progress replies until `Complete`.
+pub fn uninstall(conn: &mut Conn, bundle_id: &str) -> Result<()> {
+    conn.send(Dictionary::from_iter([
+        ("Command", Value::from("Uninstall")),
+        ("ApplicationIdentifier", Value::from(bundle_id)),
+        ("ClientOptions", Value::Dictionary(Dictionary::new())),
+    ]))?;
+    while install_status(conn)? != InstallStatus::Complete {}
+    Ok(())
 }

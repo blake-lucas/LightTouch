@@ -2,7 +2,7 @@
 //! Charts, Categories, Collections), the apps on the device with newer versions, an app's page with its versions
 //! and screenshots, and the install queue behind a button in the header. Also installs a local IPA and shows the
 //! newest crash report.
-use super::{App, Page, icons, theme, widgets};
+use super::{App, Dialog, Page, icons, theme, widgets};
 use eframe::egui::{self, Align2, CornerRadius, FontId, Margin, RichText, Sense, Stroke, Ui, vec2};
 use lighttouch_catalog::catalog::short_product_name;
 use lighttouch_catalog::store::{self, CATEGORY_SORTS, CHART_TYPES, StoreApp};
@@ -809,6 +809,24 @@ fn plain_page(app: &mut App, ui: &mut Ui) {
     if failed && widgets::text_button(ui, &p, "Try again").clicked() {
         app.model.store.look_up();
     }
+    ui.add_space(12.0);
+    remove_button(app, ui, &item.bundle_id, &title);
+}
+
+/// Remove an installed app from the device, after asking (Dialog::RemoveApp).
+fn remove_button(app: &mut App, ui: &mut Ui, bundle_id: &str, name: &str) {
+    let p = app.palette;
+    let store = &app.model.store;
+    if let Some(error) = &store.remove_error {
+        ui.add(egui::Label::new(RichText::new(error).size(12.5).color(p.error)).wrap());
+    }
+    let busy = store.removing.as_deref() == Some(bundle_id);
+    let enabled =
+        store.guest_ready() && store.removing.is_none() && !store.queued_bundle(bundle_id).is_some_and(|q| q.active());
+    let label = if busy { "Removing…" } else { "Remove from device" };
+    if ui.add_enabled(enabled, egui::Button::new(RichText::new(label).color(theme::DANGER)).frame(false)).clicked() {
+        app.dialog = Some(Dialog::RemoveApp { bundle_id: bundle_id.to_string(), name: name.to_string() });
+    }
 }
 
 /// An app icon, or (with no icon to be had) its initial, so the row still has something to tap.
@@ -1017,6 +1035,9 @@ fn details(app: &mut App, ui: &mut Ui) {
     }
     if !store.running() {
         ui.label(widgets::muted(&p, "Start the device to install.").size(12.5));
+    }
+    if installed.is_some() {
+        remove_button(app, ui, &chosen.bundle_id, &chosen.name);
     }
     widgets::section(ui, &p, "Versions that run on this device");
     match app.model.store.copies.clone() {

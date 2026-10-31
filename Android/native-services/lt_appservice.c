@@ -6,10 +6,11 @@
  * system usbmuxd or a physical device. As the desktop app's
  * crates/lighttouch-services:
  *
- *   liblt_appservice.so info    --socket <mux.sock>
- *   liblt_appservice.so install --socket <mux.sock> --ipa <path> --bundle-id <id>
- *   liblt_appservice.so list    --socket <mux.sock>
- *   liblt_appservice.so syslog  --socket <mux.sock> --seconds <1..600>
+ *   liblt_appservice.so info      --socket <mux.sock>
+ *   liblt_appservice.so install   --socket <mux.sock> --ipa <path> --bundle-id <id>
+ *   liblt_appservice.so list      --socket <mux.sock>
+ *   liblt_appservice.so uninstall --socket <mux.sock> --bundle-id <id>
+ *   liblt_appservice.so syslog    --socket <mux.sock> --seconds <1..600>
  *
  * Output is JSON Lines on stdout (one object per line, flushed):
  *   {"target":{"product_type":"iPod2,1","ios":"3.1.3"}}       always first
@@ -589,6 +590,49 @@ static int action_list(struct session *s)
 	return 0;
 }
 
+/* ---------- uninstall ---------- */
+
+/* A bundle identifier, as the app's own validation allows it: what iOS accepts and
+ * what can be put on a command line without quoting. */
+static int bundle_id_valid(const char *id)
+{
+	size_t len = id ? strlen(id) : 0;
+	if (len == 0 || len >= 256)
+		return 0;
+	for (const char *p = id; *p; p++) {
+		int ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+		         *p == '.' || *p == '-' || *p == '_';
+		if (!ok)
+			return 0;
+	}
+	return 1;
+}
+
+/* Removal is synchronous here (no status callback): the guest's installer answers once the app
+ * and its data are gone, and the parent's deadline is what bounds a guest that never answers.
+ * What becomes of a running copy is the guest's business, not ours. */
+static int action_uninstall(struct session *s, const char *bundle_id)
+{
+	instproxy_client_t client = instproxy_open(s);
+	if (!client)
+		return 1;
+	struct buf before = {0};
+	buf_puts(&before, "{\"phase\":\"mutation\",\"status\":\"uninstalling\"}");
+	emit(&before);
+	instproxy_error_t err = instproxy_uninstall(client, bundle_id, NULL, NULL, NULL);
+	instproxy_client_free(client);
+	if (err != INSTPROXY_E_SUCCESS) {
+		emit_error("removing %s failed (device error %d).", bundle_id, (int)err);
+		return 1;
+	}
+	struct buf done = {0};
+	buf_puts(&done, "{\"result\":{\"bundle_id\":");
+	json_string(&done, bundle_id);
+	buf_puts(&done, ",\"uninstalled\":true}}");
+	emit(&done);
+	return 0;
+}
+
 /* ---------- install ---------- */
 
 static uint16_t le16(const unsigned char *p) { return (uint16_t)(p[0] | p[1] << 8); }
@@ -1043,7 +1087,7 @@ static void parent_death_guard(void)
 
 static void usage_error(const char *detail)
 {
-	emit_error("%s Usage: info|list|crashlog --socket PATH, install --socket PATH --ipa PATH --bundle-id ID, or syslog --socket PATH --seconds 1..600", detail);
+	emit_error("%s Usage: info|list|crashlog --socket PATH, install --socket PATH --ipa PATH --bundle-id ID, uninstall --socket PATH --bundle-id ID, or syslog --socket PATH --seconds 1..600", detail);
 }
 
 int main(int argc, char **argv)
@@ -1083,7 +1127,9 @@ int main(int argc, char **argv)
 	}
 	int is_install = strcmp(action, "install") == 0;
 	int is_syslog = strcmp(action, "syslog") == 0;
-	if (!is_install && !is_syslog && strcmp(action, "info") != 0 && strcmp(action, "list") != 0 && strcmp(action, "crashlog") != 0) {
+	int is_uninstall = strcmp(action, "uninstall") == 0;
+	if (!is_install && !is_syslog && !is_uninstall && strcmp(action, "info") != 0 &&
+	    strcmp(action, "list") != 0 && strcmp(action, "crashlog") != 0) {
 		usage_error("Unknown action.");
 		return 1;
 	}
@@ -1099,8 +1145,16 @@ int main(int argc, char **argv)
 		emit_error("The app's bundle identifier is required.");
 		return 1;
 	}
-	if (!is_install && (ipa || bundle_id)) {
-		usage_error("--ipa/--bundle-id apply to install only.");
+	if (is_uninstall && (ipa || !bundle_id || !*bundle_id)) {
+		usage_error("uninstall requires --bundle-id and takes no --ipa.");
+		return 1;
+	}
+	if (is_uninstall && !bundle_id_valid(bundle_id)) {
+		usage_error("Invalid bundle identifier.");
+		return 1;
+	}
+	if (!is_install && !is_uninstall && (ipa || bundle_id)) {
+		usage_error("--ipa/--bundle-id apply to install and uninstall only.");
 		return 1;
 	}
 	unsigned seconds = 0;
@@ -1140,6 +1194,8 @@ int main(int argc, char **argv)
 			rc = action_install(&s, ipa, bundle_id);
 		} else if (strcmp(action, "list") == 0) {
 			rc = action_list(&s);
+		} else if (is_uninstall) {
+			rc = action_uninstall(&s, bundle_id);
 		} else if (strcmp(action, "crashlog") == 0) {
 			rc = action_crashlog(&s);
 		} else if (is_syslog) {

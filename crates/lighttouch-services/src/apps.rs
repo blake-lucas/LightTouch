@@ -125,6 +125,12 @@ impl Guest {
         instproxy::browse_user_apps(&mut conn)
     }
 
+    /// Remove `bundle_id` and its data from the guest.
+    pub fn uninstall(&mut self, bundle_id: &str) -> Result<()> {
+        let mut conn = self.service(INSTPROXY, Duration::from_secs(120))?;
+        instproxy::uninstall(&mut conn, bundle_id)
+    }
+
     /// The newest crash report: its file name and text (the readable report inside a .plist when it is one).
     pub fn last_crash(&mut self) -> Result<Option<(String, String)>> {
         let mut afc = Afc::new(self.service(CRASH_REPORTS, TIMEOUT)?);

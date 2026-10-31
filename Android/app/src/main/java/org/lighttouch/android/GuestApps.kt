@@ -120,6 +120,9 @@ internal class GuestApps(private val context: Context) {
         return if (chosen.isNotEmpty()) chosen.joinToString("\n") else lines.takeLast(40).joinToString("\n")
     }
 
+    /** Removes the app and its data from the guest; the guest's installer answers once both are gone. */
+    fun uninstall(socket: String, bundleId: String): JSONObject = run(socket, listOf("uninstall", "--bundle-id", bundleId), 120)
+
     fun install(socket: String, ipa: File, bundleId: String, cancelled: () -> Boolean, event: (JSONObject) -> Unit): JSONObject =
         run(socket, listOf("install", "--ipa", ipa.absolutePath, "--bundle-id", bundleId), 900, cancelled, event)
 }
