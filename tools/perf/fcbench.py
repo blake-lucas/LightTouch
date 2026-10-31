@@ -42,6 +42,8 @@ GAMES = {
     # Real Racing, Flight Control, Asphalt 5 on the Poco's record.
     "n81-doodlejump": [(.15, .31), 30],                    # Doodle Jump's title
     "n81-jetpack": [(.86, .14), 50],                       # Jetpack Joyride's title
+    # The same once the guest has networking: Game Center's sign-in sheet covers the title until its Cancel.
+    "n81-jetpack-gc": [(.86, .14), 50, (.104, .046), 5],
     # a run: "touch anywhere to play", then "fly" holds and releases the screen through the measurement
     # (a run lasts ~20 s on the desktop; measure ~15)
     "n81-jetpack-play": [(.86, .14), 50, (.5, .5), 3, "fly"],
