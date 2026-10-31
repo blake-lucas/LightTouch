@@ -80,6 +80,18 @@ int qemu_ios_audio_capture_read(uint64_t generation, void *buffer, int capacity,
 double qemu_ios_audio_capture_time(uint64_t generation);
 void qemu_ios_audio_capture_stop(uint64_t generation);
 
+/* The host's microphone into the guest's capture port (hw/arm/host-mic.h): interleaved stereo S16 at
+ * HOST_MIC_RATE (44100), mono sources duplicated by the caller, `bytes` a multiple of 4. Returns the
+ * frames accepted; a shorter count means the guest was not reading and the ring dropped the rest. The
+ * guest hears silence while nothing is pushed, and a stopped capture leaves nothing for the next one.
+ * Any thread. API 2.4. */
+int qemu_ios_microphone_write(const void *frames, int bytes);
+void qemu_ios_microphone_flush(void);
+/* 1 while a capture port has asked for input since the last flush, else 0. rate is the port's rate
+ * (0 before one starts), queued the frames waiting, pushed/dropped the totals since the process
+ * began; every out pointer may be NULL. */
+int qemu_ios_microphone_state(uint32_t *rate, uint32_t *queued, uint64_t *pushed, uint64_t *dropped);
+
 /* Queue UTF-8 text for the guest pasteboard (machine property "pasteboard"). */
 void qemu_ios_ui_paste(const char *utf8);
 /* The text last copied inside the guest (UTF-8, at most 64 KiB - 1 bytes: the guest agent's cap), when the
@@ -115,7 +127,7 @@ const char *qemu_ios_build_id(void);
 /* This C API's version, major << 16 | minor. A minor bump only adds entry points;
  * a major bump removes or changes one, and a host built for another major refuses
  * the dylib. */
-#define QEMU_IOS_API_VERSION ((2u << 16) | 3u)
+#define QEMU_IOS_API_VERSION ((2u << 16) | 4u)
 uint32_t qemu_ios_api_version(void);
 
 /* Machine controls. */

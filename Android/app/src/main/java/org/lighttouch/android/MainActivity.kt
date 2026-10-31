@@ -76,6 +76,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
     // Android 13+ shows an install queue's progress and result in notifications only once allowed.
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        settings.microphone = granted; applySettings()
+    }
+    override fun enableMicrophone() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            settings.microphone = true; applySettings()
+        } else microphonePermission.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
     private fun askNotifications() {
         if (Build.VERSION.SDK_INT >= 33 && !askedNotifications && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             askedNotifications = true
@@ -431,7 +439,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
-        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
+        val microphone = settings.microphone && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.setMicrophone(microphone); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
         busy = true

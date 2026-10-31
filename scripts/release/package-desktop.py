@@ -51,6 +51,8 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>iOS apps that record hear your microphone while they record (Settings, Microphone).</string>
 </dict>
 </plist>
 """

@@ -77,6 +77,7 @@ class EngineService : Service() {
         }
         override fun setPresentScale(mode: Int) = Native.setPresentScale(mode)
         override fun setPresentVisible(visible: Boolean) = Native.setPresentVisible(visible)
+        override fun setMicrophone(enabled: Boolean) { microphone = enabled }
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
@@ -642,6 +643,58 @@ class EngineService : Service() {
             }
             synchronized(audioGuard) { audio?.release(); audio = null }
         }, "guest-audio").start()
+        Thread(::microphoneLoop, "guest-microphone").start()
+    }
+
+    /** Settings > Microphone, already checked against RECORD_AUDIO by the activity. */
+    @Volatile private var microphone = false
+
+    /**
+     * The phone's microphone into the guest's capture port, only while the setting is on and the guest itself is
+     * recording (its input port runs only while an iOS app records), so the phone's microphone is not opened for
+     * a guest that is not listening. Mono 44.1 kHz from the phone, duplicated to the stereo the port takes.
+     */
+    private fun microphoneLoop() {
+        val block = 441  // 10 ms
+        val mono = ShortArray(block); val stereo = ShortArray(block * 2)
+        var record: AudioRecord? = null
+        var checkedAt = 0L; var wanted = false
+        try {
+            while (alive.get()) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - checkedAt >= 250) {
+                    checkedAt = now
+                    wanted = microphone && !stopping.get() && Native.micCapturing() &&
+                        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                }
+                if (!wanted) {
+                    record?.let {
+                        it.stop(); it.release(); record = null
+                        val (_, rate, _, pushed, dropped) = Native.micInfo().toList() + List(5) { 0L }
+                        Native.micFlush()
+                        android.util.Log.i("LightTouch", "microphone closed: $pushed frames pushed, $dropped dropped, guest port at $rate Hz")
+                    }
+                    Thread.sleep(250)
+                    continue
+                }
+                val active = record ?: try {
+                    val minimum = AudioRecord.getMinBufferSize(44100, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                    @Suppress("MissingPermission")  // checked above
+                    AudioRecord(MediaRecorder.AudioSource.MIC, 44100, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                        maxOf(minimum, block * 2 * 4)).also {
+                        check(it.state == AudioRecord.STATE_INITIALIZED) { "microphone did not initialize" }
+                        it.startRecording(); record = it
+                        android.util.Log.i("LightTouch", "microphone open: the guest is recording")
+                    }
+                } catch (_: Exception) { microphone = false; continue }  // no microphone: stop asking until set again
+                val read = active.read(mono, 0, block)
+                if (read <= 0) { Thread.sleep(10); continue }
+                for (i in 0 until read) { stereo[2 * i] = mono[i]; stereo[2 * i + 1] = mono[i] }
+                Native.micWrite(stereo, read)
+            }
+        } finally {
+            record?.let { it.stop(); it.release() }
+        }
     }
     private fun pauseAudio() = synchronized(audioGuard) {
         audioGuard.pause()

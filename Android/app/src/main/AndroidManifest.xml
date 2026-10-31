@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Settings > Microphone (off by default): iOS apps that record hear the phone's microphone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application android:label="${appLabel}" android:icon="@mipmap/ic_launcher" android:theme="@style/AppTheme" android:allowBackup="false" android:supportsRtl="true">
         <profileable android:shell="${profileable}" />
         <activity android:name=".MainActivity" android:exported="true">

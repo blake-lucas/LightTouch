@@ -232,6 +232,13 @@ abi_struct!(lt_pcm_info {
     timestamp_ns: u64,
     dropped_frames: u64,
 });
+abi_struct!(lt_mic_info {
+    sample_rate: u32,
+    queued_frames: u32,
+    capturing: u32,
+    pushed_frames: u64,
+    dropped_frames: u64,
+});
 abi_struct!(lt_guest_request { operation: u32, timeout_ms: u32, argument: *const c_char });
 abi_struct!(lt_guest_result {
     request_id: u64,
@@ -395,6 +402,14 @@ unsafe extern "C" {
         info: *mut lt_pcm_info,
         error: *mut lt_error,
     ) -> lt_status;
+    pub fn lt_runtime_mic_write(
+        runtime: *mut lt_runtime,
+        frames: *const i16,
+        count: u32,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_mic_info(runtime: *mut lt_runtime, info: *mut lt_mic_info, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_mic_flush(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_guest_status(runtime: *mut lt_runtime, status: *mut u32, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_guest_request(
         runtime: *mut lt_runtime,
@@ -494,6 +509,7 @@ mod tests {
             size_of::<lt_input_status>(),
             size_of::<lt_motion>(),
             size_of::<lt_pcm_info>(),
+            size_of::<lt_mic_info>(),
             size_of::<lt_guest_request>(),
             size_of::<lt_guest_result>(),
         ];

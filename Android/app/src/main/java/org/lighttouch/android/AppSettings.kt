@@ -37,6 +37,10 @@ class AppSettings(private val context: Context) {
     private val headphonesState = mutableStateOf(prefs.getBoolean("headphones", true))
     var headphones: Boolean get() = headphonesState.value; set(v) { headphonesState.value = v; prefs.edit().putBoolean("headphones", v).apply() }
 
+    /* iOS apps that record hear the phone's microphone (needs RECORD_AUDIO; MainActivity asks when it is turned on). */
+    private val microphoneState = mutableStateOf(prefs.getBoolean("microphone", false))
+    var microphone: Boolean get() = microphoneState.value; set(v) { microphoneState.value = v; prefs.edit().putBoolean("microphone", v).apply() }
+
     private val hapticsState = mutableStateOf(prefs.getBoolean("haptics", true))
     var haptics: Boolean get() = hapticsState.value; set(v) { hapticsState.value = v; prefs.edit().putBoolean("haptics", v).apply() }
 

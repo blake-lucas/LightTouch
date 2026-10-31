@@ -443,6 +443,30 @@ impl Runtime {
         Ok(info.frames)
     }
 
+    /// Push microphone audio (LT_MIC_RATE stereo S16, interleaved) to the guest's capture port. Ok(false) when the
+    /// guest isn't recording or isn't running and the block was dropped.
+    pub fn mic_write(&self, frames: &[i16]) -> Result<bool> {
+        let mut error = sys::lt_error::new();
+        let count = (frames.len() / 2) as u32;
+        let status = unsafe { sys::lt_runtime_mic_write(self.raw, frames.as_ptr(), count, &mut error) };
+        if status == sys::LT_AGAIN {
+            return Ok(false);
+        }
+        check(status, &error)?;
+        Ok(true)
+    }
+
+    /// Whether the guest is recording (its capture port has asked for input since the last flush).
+    pub fn mic_capturing(&self) -> Result<bool> {
+        let mut info = sys::lt_mic_info::new();
+        self.call(|r, e| unsafe { sys::lt_runtime_mic_info(r, &mut info, e) })?;
+        Ok(info.capturing != 0)
+    }
+
+    pub fn mic_flush(&self) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_mic_flush(r, e) })
+    }
+
     pub fn profile(&self, path: Option<&Path>) -> Result<()> {
         let path = match path {
             Some(p) => cpath(p)?,

@@ -327,6 +327,7 @@ fn run(
     let mut last_status: Option<(StatusEvent, Instant)> = None;
     let mut reported_input = 0u64;
     let mut pending_guest: Option<u64> = None;
+    let mut microphone = Microphone { enabled: args.microphone, ..Default::default() };
     let mut ui_gone = false;
     let grace = Duration::from_millis(sys::LT_SHUTDOWN_GRACE_MS as u64);
     let outcome = loop {
@@ -395,6 +396,10 @@ fn run(
                     }
                     Ok(())
                 }
+                Command::Microphone { on } => {
+                    microphone.enabled = on;
+                    Ok(())
+                }
                 Command::Network { config } => {
                     if let Some(network) = &mut network {
                         network.session.request(config);
@@ -446,6 +451,7 @@ fn run(
         if let Some(network) = &mut network {
             network.tick(&runtime, events);
         }
+        microphone.tick(&runtime);
 
         let status = runtime.poll().map_err(|e| format!("engine status: {e}"))?;
         let diagnostics = runtime.diagnose().unwrap_or_default();
@@ -760,6 +766,54 @@ fn command_name(command: &Command) -> &'static str {
         Command::Guest { .. } => "guest",
         Command::Profile { .. } => "profile",
         Command::Mute { .. } => "mute",
+        Command::Microphone { .. } => "microphone",
         Command::Network { .. } => "network",
+    }
+}
+
+/// Settings → Microphone in the worker: the host microphone is open only while the setting is on and the guest's
+/// capture port runs (an iOS app is recording), and what it records goes to the engine.
+#[derive(Default)]
+struct Microphone {
+    enabled: bool,
+    input: Option<audio::Input>,
+    checked: Option<Instant>,
+    wanted: bool,
+    failed: bool,
+    block: Vec<i16>,
+}
+
+impl Microphone {
+    fn tick(&mut self, runtime: &Runtime) {
+        if self.checked.is_none_or(|t| t.elapsed() >= Duration::from_millis(250)) {
+            self.checked = Some(Instant::now());
+            self.wanted = self.enabled && runtime.mic_capturing().unwrap_or(false);
+            if !self.enabled {
+                self.failed = false; // turned off and on again: try the device again
+            }
+        }
+        if !self.wanted {
+            if self.input.take().is_some() {
+                let _ = runtime.mic_flush();
+            }
+            return;
+        }
+        if self.input.is_none() && !self.failed {
+            match audio::Input::open() {
+                Ok(input) => self.input = Some(input),
+                Err(e) => {
+                    eprintln!("microphone unavailable: {e}");
+                    self.failed = true;
+                }
+            }
+        }
+        if let Some(input) = &self.input {
+            input.drain(&mut self.block);
+            for chunk in self.block.chunks(4410 * 2) {
+                if runtime.mic_write(chunk).is_err() {
+                    break;
+                }
+            }
+        }
     }
 }

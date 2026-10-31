@@ -1190,6 +1190,31 @@ JNI(audio) jint JNICALL Java_org_lighttouch_android_Native_audio(JNIEnv *env,job
     if(pcm.channels>2||pcm.channels<1||pcm.frames*pcm.channels>data.size()){++pcm_failures;return -jint(LT_INVALID);}
     const jint count=pcm.frames*pcm.channels;env->SetShortArrayRegion(buffer,0,count,data.data());return count;
 }
+// The phone's microphone into the guest's capture port: 0 taken, 1 dropped (not recording), else -lt_status.
+JNI(micWrite) jint JNICALL Java_org_lighttouch_android_Native_micWrite(JNIEnv *env,jobject,jshortArray frames,jint count) {
+    if(count<=0||count*2>env->GetArrayLength(frames))return -jint(LT_INVALID);
+    std::vector<int16_t> data(size_t(count)*2);env->GetShortArrayRegion(frames,0,count*2,data.data());
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return 1;
+    lt_error error=LT_INIT(lt_error);const auto status=lt_runtime_mic_write(runtime,data.data(),uint32_t(count),&error);
+    return status==LT_OK?0:status==LT_AGAIN?1:-jint(status);
+}
+JNI(micCapturing) jboolean JNICALL Java_org_lighttouch_android_Native_micCapturing(JNIEnv *,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return JNI_FALSE;
+    lt_mic_info info=LT_INIT(lt_mic_info);lt_error error=LT_INIT(lt_error);
+    return lt_runtime_mic_info(runtime,&info,&error)==LT_OK&&info.capturing?JNI_TRUE:JNI_FALSE;
+}
+// capturing, port rate, queued, pushed, dropped; empty when the engine has no microphone input.
+JNI(micInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_micInfo(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_mic_info info=LT_INIT(lt_mic_info);lt_error error=LT_INIT(lt_error);
+    if(!runtime||lt_runtime_mic_info(runtime,&info,&error)!=LT_OK)return env->NewLongArray(0);
+    jlong data[5]={jlong(info.capturing),jlong(info.sample_rate),jlong(info.queued_frames),jlong(info.pushed_frames),jlong(info.dropped_frames)};
+    jlongArray arr=env->NewLongArray(5);env->SetLongArrayRegion(arr,0,5,data);return arr;
+}
+JNI(micFlush) void JNICALL Java_org_lighttouch_android_Native_micFlush(JNIEnv *,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_mic_flush(runtime,&error);
+}
 JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);jint data[2]={jint(pcm.sample_rate),jint(pcm.channels)};
     jintArray arr=env->NewIntArray(2);env->SetIntArrayRegion(arr,0,2,data);return arr;

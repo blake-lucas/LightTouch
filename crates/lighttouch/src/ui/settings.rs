@@ -108,6 +108,30 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 widgets::setting_row(ui, &p, icons::VOLUME_UP, "Mute", "Silence the device without pausing it", |ui| {
                     widgets::switch(ui, &p, &mut settings.muted);
                 });
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::MICROPHONE,
+                    "Microphone",
+                    "iOS apps that record hear this computer's microphone, only while they record. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.microphone);
+                    },
+                );
+            });
+
+            widgets::section(ui, &p, "Performance");
+            widgets::card(ui, &p, |ui| {
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::GAUGE,
+                    "Fewer pauses when apps open",
+                    "Skips the emulator's code clean-ups as an iOS app opens. Games may run up to about 5% slower. Applies the next time the device starts",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.fewer_app_pauses);
+                    },
+                );
             });
 
             widgets::section(ui, &p, "Connection");
@@ -298,10 +322,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             }
             if app.model.settings != before {
                 let muted_changed = app.model.settings.muted != before.muted;
+                let microphone_changed = app.model.settings.microphone != before.microphone;
                 app.model.save_settings();
                 if muted_changed {
                     let muted = app.model.settings.muted;
                     app.model.set_muted(muted);
+                }
+                if microphone_changed {
+                    let on = app.model.settings.microphone;
+                    app.model.set_microphone(on);
                 }
             }
         });

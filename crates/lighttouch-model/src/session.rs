@@ -103,6 +103,7 @@ pub struct StartOptions {
     pub audio: bool,
     pub headphones: bool,
     pub muted: bool,
+    pub microphone: bool,
     pub log_dir: PathBuf,
     pub extra_env: Vec<(String, String)>,
     pub usb: Option<lighttouch_core::protocol::UsbArgs>,
@@ -126,6 +127,7 @@ impl Session {
             recover: options.recover,
             audio: options.audio,
             headphones: options.headphones,
+            microphone: options.microphone,
             usb: options.usb.clone(),
             network: options.network.clone(),
         };
@@ -387,6 +389,10 @@ impl Session {
 
     pub fn set_muted(&mut self, muted: bool) {
         self.send(&Command::Mute { muted });
+    }
+
+    pub fn set_microphone(&mut self, on: bool) {
+        self.send(&Command::Microphone { on });
     }
 
     /// Ask iOS to shut down cleanly.

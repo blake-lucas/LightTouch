@@ -59,4 +59,11 @@ internal object Native {
     external fun guestPoll(requestId: Long): Array<String>
     external fun guestCancel(requestId: Long)
     external fun audio(buffer: ShortArray): Int
+    /** [count] stereo frames of [frames] to the guest's capture port: 0 taken, 1 dropped (not recording), else -lt_status. */
+    external fun micWrite(frames: ShortArray, count: Int): Int
+    /** Whether the guest has its microphone input running. */
+    external fun micCapturing(): Boolean
+    external fun micFlush()
+    /** capturing, port rate, queued, pushed, dropped; empty when the engine has no microphone input. */
+    external fun micInfo(): LongArray
 }

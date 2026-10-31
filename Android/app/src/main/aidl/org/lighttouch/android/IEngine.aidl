@@ -45,6 +45,8 @@ interface IEngine {
     void setPresentScale(int mode);
     void setPresentVisible(boolean visible);
     void setDetailedTiming(boolean enabled);
+    /** Settings > Microphone, already checked against the RECORD_AUDIO permission. */
+    void setMicrophone(boolean enabled);
     Bundle hitchSnapshot();
     /** The iOS app in front: bundleId and appName, both "" when the guest tools cannot say (a paused guest). */
     Bundle frontmostApp();

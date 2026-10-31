@@ -328,8 +328,15 @@ impl Model {
             audio: true,
             headphones: self.settings.headphones,
             muted: self.settings.muted,
+            microphone: self.settings.microphone,
             log_dir: self.dirs.logs(),
-            extra_env: Vec::new(),
+            // Settings → Fewer pauses when apps open: the engine's code-cache flushes as an app opens and once it
+            // settles cost a pause each but are worth ~5% in games (docs/PERFORMANCE.md).
+            extra_env: if self.settings.fewer_app_pauses {
+                vec![("LT_FLUSH_ON_APP".into(), "off".into()), ("LT_FLUSH_SETTLE".into(), "off".into())]
+            } else {
+                Vec::new()
+            },
             usb: usb_args(&self.dirs, &self.resources, &device.id),
             network: Some(lighttouch_core::protocol::NetworkArgs {
                 config: self.settings.network.config(),
@@ -394,6 +401,14 @@ impl Model {
         self.save_settings();
         if let Some(session) = &mut self.session {
             session.set_muted(muted);
+        }
+    }
+
+    pub fn set_microphone(&mut self, on: bool) {
+        self.settings.microphone = on;
+        self.save_settings();
+        if let Some(session) = &mut self.session {
+            session.set_microphone(on);
         }
     }
 

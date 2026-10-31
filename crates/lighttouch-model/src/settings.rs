@@ -78,6 +78,10 @@ pub struct Settings {
     /// Tell iOS headphones are plugged in (skips speaker protection; read at start).
     pub headphones: bool,
     pub muted: bool,
+    /// iOS apps that record hear this computer's microphone, only while they record.
+    pub microphone: bool,
+    /// Skip the engine's code-cache flushes as an iOS app opens (fewer pauses, ~5% slower games; read at start).
+    pub fewer_app_pauses: bool,
     pub scaling: Scaling,
     /// Draw the device around the screen on the home view.
     pub device_frame: bool,
@@ -105,6 +109,8 @@ impl Default for Settings {
             tilt: true,
             headphones: true,
             muted: false,
+            microphone: false,
+            fewer_app_pauses: false,
             scaling: Scaling::Smooth,
             device_frame: true,
             pause_when_hidden: true,

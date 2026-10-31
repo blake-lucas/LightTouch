@@ -40,3 +40,5 @@ pub const GLOBE: &str = "\u{E288}";
 pub const CLOCK_COUNTER: &str = "\u{E1A0}";
 pub const WIFI: &str = "\u{E4EA}";
 pub const ROTATE: &str = "\u{E038}";
+pub const MICROPHONE: &str = "\u{E326}";
+pub const GAUGE: &str = "\u{E628}";

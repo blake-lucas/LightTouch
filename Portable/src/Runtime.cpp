@@ -134,6 +134,10 @@ struct Engine {
     decltype(&qemu_ios_guest_package_report) package_report = nullptr;
     // Optional: engines before the storage counters lack it.
     decltype(&qemu_ios_storage_stats) storage_stats = nullptr;
+    // Optional: engines before the microphone input (API 2.4) lack all three.
+    decltype(&qemu_ios_microphone_write) mic_write = nullptr;
+    decltype(&qemu_ios_microphone_flush) mic_flush = nullptr;
+    decltype(&qemu_ios_microphone_state) mic_state = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -212,6 +216,9 @@ struct Engine {
                 reinterpret_cast<decltype(package_report)>(lt::os::library_symbol(library, "qemu_ios_guest_package_report"));
             storage_stats =
                 reinterpret_cast<decltype(storage_stats)>(lt::os::library_symbol(library, "qemu_ios_storage_stats"));
+            mic_write = reinterpret_cast<decltype(mic_write)>(lt::os::library_symbol(library, "qemu_ios_microphone_write"));
+            mic_flush = reinterpret_cast<decltype(mic_flush)>(lt::os::library_symbol(library, "qemu_ios_microphone_flush"));
+            mic_state = reinterpret_cast<decltype(mic_state)>(lt::os::library_symbol(library, "qemu_ios_microphone_state"));
         } catch (...) {
             lt::os::library_close(library);
             library = nullptr;
@@ -891,6 +898,38 @@ lt_status lt_runtime_storage_statistics(lt_runtime *r, lt_runtime_storage_stats 
         r->engine->storage_stats(&s);
         *out = {sizeof(*out), 1, s.read_ops, s.read_bytes, s.read_ns, s.write_ops, s.write_bytes, s.write_ns,
                 s.erase_ops, s.erase_ns};
+    });
+}
+lt_status lt_runtime_mic_write(lt_runtime *r, const int16_t *frames, uint32_t count, lt_error *e) {
+    int accepted = 0;
+    const auto status = lt::guard(e, [&] {
+        lt::require(r && frames, "invalid microphone buffer");
+        lt::require(count > 0 && count <= LT_MIC_RATE, "microphone block must be 1-44100 frames");
+        lt::require(r->engine->mic_write, "engine has no microphone input", LT_UNSUPPORTED);
+        // A guest that is not running reads nothing: say so rather than fill a ring it would drain later.
+        lt::require(r->started && !r->done && !r->stopping, "guest runtime inactive", LT_AGAIN);
+        accepted = r->engine->mic_write(frames, int(count * 4));
+    });
+    if (status != LT_OK)
+        return status;
+    return accepted == int(count) ? LT_OK : lt::error(e, LT_AGAIN, "microphone ring full");
+}
+lt_status lt_runtime_mic_info(lt_runtime *r, lt_mic_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        lt::require(r->engine->mic_state, "engine has no microphone input", LT_UNSUPPORTED);
+        uint32_t rate = 0, queued = 0;
+        uint64_t pushed = 0, dropped = 0;
+        const int capturing = r->engine->mic_state(&rate, &queued, &pushed, &dropped);
+        *out = {sizeof(*out), 1, rate, queued, capturing > 0 ? 1u : 0u, pushed, dropped};
+    });
+}
+lt_status lt_runtime_mic_flush(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::require(r->engine->mic_flush, "engine has no microphone input", LT_UNSUPPORTED);
+        r->engine->mic_flush();
     });
 }
 lt_status lt_runtime_destroy(lt_runtime *r, lt_error *e) {

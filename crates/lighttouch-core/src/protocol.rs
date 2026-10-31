@@ -20,6 +20,10 @@ pub struct WorkerArgs {
     pub audio: bool,
     #[serde(default)]
     pub headphones: bool,
+    /// iOS apps that record hear the host's microphone (Settings → Microphone); changed live with
+    /// `Command::Microphone`.
+    #[serde(default)]
+    pub microphone: bool,
     /// The guest's USB link for app services; `None` boots without a cable.
     #[serde(default)]
     pub usb: Option<UsbArgs>,
@@ -91,6 +95,10 @@ pub enum Command {
     /// Mute or unmute host audio output without pausing the guest.
     Mute {
         muted: bool,
+    },
+    /// Let the guest hear the host's microphone while it records, or not.
+    Microphone {
+        on: bool,
     },
     /// Change the route, archive date or LAN access live (the settings were saved already).
     Network {

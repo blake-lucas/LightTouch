@@ -69,6 +69,8 @@ interface GuestHost {
     fun openLicenses()
     fun openPreparation()
     fun applySettings()
+    /** Settings > Microphone turned on: ask for RECORD_AUDIO, and keep the setting only if it is granted. */
+    fun enableMicrophone()
 }
 
 internal val GuestHost.running get() = status == "running"
