@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Themed-icon layer (Android 13+): the phone and the touch as one-colour lines; the launcher tints it. -->
+  <rect x="362" y="206" width="300" height="612" rx="56" fill="none" stroke="#FFFFFF" stroke-width="22"/>
+  <rect x="396" y="290" width="232" height="384" rx="8" fill="none" stroke="#FFFFFF" stroke-width="14"/>
+  <circle cx="512" cy="748" r="26" fill="none" stroke="#FFFFFF" stroke-width="14"/>
+  <circle cx="512" cy="470" r="86" fill="none" stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="16"/>
+  <circle cx="512" cy="470" r="46" fill="#FFFFFF"/>
+</svg>

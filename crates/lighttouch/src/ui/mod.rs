@@ -93,6 +93,9 @@ pub fn run() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("LightTouch")
         .with_app_id("org.lighttouch.LightTouch")
+        .with_icon(
+            eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon/lighttouch.png")).unwrap_or_default(),
+        )
         .with_inner_size(devshot::window_size().unwrap_or([1120.0, 780.0]))
         // The sidebar takes 268 points; narrower, the pages' cards get cramped.
         .with_min_inner_size([880.0, 600.0])

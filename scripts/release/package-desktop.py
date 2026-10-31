@@ -28,6 +28,7 @@ import argparse, hashlib, json, re, shutil, subprocess, sys, zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+ICONS = REPO / "crates/lighttouch/assets/icon"  # art/icon/make-icons.py
 NAME = re.compile(r"[A-Za-z0-9._-]+")  # what the licence page accepts in a notice path
 TRIPLES = {"linux": "x86_64-unknown-linux-gnu", "windows": "x86_64-pc-windows-gnu", "macos": "aarch64-apple-darwin"}
 INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +36,8 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
+	<string>lighttouch</string>
+	<key>CFBundleIconFile</key>
 	<string>lighttouch</string>
 	<key>CFBundleIdentifier</key>
 	<string>org.lighttouch.LightTouch</string>
@@ -139,6 +142,7 @@ def main():
     if macos:
         version = re.search(r'^version = "(.+)"', (REPO / "Cargo.toml").read_text(), re.M).group(1)
         (args.out / "Contents/Info.plist").write_text(INFO_PLIST.replace("VERSION", version))
+        copy(ICONS / "lighttouch.icns", res / "lighttouch.icns")
         given = sorted(libs.iterdir()) if libs.is_dir() else []
         kegs = bundle_dylibs([res / engine, res / "usbmuxd-qemu", *given], libs)
     elif windows:
@@ -275,7 +279,7 @@ def appimage(out, tools):
     (appdir / "AppRun").write_text(APPRUN)
     (appdir / "AppRun").chmod(0o755)
     (appdir / "lighttouch.desktop").write_text(DESKTOP)
-    copy(REPO / "Linux/packaging/lighttouch.svg", appdir / "lighttouch.svg")
+    copy(ICONS / "lighttouch.png", appdir / "lighttouch.png")
     files = {str(f.relative_to(appdir)): hashlib.sha256(f.read_bytes()).hexdigest()
              for f in sorted(appdir.rglob("*")) if f.is_file()}
     (appdir / "runtime-manifest.json").write_text(json.dumps({"schema": 1, "files": files}, indent=2) + "\n")

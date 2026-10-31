@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bezel" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8E959F"/>
+      <stop offset="0.5" stop-color="#F2F4F7"/>
+      <stop offset="1" stop-color="#8E959F"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7FD3FF"/>
+      <stop offset="1" stop-color="#2F6FE0"/>
+    </linearGradient>
+    <radialGradient id="touch" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="glass"><rect x="384" y="278" width="256" height="408" rx="6"/></clipPath>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#0A1030" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <!-- The phone: a first-generation iPhone/iPod touch outline, inside the adaptive icon's safe zone. -->
+  <g filter="url(#shadow)">
+    <rect x="352" y="196" width="320" height="632" rx="62" fill="url(#bezel)"/>
+    <rect x="362" y="206" width="300" height="612" rx="54" fill="#14161C"/>
+  </g>
+  <rect x="384" y="278" width="256" height="408" rx="6" fill="url(#screen)"/>
+  <circle cx="512" cy="752" r="30" fill="none" stroke="#5A606B" stroke-width="7"/>
+  <rect x="500" y="740" width="24" height="24" rx="5" fill="none" stroke="#5A606B" stroke-width="5"/>
+  <rect x="486" y="238" width="52" height="9" rx="4.5" fill="#3A3F49"/>
+  <!-- The light touch: a fingertip's glow with two ripples. -->
+  <g clip-path="url(#glass)">
+  <circle cx="512" cy="470" r="128" fill="none" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="10"/>
+  <circle cx="512" cy="470" r="84" fill="none" stroke="#FFFFFF" stroke-opacity="0.6" stroke-width="12"/>
+  <circle cx="512" cy="470" r="62" fill="url(#touch)"/>
+  </g>
+</svg>

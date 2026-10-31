@@ -10,7 +10,6 @@ The desktop app's Linux AppImage is built by `scripts/build-release.sh` (its `li
 | `refresh-private-daemon.py` | Rebuilds only the daemon (`build-mobile-deps.py --daemon-only-from`), runs `test-private-daemon.py` on it, then the command given after `--`. |
 | `test-private-daemon.py` | Exercises the built daemon without a guest or a physical USB device. |
 | `seal-appimage.py` | Seals an AppDir into an AppImage with the pinned appimagetool and runtime (`package-desktop.py --appimage`). |
-| `lighttouch.svg` | The app icon in the AppImage. |
 
 The AppImage needs glibc 2.31 or later and X11 or Wayland. The host supplies the GPU drivers (EGL/GL), glibc
 and the C++ runtime; the AppImage bundles the engine, the USB bridge and the seven libraries they load beyond the
