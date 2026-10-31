@@ -46,7 +46,8 @@ internal object GuestCrashDiagnosis {
             ?.let { return "The engine's own log says the GL bridge does not implement ${it.groupValues[1]} " +
                 "(id ${it.groupValues[2]}) and answered 0: if this crash came right after that, the value the app " +
                 "used was ours, not the app's." }
-        engine.asReversed().firstNotNullOfOrNull { Regex("""REFUSED (\S+)""").find(it) }
+        // draw-error is the app's own GL error, reported back to it as on hardware; common and rarely fatal.
+        engine.asReversed().firstNotNullOfOrNull { Regex("""REFUSED (?!draw-error)(\S+)""").find(it) }
             ?.let { return "The engine's own log says it refused ${it.groupValues[1]}: the crash may follow from that." }
         return null
     }

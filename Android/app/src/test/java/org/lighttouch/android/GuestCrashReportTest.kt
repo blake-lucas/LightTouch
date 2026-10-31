@@ -87,6 +87,7 @@ class GuestCrashReportTest {
         assertNotNull(hint)
         assertTrue("the dropped entry point is the answer", hint!!.contains("glMapBuffer"))
         assertNull(GuestCrashDiagnosis.engineHint(listOf("[boot] first lit frame after 0.0 s wall")))
+        assertNull("an app's own GL error is not a dropped call", GuestCrashDiagnosis.engineHint(listOf("[gles] REFUSED draw-error:0x500")))
     }
 
     @Test fun diagnosisIncludesTheEnginesOwnLogTail() {
