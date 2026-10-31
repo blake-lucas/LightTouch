@@ -164,6 +164,12 @@ internal class ShutdownWatchdog(
         return true
     }
 
+    /** The user's Force stop: dispose now, as the deadline would, whether or not a shutdown was requested. */
+    fun force() {
+        if (requested.compareAndSet(false, true)) { acceptedAt = now(); deadline = acceptedAt }
+        finish("user-forced", null)
+    }
+
     private fun finish(reason: String, state: String?) {
         finish(ShutdownReceipt(reason, progress.get(), state, acceptedAt, deadline, now()))
     }

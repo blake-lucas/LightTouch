@@ -192,7 +192,9 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
             app.page = Page::Settings;
         }
         ui.separator();
-        if ui.button(widgets::icon_label(icons::POWER, "Stop", Some(theme::DANGER))).clicked() {
+        let stopping = app.model.session.as_ref().is_some_and(|s| s.stopping());
+        let stop_label = if stopping { "Force stop" } else { "Stop" };
+        if ui.button(widgets::icon_label(icons::POWER, stop_label, Some(theme::DANGER))).clicked() {
             app.dialog = Some(Dialog::Stop);
         }
     });

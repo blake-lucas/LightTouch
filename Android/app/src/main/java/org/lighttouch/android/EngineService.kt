@@ -325,6 +325,10 @@ class EngineService : Service() {
             profileCapture.finish("guest-stop")
             shutdownWatchdog.request()
         }
+        override fun forceStop() {
+            stopping.set(true)
+            shutdownWatchdog.force()
+        }
         override fun button(button: Int, down: Boolean) {
             val result = Native.button(button, down)
             if (result.isNotEmpty()) { error = result; buttonRejections.incrementAndGet() }
@@ -503,6 +507,7 @@ class EngineService : Service() {
         try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Legacy private diagnostic only, not another worker's live status. */ }
     }
     private fun shutdownMessage(receipt: ShutdownReceipt): String = when {
+            receipt.reason == "user-forced" -> "Force stopped before iOS finished shutting down. The next start checks the device's storage first."
             receipt.reason == "deadline-unconfirmed" -> "Guest shutdown was not confirmed within ${BuildConfig.SHUTDOWN_GRACE_MS / 1000} seconds; worker disposed and writable state retained. ${receipt.progress.error}"
             receipt.terminalState == "failed" -> "Guest worker reported failure; writable state retained: ${receipt.progress.error}"
             !receipt.cleanConfirmed -> "Native terminal shutdown was not explicitly confirmed clean; writable state and diagnostics retained. ${receipt.progress.error}"

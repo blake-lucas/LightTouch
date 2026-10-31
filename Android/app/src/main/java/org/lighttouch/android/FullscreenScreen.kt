@@ -114,8 +114,8 @@ private fun ButtonBar(host: GuestHost, modifier: Modifier, onInteract: () -> Uni
                     DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
                         onClick = { menu = false; host.navigate(Screen.SETTINGS) })
                     HorizontalDivider()
-                    DropdownMenuItem(text = { Text("Stop", color = LtColors.Danger) }, leadingIcon = { Icon(LtIcons.Stop, null, tint = LtColors.Danger) },
-                        onClick = { menu = false; onStop() }, enabled = host.sessionOwned && host.status != "stopping" && !host.storeInstalling)
+                    DropdownMenuItem(text = { Text(if (host.status == "stopping") "Force stop" else "Stop", color = LtColors.Danger) }, leadingIcon = { Icon(LtIcons.Stop, null, tint = LtColors.Danger) },
+                        onClick = { menu = false; onStop() }, enabled = host.sessionOwned && !host.storeInstalling)
                 }
             }
         }

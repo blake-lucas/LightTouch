@@ -297,7 +297,8 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     let phase = session.phase.clone();
     let running = matches!(phase, Phase::Running);
     let paused = matches!(phase, Phase::Paused);
-    let can_stop = !matches!(phase, Phase::Stopping);
+    // While a shutdown is under way the same button forces it.
+    let stop_label = if matches!(phase, Phase::Stopping) { "Force stop" } else { "Stop" };
     let show_inspect = app.model.settings.inspect_button;
     let count = if show_inspect { 7.0 } else { 6.0 };
     let width = count * 72.0 + 32.0;
@@ -341,7 +342,7 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                             app.page = Page::Inspector;
                         }
                     }
-                    if widgets::dock_button(ui, &p, icons::POWER, "Stop", can_stop, Some(theme::DANGER)).clicked() {
+                    if widgets::dock_button(ui, &p, icons::POWER, stop_label, true, Some(theme::DANGER)).clicked() {
                         app.dialog = Some(Dialog::Stop);
                     }
                 });

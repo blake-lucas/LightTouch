@@ -51,6 +51,8 @@ interface GuestHost {
     fun start()
     fun recover()
     fun stop()
+    /** Stop is taking too long: end the worker now (state kept, checked on the next start). */
+    fun forceStop()
     fun saveAndStop()
     fun setPaused(paused: Boolean)
     fun button(id: Int, down: Boolean)

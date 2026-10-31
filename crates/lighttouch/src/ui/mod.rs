@@ -288,6 +288,28 @@ impl App {
         let response = modal.show(ctx, |ui| {
             ui.set_width(360.0);
             match dialog {
+                // Stop already asked for and iOS hasn't finished: end it now instead of waiting out the deadline.
+                Dialog::Stop if self.model.session.as_ref().is_some_and(|s| s.stopping()) => {
+                    let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                    ui.label(widgets::icon_text(icons::POWER, 26.0).color(theme::DANGER));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(format!("Force stop {name}?")).font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(
+                        &p,
+                        "iOS hasn't finished shutting down. Force stop ends it now, like pulling the battery: anything it hadn't saved is lost, and the next start checks the device's storage first.",
+                    ));
+                    ui.add_space(16.0);
+                    widgets::dialog_buttons(ui, |ui| {
+                        if widgets::danger(ui, "Force stop").clicked() {
+                            self.model.force_stop();
+                            close = true;
+                        }
+                        if widgets::text_button(ui, &p, "Keep waiting").clicked() {
+                            close = true;
+                        }
+                    });
+                }
                 Dialog::Stop => {
                     let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
                     ui.label(widgets::icon_text(icons::POWER, 26.0).color(p.primary));

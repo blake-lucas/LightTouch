@@ -92,6 +92,8 @@ pub struct Session {
     pub recording: Option<(PathBuf, Instant)>,
     last_motion: Option<Instant>,
     stop_requested: Option<Instant>,
+    /// Force stop: the worker was killed on purpose, so its exit is not a crash.
+    forced: bool,
 }
 
 pub struct StartOptions {
@@ -203,6 +205,7 @@ impl Session {
             frontmost: None,
             last_motion: None,
             stop_requested: None,
+            forced: false,
         };
         if options.muted {
             session.send(&Command::Mute { muted: true });
@@ -232,7 +235,14 @@ impl Session {
                     if self.phase.active() {
                         // The worker died without saying goodbye.
                         let _ = self.child.wait();
-                        self.phase = Phase::Ended { clean: false, dirty: true, message: crash_message(&self.log_path) };
+                        let message = if self.forced {
+                            "Force stopped before iOS finished shutting down. The next start checks the device's storage \
+                             first."
+                                .to_string()
+                        } else {
+                            crash_message(&self.log_path)
+                        };
+                        self.phase = Phase::Ended { clean: false, dirty: true, message };
                         changed = true;
                     }
                     break;
@@ -520,6 +530,16 @@ impl Session {
     /// Whether the guest's display is off (iOS auto-locked or Sleep/Wake pressed).
     pub fn display_asleep(&self) -> bool {
         matches!(self.phase, Phase::Running) && self.status.is_some_and(|s| s.display_sleeping && s.engine_ready)
+    }
+
+    /// Stop is taking too long: end the worker now instead of waiting out the grace period. The device stays dirty
+    /// and is checked on its next start, as after the grace period's own kill.
+    pub fn force_stop(&mut self) {
+        if self.phase.active() {
+            self.stop_requested.get_or_insert_with(Instant::now);
+            self.forced = true;
+            let _ = self.child.kill();
+        }
     }
 
     /// Last resort when the worker ignores Stop beyond the grace period: kill it. The device stays dirty.

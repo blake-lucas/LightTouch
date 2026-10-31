@@ -408,6 +408,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun start() = startGuest()
     override fun recover() = startGuest(coldRecovery = true)
     override fun stop() = stopGuest()
+    override fun forceStop() {
+        val worker = engine ?: return
+        val pid = workerPid
+        engineExpectedExit = true; status = "stopping"; stopSensors()
+        Thread({
+            // The worker disposes itself; one too stuck to answer is ended from here (same uid).
+            try { worker.forceStop() } catch (_: RemoteException) { }
+            Thread.sleep(3000)
+            if (pid != 0 && worker.asBinder().isBinderAlive) Process.killProcess(pid)
+        }, "guest-force-stop").start()
+    }
     override fun saveAndStop() = stopGuest()
     override fun setPaused(paused: Boolean) {
         val worker = engine ?: return

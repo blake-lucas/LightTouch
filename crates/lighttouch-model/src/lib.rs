@@ -364,6 +364,12 @@ impl Model {
         }
     }
 
+    pub fn force_stop(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.force_stop();
+        }
+    }
+
     pub fn set_paused(&mut self, paused: bool) {
         if let Some(session) = &mut self.session {
             session.set_paused(paused);
