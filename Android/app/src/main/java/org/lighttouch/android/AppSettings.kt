@@ -43,6 +43,10 @@ class AppSettings(private val context: Context) {
     private val autoResumeState = mutableStateOf(prefs.getBoolean("autoResume", true))
     var autoResume: Boolean get() = autoResumeState.value; set(v) { autoResumeState.value = v; prefs.edit().putBoolean("autoResume", v).apply() }
 
+    /* Skip the engine's code-cache flushes when an iOS app opens (LT_FLUSH_ON_APP/LT_FLUSH_SETTLE). Read at start. */
+    private val fewerAppPausesState = mutableStateOf(prefs.getBoolean("fewerAppPauses", false))
+    var fewerAppPauses: Boolean get() = fewerAppPausesState.value; set(v) { fewerAppPausesState.value = v; prefs.edit().putBoolean("fewerAppPauses", v).apply() }
+
     private val scalingState = enumPref("scaling", ScreenScaling.SMOOTH)
     var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("scaling", v.name).apply() }
 

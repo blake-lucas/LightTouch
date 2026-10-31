@@ -67,6 +67,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
+                SettingsGroup("Performance") {
+                    SwitchRow(LtIcons.Speed, "Fewer pauses when apps open", "Skips the emulator's code clean-ups as an iOS app opens. Games may run up to about 5% slower. Applies the next time the device starts",
+                        s.fewerAppPauses, "fewer_app_pauses") { s.fewerAppPauses = it }
+                }
                 SettingsGroup("Performance overlay") {
                     ChoiceRow(LtIcons.Speed, "Detail", OverlayLevel.entries, s.overlay, { it.label }, tag = "overlay_level") { s.overlay = it }
                     if (s.overlay != OverlayLevel.OFF) {

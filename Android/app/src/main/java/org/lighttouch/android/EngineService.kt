@@ -180,6 +180,12 @@ class EngineService : Service() {
             foreground()
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
             usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
+            // The Settings switch (AppSettings.fewerAppPauses): the code-cache flushes as an app opens and once it
+            // settles are worth ~5% in games (docs/PERFORMANCE.md) but each costs a pause. debug-env below still
+            // overrides it.
+            val flush = if (getSharedPreferences("ui", MODE_PRIVATE).getBoolean("fewerAppPauses", false)) "off" else "on"
+            android.system.Os.setenv("LT_FLUSH_ON_APP", flush, true)
+            android.system.Os.setenv("LT_FLUSH_SETTLE", flush, true)
             // Perf work on debug builds (create these with run-as): files/debug-vcpu-accounting logs the
             // vCPU's run/halt/BQL split every 5 s to the record's state/engine-PID.log; files/debug-env
             // holds KEY=VALUE engine environment lines, e.g. QEMU_PERFMAP_DIR=<files>/perfmap for JIT

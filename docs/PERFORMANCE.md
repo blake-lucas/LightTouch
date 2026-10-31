@@ -318,7 +318,7 @@ Poco F3 and written into our own sources where it helps:
 | A misaligned `LDM`/`STM` performed instead of faulting (`2f0c5ac5`) | Not taken. Their evidence is our iPod touch 2G measurement ("Hitches in Jetpack's title" below). Jetpack's title on the 4G takes no alignment faults, with audio playing (150 s on the desktop), so there is nothing to win there, and it departs from the hardware. |
 | Presenter and vsync threads at display priority (`478fbe51`) | Not taken yet: unmeasured there, and the presenter is ~5% of a core here. |
 | The synchronous present waits on a native fence; a frame's pages mapped once; no `glFinish` before the readback (`7ea1b8a8`, `59da7ef0`) | Not taken: these are fallback paths (`LT_PRESENT_ASYNC=off`, 16-bit surfaces, drivers without AHardwareBuffer). The 4G's default present is the asynchronous one. |
-| "Fewer pauses when opening iOS apps" (`f84b1bec`) | Not taken: it turns off the two code-cache flushes measured above as gains (`LT_FLUSH_ON_APP`, `LT_FLUSH_SETTLE`). |
+| "Fewer pauses when opening iOS apps" (`f84b1bec`) | Taken as an opt-in Settings switch, off by default: on, it turns off the two code-cache flushes measured above as gains (`LT_FLUSH_ON_APP`, `LT_FLUSH_SETTLE`). |
 
 ### Measured and rejected
 
