@@ -28,3 +28,9 @@ scripts/build.env
 
 # Rust desktop app
 /target/
+
+# Local tool state: Claude Code agent worktrees and settings, and the old Swift packages' build output
+/.claude/worktrees/
+/.claude/settings.local.json
+.build-*/
+/Packages/
