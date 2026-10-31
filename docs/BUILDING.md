@@ -21,6 +21,7 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
 | `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android-test` | the Android app's unit tests (`testDebugUnitTest`) | the same inputs as `android` |
 | `firmwarekit` | `build/firmwarekit/linux/firmwarekit` | `crates/lighttouch-firmware` (Rust; links only libc) |
 | `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same for `aarch64-linux-android` (`rustup target add aarch64-linux-android`) with NDK clang; `licenses/` from `crates/lighttouch-firmware/stage-notices.py` |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |

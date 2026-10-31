@@ -9,6 +9,7 @@
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
 #   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK (LT_ANDROID_ENGINE: a prebuilt
 #                                                             engine; LT_APP_ID_SUFFIX/LT_APP_LABEL: a side-by-side install)
+#   android-test   Android app unit tests (Gradle testDebugUnitTest; inputs as for android)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
 #   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust), x86_64
 #   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Rust + the NDK)
@@ -141,6 +142,8 @@ build_android_engine() {
     echo "$e"
 }
 
+build_android_test() { ANDROID_TASK=:app:testDebugUnitTest build_android; }
+
 build_android() {
     # LT_ANDROID_ENGINE=DIR (holding arm64-v8a/: libqemu-arm.so, libc++_shared.so, notices/, an android-engine
     # output) packages that engine instead of building one.
@@ -179,8 +182,9 @@ build_android() {
         -PangleArm64Notices="$angle/notices" \
         -PangleArm64ManifestSha256=3abde58ea5d9863453b12e3d7f67eff7c96ee989fbcfa4c00a16859cfd694945 \
         -PangleArm64NoticesSha256=63d2221b0fab9bff7788dc0c4e9a94c74079b3ab5ed3c09bd3ef72c909d1f924 \
-        -Pdebuggable="$LT_DEBUGGABLE" -Pprofileable="$LT_PROFILEABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
+        -Pdebuggable="$LT_DEBUGGABLE" -Pprofileable="$LT_PROFILEABLE" "${guest[@]}" "${lint[@]}" "${ANDROID_TASK:-:app:assembleDebug}" > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
+    [ -n "${ANDROID_TASK:-}" ] && { grep -E "tests completed|BUILD" "$OBJ/android-gradle.out" || true; return; }
     cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
     echo "$OUT/android/LightTouch-debug.apk"
 }
@@ -271,7 +275,7 @@ for a in "$@"; do
     --clean) clean=1 ;;
     -h|--help) sed -n 2,25p "$0"; exit 0 ;;
     all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    linux-engine|android-engine|android|android-test|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
@@ -281,7 +285,7 @@ for t in "${targets[@]}"; do
         case "$t" in
         linux-engine) rm -rf "$OBJ/linux-engine" ;;
         android-engine) rm -rf "$OBJ/android-engine-arm64" ;;
-        android) rm -rf "$OBJ/android-engine-arm64" "$OBJ/android-gradle" ;;
+        android|android-test) rm -rf "$OBJ/android-engine-arm64" "$OBJ/android-gradle" ;;
         portable-tests) rm -rf "$OBJ/portable-tests" ;;
         esac
     fi
