@@ -841,9 +841,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
             // Say why, in the banner itself: a native crash leaves no other trace the screen can show.
-            val diagnosis = WorkerExitDiagnosis.summarize(applicationContext, filesDir)
+            val diagnosis = if (unexpected) WorkerExitDiagnosis.summarize(applicationContext, filesDir) else ""
             if (diagnosis.isNotEmpty()) handler.post {
-                workerEvidenceDelivery.deliver(evidenceGeneration) { error = "Guest worker exited: $diagnosis" }
+                workerEvidenceDelivery.deliver(evidenceGeneration) {
+                    error = "Guest worker exited unexpectedly: $diagnosis\nWritable state retained; Start creates a fresh worker."
+                }
             }
             val terminal = try {
                 val file = File(filesDir, "worker-shutdown-$exitedPid.json")
