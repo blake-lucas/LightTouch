@@ -42,8 +42,8 @@ GAMES = {
     # Real Racing, Flight Control, Asphalt 5 on the Poco's record.
     "n81-doodlejump": [(.15, .31), 30],                    # Doodle Jump's title
     "n81-jetpack": [(.86, .14), 50],                       # Jetpack Joyride's title
-    # The same once the guest has networking: Game Center's sign-in sheet covers the title until its Cancel.
-    "n81-jetpack-gc": [(.86, .14), 50, (.104, .046), 5],
+    # The same when Game Center's sign-in sheet covers the title: Cancel it if it comes, then settle.
+    "n81-jetpack-gc": [(.86, .14), 15, "gc", 30],
     # a run: "touch anywhere to play", then "fly" holds and releases the screen through the measurement
     # (a run lasts ~20 s on the desktop; measure ~15)
     "n81-jetpack-play": [(.86, .14), 50, (.5, .5), 3, "fly"],
@@ -106,7 +106,14 @@ for _ in range(4):
     print("page swipe dropped, again", flush=True)
 flyer = None
 for n, step in enumerate(steps):
-    if step == "fly":  # hold 0.25 s, let go 0.5 s (back-to-back holds flew into the ceiling), until killed
+    if step == "gc":  # Game Center's sign-in sheet, if it comes within 30 s: its yellow Sign In button, then Cancel
+        t = time.monotonic()
+        while time.monotonic() - t < 30:
+            rect = guest_rect(); r, g, b = avg(rect, .4, .76, .6, .79)
+            if r > 140 and g > 160 and b < 120:
+                sh("input", "swipe", *gpt(rect, .104, .046), *gpt(rect, .104, .046), "150"); time.sleep(3); break
+            time.sleep(1)
+    elif step == "fly":  # hold 0.25 s, let go 0.5 s (back-to-back holds flew into the ceiling), until killed
         rect = guest_rect(); x, y = gpt(rect, .7, .5)
         flyer = subprocess.run(["adb", "shell", f"sh -c 'while true; do input swipe {x} {y} {x} {y} 250; sleep 0.5; done' "
                                 "> /dev/null 2>&1 & echo $!"], capture_output=True, text=True, check=True).stdout.strip()
