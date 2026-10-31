@@ -35,6 +35,12 @@ internal data class DeviceSkin(
     val width: Float, val height: Float, val corner: Float,
     val screenLeft: Float, val screenTop: Float, val screenWidth: Float, val screenHeight: Float,
     val homeCenterY: Float, val homeDiameter: Float, val face: Color, val rim: List<Color>,
+    /** The metal edge seen around the glass from the front. */
+    val rimWidth: Float = 0.7f,
+    /** Sleep/Wake on the top edge: its left end and length; null keeps the phones' proportions. */
+    val power: Pair<Float, Float>? = null,
+    /** Volume on the right edge (the iPad), and each button's top and length; null keeps the phones'. */
+    val volumeRight: Boolean = false, val volumeUp: Pair<Float, Float>? = null, val volumeDown: Pair<Float, Float>? = null,
 ) {
     companion object {
         // iPod touch 2nd generation: 110 x 61.8 mm, 3.5" 320x480 panel, black glass, chrome back.
@@ -45,8 +51,11 @@ internal data class DeviceSkin(
             Color(0xFF0B0B0C), listOf(Color(0xFFD9D9DC), Color(0xFF9A9AA0), Color(0xFFC7C7CC)))
         val iphone = DeviceSkin(62.1f, 115.5f, 9f, 6.1f, 20.3f, 49.9f, 74.8f, 105.6f, 10.5f,
             Color(0xFF0B0B0C), listOf(Color(0xFFC7C7CC), Color(0xFF6E6E73), Color(0xFFAEAEB2)))
-        val ipad = DeviceSkin(189.7f, 242.8f, 14f, 18.85f, 25.2f, 152f, 202.7f, 236.6f, 11f,
-            Color(0xFF0B0B0C), listOf(Color(0xFFD1D1D6), Color(0xFF8E8E93), Color(0xFFC7C7CC)))
+        // iPad (first generation): 242.8 x 189.7 mm, 9.7" 4:3 panel (197.1 x 147.8 mm) centred in the glass, a wide
+        // aluminium rim, Sleep/Wake at the top right and the volume rocker on the right edge below the side switch.
+        val ipad = DeviceSkin(189.7f, 242.8f, 13f, 20.95f, 22.85f, 147.8f, 197.1f, 231.4f, 11.5f,
+            Color(0xFF0B0B0C), listOf(Color(0xFFD1D1D6), Color(0xFF8E8E93), Color(0xFFC7C7CC)),
+            rimWidth = 2.4f, power = 156f to 12f, volumeRight = true, volumeUp = 45f to 12f, volumeDown = 57.5f to 12f)
         fun forBoard(board: String?): DeviceSkin = when {
             board == null -> ipodTouch2
             board.startsWith("n81") -> ipodTouch4
@@ -73,10 +82,14 @@ internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boole
         // Sleep/Wake on the top edge, right of centre; volume on the upper left side. Each is
         // (left, top, width, height) in mm of the outer box, drawn under the body's edge.
         val side = skin.height * 0.065f
+        val power = skin.power ?: (skin.width * 0.62f to skin.width * 0.2f)
+        val up = skin.volumeUp ?: (skin.height * 0.13f to side)
+        val down = skin.volumeDown ?: (skin.height * 0.21f to side)
+        val volumeX = if (skin.volumeRight) margin + skin.width - 0.7f else margin - 1.3f
         val buttons = listOf(
-            Triple(GuestButton.POWER, "Sleep/Wake", floatArrayOf(margin + skin.width * 0.62f, margin - 1.4f, skin.width * 0.2f, 2f)),
-            Triple(GuestButton.VOLUME_UP, "Volume up", floatArrayOf(margin - 1.3f, margin + skin.height * 0.13f, 2f, side)),
-            Triple(GuestButton.VOLUME_DOWN, "Volume down", floatArrayOf(margin - 1.3f, margin + skin.height * 0.21f, 2f, side)))
+            Triple(GuestButton.POWER, "Sleep/Wake", floatArrayOf(margin + power.first, margin - 1.4f, power.second, 2f)),
+            Triple(GuestButton.VOLUME_UP, "Volume up", floatArrayOf(volumeX, margin + up.first, 2f, up.second)),
+            Triple(GuestButton.VOLUME_DOWN, "Volume down", floatArrayOf(volumeX, margin + down.first, 2f, down.second)))
         val feedback = LocalHapticFeedback.current
         val haptic = { if (haptics) feedback.performHapticFeedback(HapticFeedbackType.LongPress) }
         Box(Modifier.size(mm(skin.width + 2 * margin), mm(skin.height + 2 * margin))) {
@@ -85,10 +98,10 @@ internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boole
             val body = RoundedCornerShape(mm(skin.corner))
             Box(Modifier.offset(mm(margin), mm(margin)).size(mm(skin.width), mm(skin.height))
                 .shadow(mm(4f), body, ambientColor = Color.Black, spotColor = Color.Black)
-                .background(Brush.linearGradient(skin.rim), body).padding(mm(0.7f))
-                .background(skin.face, RoundedCornerShape(mm(skin.corner - 0.7f)))) {
-                screen(Modifier.offset(mm(skin.screenLeft - 0.7f), mm(skin.screenTop - 0.7f)).size(mm(skin.screenWidth), mm(skin.screenHeight)))
-                HomeButton(Modifier.offset(mm(skin.width / 2 - skin.homeDiameter / 2 - 0.7f), mm(skin.homeCenterY - skin.homeDiameter / 2 - 0.7f))
+                .background(Brush.linearGradient(skin.rim), body).padding(mm(skin.rimWidth))
+                .background(skin.face, RoundedCornerShape(mm(skin.corner - skin.rimWidth)))) {
+                screen(Modifier.offset(mm(skin.screenLeft - skin.rimWidth), mm(skin.screenTop - skin.rimWidth)).size(mm(skin.screenWidth), mm(skin.screenHeight)))
+                HomeButton(Modifier.offset(mm(skin.width / 2 - skin.homeDiameter / 2 - skin.rimWidth), mm(skin.homeCenterY - skin.homeDiameter / 2 - skin.rimWidth))
                     .size(mm(skin.homeDiameter)), enabled, button, haptic)
             }
             // A drawn side button is a few millimetres; its touch target is at least 48dp, centred on it.

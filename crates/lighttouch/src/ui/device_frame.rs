@@ -14,6 +14,14 @@ pub struct Skin {
     pub screen_height: f32,
     pub home_center_y: f32,
     pub home_diameter: f32,
+    /// The metal edge seen around the glass from the front.
+    pub rim_width: f32,
+    /// Sleep/Wake on the top edge: its left end and length.
+    pub power: (f32, f32),
+    /// The volume buttons' side (left on the phones, right on the iPad), and each one's top and length.
+    pub volume_right: bool,
+    pub volume_up: (f32, f32),
+    pub volume_down: (f32, f32),
     pub face: Color32,
     pub rim: [Color32; 3],
 }
@@ -34,6 +42,11 @@ impl Skin {
         screen_height: 74.8,
         home_center_y: 101.4,
         home_diameter: 10.5,
+        rim_width: 0.7,
+        power: (38.32, 12.36),
+        volume_right: false,
+        volume_up: (14.3, 7.15),
+        volume_down: (23.1, 7.15),
         face: rgb(0x0B0B0C),
         rim: [rgb(0xE8E8EA), rgb(0x8E8E93), rgb(0xD1D1D6)],
     };
@@ -48,6 +61,11 @@ impl Skin {
         screen_height: 74.8,
         home_center_y: 102.3,
         home_diameter: 9.6,
+        rim_width: 0.7,
+        power: (36.52, 11.78),
+        volume_right: false,
+        volume_up: (14.43, 7.21),
+        volume_down: (23.31, 7.21),
         face: rgb(0x0B0B0C),
         rim: [rgb(0xD9D9DC), rgb(0x9A9AA0), rgb(0xC7C7CC)],
     };
@@ -61,19 +79,31 @@ impl Skin {
         screen_height: 74.8,
         home_center_y: 105.6,
         home_diameter: 10.5,
+        rim_width: 0.7,
+        power: (38.5, 12.42),
+        volume_right: false,
+        volume_up: (15.02, 7.51),
+        volume_down: (24.25, 7.51),
         face: rgb(0x0B0B0C),
         rim: [rgb(0xC7C7CC), rgb(0x6E6E73), rgb(0xAEAEB2)],
     };
+    /// iPad (first generation): 242.8 x 189.7 mm, 9.7" 4:3 panel (197.1 x 147.8 mm) centred in the glass, a wide
+    /// aluminium rim, Sleep/Wake at the top right and the volume rocker on the right edge below the side switch.
     pub const IPAD: Skin = Skin {
         width: 189.7,
         height: 242.8,
-        corner: 14.0,
-        screen_left: 18.85,
-        screen_top: 25.2,
-        screen_width: 152.0,
-        screen_height: 202.7,
-        home_center_y: 236.6,
-        home_diameter: 11.0,
+        corner: 13.0,
+        screen_left: 20.95,
+        screen_top: 22.85,
+        screen_width: 147.8,
+        screen_height: 197.1,
+        home_center_y: 231.4,
+        home_diameter: 11.5,
+        rim_width: 2.4,
+        power: (156.0, 12.0),
+        volume_right: true,
+        volume_up: (45.0, 12.0),
+        volume_down: (57.5, 12.0),
         face: rgb(0x0B0B0C),
         rim: [rgb(0xD1D1D6), rgb(0x8E8E93), rgb(0xC7C7CC)],
     };
@@ -132,11 +162,12 @@ pub fn layout(skin: &Skin, space: Rect) -> Layout {
         mm(MARGIN + skin.width / 2.0, MARGIN + skin.home_center_y),
         Vec2::splat(skin.home_diameter * scale),
     );
-    let side_len = skin.height * 0.065;
+    // Each drawn 2 mm deep, tucked under the body so ~1.3 mm shows.
+    let volume_x = if skin.volume_right { MARGIN + skin.width - 0.7 } else { MARGIN - 1.3 };
     let drawn = [
-        (POWER, MARGIN + skin.width * 0.62, MARGIN - 1.4, skin.width * 0.2, 2.0),
-        (VOLUME_UP, MARGIN - 1.3, MARGIN + skin.height * 0.13, 2.0, side_len),
-        (VOLUME_DOWN, MARGIN - 1.3, MARGIN + skin.height * 0.21, 2.0, side_len),
+        (POWER, MARGIN + skin.power.0, MARGIN - 1.4, skin.power.1, 2.0),
+        (VOLUME_UP, volume_x, MARGIN + skin.volume_up.0, 2.0, skin.volume_up.1),
+        (VOLUME_DOWN, volume_x, MARGIN + skin.volume_down.0, 2.0, skin.volume_down.1),
     ];
     let side = drawn.map(|(id, x, y, w, h)| {
         let rect = Rect::from_min_size(mm(x, y), vec2(w, h) * scale);
@@ -185,8 +216,9 @@ pub fn paint(painter: &Painter, skin: &Skin, layout: &Layout, pressed: impl Fn(u
     };
     painter.add(shadow.as_shape(layout.body, CornerRadius::same(layout.corner.min(255.0) as u8)));
     painter.add(gradient_rounded_rect(layout.body, layout.corner, skin.rim));
-    let face = layout.body.shrink(0.7 * s);
-    painter.rect_filled(face, CornerRadius::same((layout.corner - 0.7 * s).max(0.0).min(255.0) as u8), skin.face);
+    let rim = skin.rim_width * s;
+    let face = layout.body.shrink(rim);
+    painter.rect_filled(face, CornerRadius::same((layout.corner - rim).max(0.0).min(255.0) as u8), skin.face);
     // A faint glass edge around the panel.
     painter.rect_stroke(
         layout.screen.expand(0.6 * s),
