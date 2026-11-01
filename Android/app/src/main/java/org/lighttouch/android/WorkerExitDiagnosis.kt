@@ -39,23 +39,23 @@ internal object WorkerExitDiagnosis {
             val description = json.optString("description")
             // ApplicationExitInfo's values; spelled out so nothing here needs API 30 at run time.
             val name = when (reason) {
-                1 -> "exit_self"
-                2 -> "signaled"
-                3 -> "low_memory"
+                1 -> "exited by itself"
+                2 -> "killed by a signal"
+                3 -> "low memory"
                 4 -> "crash"
                 5 -> "native crash"
                 6 -> "not responding"
                 7 -> "initialization failure"
                 8 -> "permission change"
                 9 -> "excessive resource usage"
-                10 -> "user requested"
-                11 -> "user stopped"
-                12 -> "dependency died"
+                10 -> "stopped at the user's request"
+                11 -> "force stopped by the user"
+                12 -> "a process it depends on died"
                 13 -> "other"
                 else -> "reason $reason"
             }
             val status = json.optInt("status", 0)
-            ("android: $name" + (if (status != 0) " (status $status)" else "") +
+            ("Android says: $name" + (if (status != 0) " (status $status)" else "") +
                 (if (description.isNotEmpty()) " $description" else "")) to tombstone
         }.getOrNull() ?: (null to null)
     }

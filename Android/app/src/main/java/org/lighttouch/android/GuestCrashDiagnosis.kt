@@ -43,12 +43,12 @@ internal object GuestCrashDiagnosis {
     fun engineHint(engine: List<String>): String? {
         // An entry point that answered nothing is the stronger evidence of the two, so it wins wherever it is.
         engine.asReversed().firstNotNullOfOrNull { Regex("""UNHANDLED (\w+) \(id (\d+)\)""").find(it) }
-            ?.let { return "The engine's own log says the GL bridge does not implement ${it.groupValues[1]} " +
-                "(id ${it.groupValues[2]}) and answered 0: if this crash came right after that, the value the app " +
-                "used was ours, not the app's." }
+            ?.let { return "The emulator's log shows the app called ${it.groupValues[1]} (id ${it.groupValues[2]}), a " +
+                "graphics function LightTouch doesn't support yet, and got 0 back. If the app crashed right after, " +
+                "that is the likely cause." }
         // draw-error is the app's own GL error, reported back to it as on hardware; common and rarely fatal.
         engine.asReversed().firstNotNullOfOrNull { Regex("""REFUSED (?!draw-error)(\S+)""").find(it) }
-            ?.let { return "The engine's own log says it refused ${it.groupValues[1]}: the crash may follow from that." }
+            ?.let { return "The emulator's log shows it refused ${it.groupValues[1]}, which may have caused the crash." }
         return null
     }
 
@@ -62,16 +62,16 @@ internal object GuestCrashDiagnosis {
         val serial = tail(File(stateDir, "guest-serial.log"), 40)
         val hint = engineHint(engine)
         return buildString {
-            appendLine(summary?.verdict ?: "No crash report, so the app did not crash: iOS or the system killed it, " +
-                "or it is still running.")
+            appendLine(summary?.verdict ?: "There is no crash report, so the app didn't crash. Either iOS closed it (for example, to free " +
+                "memory) or it is still running.")
             if (hint != null) {
                 appendLine()
                 appendLine(hint)
             }
             if (guestLog != null) {
                 appendLine()
-                appendLine("——— Guest system log, last launch ———")
-                appendLine(guestLog.ifBlank { "(the guest printed nothing)" })
+                appendLine("——— iOS system log, last launch ———")
+                appendLine(guestLog.ifBlank { "(iOS logged nothing)" })
             }
             if (summary != null) {
                 appendLine()
@@ -80,12 +80,12 @@ internal object GuestCrashDiagnosis {
             }
             if (engine.isNotEmpty()) {
                 appendLine()
-                appendLine("——— Engine log (emulation's own words) ———")
+                appendLine("——— Emulator log ———")
                 engine.forEach { appendLine(it) }
             }
             if (serial.isNotEmpty()) {
                 appendLine()
-                appendLine("——— guest-serial.log ———")
+                appendLine("——— Serial console (guest-serial.log) ———")
                 serial.forEach { appendLine(it) }
             }
         }.trimEnd()

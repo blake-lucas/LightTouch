@@ -273,13 +273,13 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
      * the system or our side came first.
      */
     fun showLastCrash() {
-        val socket = muxSocket() ?: run { crash = "Start the guest to read its crash reports."; return }
-        crash = "Reading the guest's crash reports…"
+        val socket = muxSocket() ?: run { crash = "Start the device to read its crash reports."; return }
+        crash = "Reading crash reports…"
         background("store-crash") {
             val text = try {
                 val last = runCatching { apps.lastCrash(socket) }.getOrNull()
                 GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, null)
-            } catch (e: Exception) { "Could not read crash reports: ${e.message}" }
+            } catch (e: Exception) { "Couldn't read crash reports: ${e.message}" }
             post { crash = text }
         }
     }
@@ -290,9 +290,9 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
      */
     fun watchLaunch() {
         if (watching) return
-        val socket = muxSocket() ?: run { crash = "Start the guest to record its system log."; return }
+        val socket = muxSocket() ?: run { crash = "Start the device to record its system log."; return }
         watching = true
-        crash = "Recording the guest's system log for 30 seconds. Open the app now and let it quit."
+        crash = "Recording the system log for 30 seconds. Open the app now and wait for it to quit."
         background("store-launch-log") {
             var log: String? = null
             var failure: String? = null
@@ -301,7 +301,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
             val text = GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, log)
             post {
                 watching = false
-                crash = if (failure != null && log == null) "The system log could not be recorded ($failure).\n\n$text" else text
+                crash = if (failure != null && log == null) "Couldn't record the system log ($failure).\n\n$text" else text
             }
         }
     }
@@ -420,11 +420,11 @@ private fun StoreTopBar(model: StoreModel, running: Boolean, onPickLocal: () -> 
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem(text = { Text("Install an IPA file…") }, leadingIcon = { Icon(LtIcons.File, null) },
                     onClick = { menu = false; onPickLocal() }, enabled = running && model.servicesAvailable)
-                DropdownMenuItem(text = { Text(if (model.watching) "Recording the launch…" else "Why did it quit?") },
+                DropdownMenuItem(text = { Text(if (model.watching) "Recording the launch…" else "Why did the last app quit?") },
                     leadingIcon = { Icon(LtIcons.Info, null) },
                     onClick = { menu = false; model.showLastCrash() }, enabled = running && model.servicesAvailable && !model.watching,
                     modifier = Modifier.testTag("store_crash"))
-                DropdownMenuItem(text = { Text("Record the next launch (30 s)") }, leadingIcon = { Icon(LtIcons.Info, null) },
+                DropdownMenuItem(text = { Text("Record the next app launch (30 s)") }, leadingIcon = { Icon(LtIcons.Info, null) },
                     onClick = { menu = false; model.watchLaunch() }, enabled = running && model.servicesAvailable && !model.watching,
                     modifier = Modifier.testTag("store_watch_launch"))
             }

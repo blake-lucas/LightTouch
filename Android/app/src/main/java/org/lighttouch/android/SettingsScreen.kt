@@ -57,7 +57,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
-                    SwitchRow(LtIcons.Mic, "Microphone", "iOS apps that record hear your phone's microphone, only while they record. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
+                    SwitchRow(LtIcons.Mic, "Microphone", "iOS apps can record from your phone's microphone. It is only on while an app is recording. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
                         s.microphone, "microphone_toggle") { if (it) host.enableMicrophone() else { s.microphone = false; host.applySettings() } }
                 }
                 SettingsGroup("Connection") {
@@ -70,7 +70,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
                 SettingsGroup("Performance") {
-                    SwitchRow(LtIcons.Speed, "Fewer pauses when apps open", "Skips the emulator's code clean-ups as an iOS app opens. Games may run up to about 5% slower. Applies the next time the device starts",
+                    SwitchRow(LtIcons.Speed, "Fewer pauses when apps open", "The emulator keeps its translated code when an iOS app opens instead of clearing it, so apps open with fewer stalls. Games may run up to about 5% slower. Applies the next time the device starts",
                         s.fewerAppPauses, "fewer_app_pauses") { s.fewerAppPauses = it }
                 }
                 SettingsGroup("Performance overlay") {

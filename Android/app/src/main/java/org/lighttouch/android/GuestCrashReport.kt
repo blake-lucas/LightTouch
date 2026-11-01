@@ -144,30 +144,30 @@ internal object GuestCrashReport {
         val symbol = Regex("""Symbol not found:\s*(\S+)""").find(message)?.groupValues?.get(1)
         val expected = Regex("""Expected in:\s*(\S+)""").find(message)?.groupValues?.get(1)
         if (symbol != null) {
-            return "The app needs $symbol, which ${expected ?: "this iOS"} does not have: it is built for a newer " +
-                "iOS than ${if (guest.isEmpty()) "this" else guest}."
+            return "The app needs $symbol, which ${expected ?: "this iOS"} doesn't have. It was built for a newer iOS " +
+                "than ${if (guest.isEmpty()) "this one" else "iOS $guest"}."
         }
         val library = Regex("""Library not loaded:\s*(\S+)""").find(message)?.groupValues?.get(1)
-        if (library != null) return "The app needs $library, which is not in this system image."
+        if (library != null) return "The app needs $library, which this iOS doesn't include."
         if (termination.contains("CODESIGN", ignoreCase = true) || message.contains("code signature", ignoreCase = true)) {
-            return "iOS refused the app's signature and killed it, so nothing was emulated wrong here."
+            return "iOS rejected the app's code signature and closed it. This is not an emulation problem."
         }
         if (codes.contains("0x8badf00d", ignoreCase = true) || message.contains("0x8badf00d")) {
-            return "iOS killed the app for taking too long to start (watchdog): that is speed, not a bug in the app."
+            return "iOS closed the app because it took too long to start. The emulator was too slow; the app itself is probably fine."
         }
         val nullPointer = codes.contains("at 0x0") || codes.contains("at 0x00000000") || codes.contains("KERN_INVALID_ADDRESS") ||
             codes.contains("KERN_PROTECTION_FAILURE")
         val system = systemSide(process, image, path, caller, callerPath)
         return when {
-            image == null -> "The report names no faulting frame; the thread state is all it has."
+            image == null -> "The crash report doesn't say where the app crashed."
             nullPointer && image != null && stub(image) && caller != null ->
-                "The crash is in $image, called from $caller: the app used an object that was not there. That is " +
-                    "the app's own mistake on a real device, and ours when the emulated system failed to hand it one " +
-                    "(the system log above says which)."
-            system -> "The crash is inside ${caller ?: image}, a system library: the emulated system is the suspect, " +
-                "not the app."
-            else -> "The crash is inside ${caller ?: image}, the app's own code. It is still our side when the thing " +
-                "it used came from a service this emulation lacks."
+                "The app crashed in $image, called from $caller, using something that didn't exist. On a real " +
+                    "device that is a bug in the app; here it can also mean the emulated iOS didn't provide " +
+                    "something the app expected. The system log below may say which."
+            system -> "The app crashed inside ${caller ?: image}, part of iOS. The emulation is the likely cause, not " +
+                "the app."
+            else -> "The app crashed in its own code (${caller ?: image}). The emulation can still be the cause if the app " +
+                "relied on something LightTouch doesn't support yet."
         }
     }
 

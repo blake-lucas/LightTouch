@@ -861,14 +861,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         detail = ""
-        if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
+        if (unexpected) error = "The emulator stopped unexpectedly. The device's data is kept; press Start to run it again."
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
             // Say why, in the banner itself: a native crash leaves no other trace the screen can show.
             val diagnosis = if (unexpected) WorkerExitDiagnosis.summarize(applicationContext, filesDir) else ""
             if (diagnosis.isNotEmpty()) handler.post {
                 workerEvidenceDelivery.deliver(evidenceGeneration) {
-                    error = "Guest worker exited unexpectedly: $diagnosis\nWritable state retained; Start creates a fresh worker."
+                    error = "The emulator stopped unexpectedly: $diagnosis\nThe device's data is kept; press Start to run it again."
                 }
             }
             val terminal = try {

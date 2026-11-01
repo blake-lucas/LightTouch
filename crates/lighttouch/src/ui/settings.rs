@@ -113,7 +113,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::MICROPHONE,
                     "Microphone",
-                    "iOS apps that record hear this computer's microphone, only while they record. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
+                    "iOS apps can record from this computer's microphone. It is only on while an app is recording. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.microphone);
                     },
@@ -127,7 +127,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::GAUGE,
                     "Fewer pauses when apps open",
-                    "Skips the emulator's code clean-ups as an iOS app opens. Games may run up to about 5% slower. Applies the next time the device starts",
+                    "The emulator keeps its translated code when an iOS app opens instead of clearing it, so apps open with fewer stalls. Games may run up to about 5% slower. Applies the next time the device starts",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.fewer_app_pauses);
                     },

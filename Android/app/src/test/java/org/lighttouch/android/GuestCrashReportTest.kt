@@ -74,7 +74,7 @@ class GuestCrashReportTest {
     @Test fun aReportWithoutFramesStillGivesTheHeader() {
         val report = GuestCrashReport.summarize("bare.plist", "Process:  thing [1]\nOS Version:  iOS 6.1.6 (10B500)\n")
         assertTrue(report.body.contains("thing [1]"))
-        assertTrue(report.verdict.contains("no faulting frame"))
+        assertTrue(report.verdict.contains("doesn't say where"))
     }
 
     @Test fun aDroppedGlCallExplainsACrashInTheAppsOwnCode() {
@@ -97,7 +97,7 @@ class GuestCrashReportTest {
             val tail = GuestCrashDiagnosis.tail(GuestCrashDiagnosis.engineLog(state), 5)
             assertEquals(listOf("line 196", "line 197", "line 198", "line 199", "line 200"), tail)
             val text = GuestCrashDiagnosis.report(state, "Asphalt8.plist", asphalt, "dyld: missing _foo")
-            assertTrue(text.contains("Guest system log"))
+            assertTrue(text.contains("iOS system log"))
             assertTrue(text.contains("line 200"))
             assertTrue(text.contains("Thread 0 Crashed:"))
         } finally { state.deleteRecursively() }

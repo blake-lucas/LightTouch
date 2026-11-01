@@ -164,7 +164,7 @@ class EngineService : Service() {
         private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle = try {
             startRecordOrThrow(recordId, coldRecovery)
         } catch (failure: Throwable) {
-            val message = ("Guest worker could not start: " + (failure.message ?: failure.javaClass.simpleName)).take(4096)
+            val message = ("The emulator couldn't start: " + (failure.message ?: failure.javaClass.simpleName)).take(4096)
             error = message
             persistStopError(message)
             Bundle().apply { putString("state", "failed"); putString("error", message) }
