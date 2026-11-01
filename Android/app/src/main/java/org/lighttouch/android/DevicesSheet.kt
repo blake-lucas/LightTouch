@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -85,17 +87,25 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
 @Composable
 private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val rowColor = if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
-        .background(if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow)
+        .background(rowColor)
         .clickable(enabled = switchable && !device.selected, onClick = onSelect).padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
         .testTag("device_row"), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            Icon(LtIcons.Phone, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box {
+            Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(LtIcons.Phone, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // It didn't shut down cleanly: the home screen offers Recover and start.
+            if (needsRecovery) Box(Modifier.align(Alignment.BottomEnd).offset(4.dp, 4.dp).size(20.dp).background(rowColor, CircleShape),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Warning, "Needs recovery", Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
+            }
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(device.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(device.subtitle + if (needsRecovery) " · needs recovery" else "", style = MaterialTheme.typography.bodySmall,
+            Text(device.subtitle, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (device.selected) Icon(Icons.Filled.Check, "Selected", tint = MaterialTheme.colorScheme.primary)

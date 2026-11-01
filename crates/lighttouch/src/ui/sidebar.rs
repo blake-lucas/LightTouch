@@ -39,13 +39,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     for device in app.model.devices.clone() {
                         let running = running_id.as_deref() == Some(device.id.as_str());
-                        let mut subtitle = device.subtitle.clone();
-                        if device.dirty && !running {
-                            subtitle.push_str(" · needs recovery");
+                        let badge = match running_phase.as_ref().filter(|_| running) {
+                            Some(phase) => Some(Badge::Dot(phase_color(phase))),
+                            None if device.dirty => Some(Badge::Warning),
+                            None => None,
+                        };
+                        let mut response = device_row(
+                            ui,
+                            &p,
+                            &device.name,
+                            &device.subtitle,
+                            device.selected && !preparing_shown,
+                            badge,
+                        );
+                        if badge == Some(Badge::Warning) {
+                            response = response.on_hover_text(
+                                "Needs recovery: it didn't shut down cleanly. The next start checks its storage first.",
+                            );
                         }
-                        let dot = if running { running_phase.as_ref().map(phase_color) } else { None };
-                        let mut response =
-                            device_row(ui, &p, &device.name, &subtitle, device.selected && !preparing_shown, dot);
                         if active && !device.selected {
                             let name = app.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
                             response = response.on_hover_text(format!("Stop {name} to switch to this device"));
@@ -123,7 +134,7 @@ fn pending_row(app: &mut App, ui: &mut egui::Ui) {
         None => "Preparing…".to_string(),
     };
     let showing = app.page == page;
-    let response = device_row(ui, &p, &name, &status, showing, Some(theme::WARNING));
+    let response = device_row(ui, &p, &name, &status, showing, Some(Badge::Dot(theme::WARNING)));
     // A thin bar along the row's foot.
     let bar = egui::Rect::from_min_size(
         response.rect.left_bottom() + vec2(54.0, -6.0),
@@ -163,13 +174,20 @@ pub fn phase_color(phase: &Phase) -> Color32 {
     }
 }
 
+/// What the corner of a device's tile shows: its run state, or that it needs recovery.
+#[derive(Clone, Copy, PartialEq)]
+enum Badge {
+    Dot(Color32),
+    Warning,
+}
+
 fn device_row(
     ui: &mut egui::Ui,
     p: &theme::Palette,
     name: &str,
     subtitle: &str,
     selected: bool,
-    dot: Option<Color32>,
+    badge: Option<Badge>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
     let painter = ui.painter();
@@ -190,9 +208,23 @@ fn device_row(
         FontId::new(20.0, theme::icons()),
         if selected { p.on_primary_container } else { p.on_surface_variant },
     );
-    if let Some(color) = dot {
-        painter.circle_filled(tile.right_bottom() - vec2(3.0, 3.0), 5.5, fill.max_alpha_with(p.container_low));
-        painter.circle_filled(tile.right_bottom() - vec2(3.0, 3.0), 4.0, color);
+    let corner = tile.right_bottom() - vec2(3.0, 3.0);
+    match badge {
+        Some(Badge::Dot(color)) => {
+            painter.circle_filled(corner, 5.5, fill.max_alpha_with(p.container_low));
+            painter.circle_filled(corner, 4.0, color);
+        }
+        Some(Badge::Warning) => {
+            painter.circle_filled(corner, 9.0, fill.max_alpha_with(p.container_low));
+            painter.text(
+                corner,
+                Align2::CENTER_CENTER,
+                icons::WARNING,
+                FontId::new(15.0, theme::icons_fill()),
+                p.error,
+            );
+        }
+        None => {}
     }
     let left = rect.left() + 54.0;
     let width = rect.right() - left - 8.0;
