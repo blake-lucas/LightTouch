@@ -23,7 +23,7 @@ internal data class CatalogFirmware(
     val label get() = if (prerelease.isEmpty()) version else "$version $prerelease"
     val fileName get() = "${productType}_${version}_${build}_Restore.ipsw"
     val support get() = when {
-        id in slowFirmwares -> Support.TESTED_SLOW
+        board in doesntStartBoards -> Support.DOESNT_START
         id in testedFirmwares -> Support.TESTED
         status == "available" || status == "experimental" -> Support.EXPERIMENTAL
         else -> Support.UNTESTED
@@ -42,28 +42,29 @@ internal data class CatalogFirmware(
 
 /** How far a firmware has been tried: LightTouch's own compatibility runs first, then the catalog's label. */
 internal enum class Support(val label: String, val detail: String) {
-    TESTED("Tested", "Checked on LightTouch for Android."),
-    TESTED_SLOW("Tested, slow", "Checked on LightTouch for Android, but slower than the iPod touch 2G on iOS 3.1.3."),
-    EXPERIMENTAL("Experimental", "Starts in Light Touch for Mac's checks; not yet checked on LightTouch for Android."),
+    TESTED("Tested", "Checked on LightTouch."),
+    EXPERIMENTAL("Experimental", "Starts in Light Touch for Mac's checks; not yet checked on LightTouch."),
     UNTESTED("Untested", "Nobody has tried these yet. They may not start."),
+    DOESNT_START("Doesn't start yet", "Stops at a white screen after it's set up. Not fixed yet."),
     ;
-    val tested get() = this == TESTED || this == TESTED_SLOW
+    val tested get() = this == TESTED
 }
 
-/** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
+/** Firmwares that pass LightTouch's compatibility runs (docs/COMPATIBILITY.md); the desktop's TESTED is the same list. */
 internal val testedFirmwares = setOf(
     "n72ap-7E18", "n72ap-8C148",  // iPod touch 2G 3.1.3, 4.2.1
     "n18ap-8C148",  // iPod touch 3G 4.2.1
     "n81ap-10B500",  // iPod touch 4G 6.1.6
     "n88ap-9B206",  // iPhone 3GS 5.1.1
-    "n90ap-8C148", "n90ap-8L1",  // iPhone 4 4.2.1, 4.3.5
+    "n90ap-8C148", "n90ap-8L1", "n90ap-10B329",  // iPhone 4 4.2.1, 4.3.5, 6.1.3
+    "k48ap-9B206",  // iPad 5.1.1
 )
+
+/** Boards that stop at a white screen after preparation, whatever the catalog says (the desktop's DOESNT_START). */
+internal val doesntStartBoards = setOf("n45ap", "m68ap")
 
 /** The firmware to pick first: the fastest and most complete on phones. */
 internal const val recommendedFirmware = "n72ap-7E18"
-
-/** Tested firmwares that run noticeably slower than the iPod touch 2G on iOS 3.1.3, the one to pick first. */
-internal val slowFirmwares = setOf("n88ap-9B206", "n90ap-8C148", "n90ap-8L1")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =

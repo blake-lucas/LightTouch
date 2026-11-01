@@ -14,12 +14,15 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 | iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
 | iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
 | iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; most games at or near 60 fps on a Poco F3 (Jetpack Joyride's title ~55, Epic Citadel ~30) |
-| iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | not run off the Mac |
+| iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | Tested (Linux: lock screen, services, clean stop) |
+| iPad (k48ap) | 5.1.1 (9B206) | its last iOS | Tested (Linux: lock screen, services, clean stop) |
 
-Later: the iPhone 4 on 4.2.1/4.3.5 and the 3GS on 5.1.1 (Tested, slow), the iPod touch 3G 4.2.1 (Tested), the
-iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 7 (skipped for now).
+Also Tested: the iPhone 4 on 4.2.1/4.3.5, the 3GS on 5.1.1 and the iPod touch 3G on 4.2.1. Not starting: the iPod
+touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 skipped for now.
 
-- [ ] Bring up the iPhone 4 on 6.1.3: prepare on Linux and the Poco, `compat.py` and `services.py` to `clean`.
+- [ ] iPhone 4 6.1.3 and iPad 5.1.1 on a phone (prepared and checked on Linux only so far).
+- [ ] iPod touch 1G / original iPhone white screen: iBoot never boots the kernel after preparation.
+- [ ] iPhone 3GS microphone records silence (the setting attaches the mic only to the A4 devices).
 - [ ] A validation run per target that a person doesn't have to watch, extending LT Bench and the
   compat harness (`tools/compat/`):
   1. Machine-readable results: LT Bench writes its results as JSON to its Documents folder, and the

@@ -17,10 +17,12 @@ Each level needs the ones before it.
 | `ui` | an app is in front: SpringBoard, or Setup on a base that was not set up (Android: the guest screen is lit and not just the Apple logo) |
 | `clean` | iOS shut down cleanly when asked |
 
-A firmware is **Tested** in the Android app (`testedFirmwares` in `FirmwareCatalog.kt`) once it reaches
-`clean` on a phone or has been checked by hand on one (2026-10-21: iPod touch 3G 4.2.1, iPhone 3GS 5.1.1 and iPhone 4
-4.2.1/4.3.5); one that runs noticeably slower than the iPod touch 2G on iOS 3.1.3 is also in
-`slowFirmwares` and shows **Tested, slow**, so the 2G stays the obvious first pick.
+A firmware is **Tested** in both apps (`testedFirmwares` in `FirmwareCatalog.kt`, `TESTED` in the desktop's
+`catalog.rs`) once it reaches `clean` on a phone or Linux, or has been checked by hand (2026-10-21: iPod touch 3G 4.2.1,
+iPhone 3GS 5.1.1 and iPhone 4 4.2.1/4.3.5; 2026-11-01: iPhone 4 6.1.3 and iPad 5.1.1, below). The A4 devices (iPod
+touch 4G, iPhone 4, iPad) share one emulated SoC and so far behave alike. The iPod touch 2G on iOS 3.1.3 stays the recommended first pick. The iPod touch 1G and the original
+iPhone (`n45ap`, `m68ap`) show **Doesn't start yet** whatever the catalog says: after preparation the S5L8900's iBoot
+never boots the kernel, and the screen stays white (rechecked 2026-11-01 on engine `dad27392d1`).
 
 ## Running
 
@@ -60,6 +62,9 @@ python3 tools/compat/compat.py table                   # newest result per firmw
 | n90ap-8C148 (iPhone 4) | 4.2.1 | Poco F3 | | | | lock screen with carrier signal; prepared on the phone in 186 s |
 | n81ap-10B500 (iPod touch 4G) | 6.1.6 | Linux (Ryzen 7 3700X) | clean | 21.1 | 76.9 | SpringBoard; Setup on a fresh base |
 | n81ap-10B500 (iPod touch 4G) | 6.1.6 | Poco F3 | clean | 6.1 | | lock screen after Setup; Start 4.6 s |
+| n90ap-10B329 (iPhone 4) | 6.1.3 | Linux (Ryzen 7 3700X) | clean | | | lock screen; prepared in 262 s (desktop `lighttouch prepare`); services: lockdown, no crash reports |
+| k48ap-9B206 (iPad) | 5.1.1 | Linux (Ryzen 7 3700X) | clean | | | lock screen; prepared in 94 s; services: lockdown, no crash reports |
+| n45ap-4B1 (iPod touch 1G) | 1.1.5 | Linux (Ryzen 7 3700X) | lit | | | white screen (iBoot waits on its console), 2026-11-01 |
 
 Known: the iPod touch 4G logs its first lit frame at 0.0 s wall time (CPU time is right).
 

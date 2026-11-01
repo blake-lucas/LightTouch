@@ -57,32 +57,33 @@ pub struct Recipe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Support {
     Tested,
-    TestedSlow,
     Experimental,
     Untested,
+    /// Known not to start yet (DOESNT_START); listed last.
+    DoesntStart,
 }
 
 impl Support {
     pub fn label(self) -> &'static str {
         match self {
             Self::Tested => "Tested",
-            Self::TestedSlow => "Tested, slow",
             Self::Experimental => "Experimental",
             Self::Untested => "Untested",
+            Self::DoesntStart => "Doesn't start yet",
         }
     }
 
     pub fn detail(self) -> &'static str {
         match self {
             Self::Tested => "Checked on LightTouch.",
-            Self::TestedSlow => "Checked on LightTouch, but slower than the iPod touch 2G on iOS 3.1.3.",
             Self::Experimental => "Starts in Light Touch for Mac's checks; not yet checked on LightTouch.",
             Self::Untested => "Nobody has tried these yet. They may not start.",
+            Self::DoesntStart => "Stops at a white screen after it's set up. Not fixed yet.",
         }
     }
 
     pub fn tested(self) -> bool {
-        matches!(self, Self::Tested | Self::TestedSlow)
+        self == Self::Tested
     }
 }
 
@@ -95,10 +96,13 @@ pub const TESTED: &[&str] = &[
     "n88ap-9B206",  // iPhone 3GS 5.1.1
     "n90ap-8C148",  // iPhone 4 4.2.1
     "n90ap-8L1",    // iPhone 4 4.3.5
+    "n90ap-10B329", // iPhone 4 6.1.3
+    "k48ap-9B206",  // iPad 5.1.1
 ];
 
-/// Tested, but noticeably slower than the iPod touch 2G on 3.1.3.
-pub const SLOW: &[&str] = &["n88ap-9B206", "n90ap-8C148", "n90ap-8L1"];
+/// Boards that stop at a white screen after preparation (the S5L8900's iBoot never boots the kernel): every
+/// version shows as not starting, whatever the catalog says. Android's DOESNT_START_BOARDS is the same list.
+pub const DOESNT_START: &[&str] = &["n45ap", "m68ap"];
 
 /// The firmware to pick first: the fastest and most complete.
 pub const RECOMMENDED: &str = "n72ap-7E18";
@@ -142,8 +146,8 @@ impl Firmware {
     }
 
     pub fn support(&self) -> Support {
-        if SLOW.contains(&self.id.as_str()) {
-            Support::TestedSlow
+        if DOESNT_START.contains(&self.board.as_str()) {
+            Support::DoesntStart
         } else if TESTED.contains(&self.id.as_str()) {
             Support::Tested
         } else if self.status == "available" || self.status == "experimental" {
@@ -386,6 +390,11 @@ mod tests {
         assert_eq!(devices[0].product_type, "iPod1,1");
         let ipod2 = devices.iter().find(|d| d.product_type == "iPod2,1").unwrap();
         assert!(ipod2.summary().starts_with("Tested: iOS 3.1.3, 4.2.1"), "{}", ipod2.summary());
+        for id in ["n88ap-9B206", "n90ap-10B329", "k48ap-9B206"] {
+            assert_eq!(catalog.find(id).unwrap().support(), Support::Tested, "{id}");
+        }
+        assert_eq!(catalog.find("n45ap-4B1").unwrap().support(), Support::DoesntStart);
+        assert_eq!(catalog.find("m68ap-1A543a").unwrap().support(), Support::DoesntStart);
     }
 
     #[test]

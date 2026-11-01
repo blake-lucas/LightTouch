@@ -158,9 +158,9 @@ private fun ChoiceRow(icon: ImageVector?, title: String, detail: String, enabled
 private fun SupportBadge(support: Support) {
     val color = when (support) {
         Support.TESTED -> MaterialTheme.colorScheme.primary
-        Support.TESTED_SLOW -> MaterialTheme.colorScheme.tertiary
         Support.EXPERIMENTAL -> LtColors.Warning
         Support.UNTESTED -> MaterialTheme.colorScheme.onSurfaceVariant
+        Support.DOESNT_START -> MaterialTheme.colorScheme.error
     }
     Text(support.label, Modifier.padding(start = 12.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = 0.14f))
         .padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, color = color)

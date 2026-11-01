@@ -31,9 +31,11 @@ Both recorded on a Pixel 10. Click to watch on YouTube.
 | iPod touch 2G | 4.2.1 | **Tested** |
 | iPod touch 3G | 4.2.1 | **Tested** |
 | iPod touch 4G | 6.1.6 | **Tested**: on a Pixel 10, Infinity Blade and Infinity Blade II run at full speed and Epic Citadel at 60 fps. Most other games, such as Jetpack Joyride, Doodle Jump and Real Racing, run at or near 60 fps on recent phones. |
-| iPhone 3GS | 5.1.1 | **Tested, slow** |
-| iPhone 4 | 4.2.1, 4.3.5 | **Tested, slow** |
-| Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on LightTouch. The iPod touch 1G and the original iPhone currently stop at a white screen after they are set up. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
+| iPhone 3GS | 5.1.1 | **Tested**. Its microphone isn't supported yet (it records silence). |
+| iPhone 4 | 4.2.1, 4.3.5, 6.1.3 | **Tested** |
+| iPad | 5.1.1 | **Tested** |
+| iPod touch 1G, original iPhone | iPhone OS 1 | **Doesn't start yet**: they stop at a white screen after they are set up. |
+| Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | up to iOS 7 | Can be prepared and tried; not yet checked on LightTouch. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
 
 ## Getting started
 

@@ -53,8 +53,8 @@ has the details.
 ## Which versions work
 
 Every device and iOS version in the [firmware catalog](../Portable/firmware/firmware-catalog.json) can be chosen. Each
-is marked **Tested** (checked on LightTouch), **Tested, slow** (works, but slower than the iPod touch 2G on iOS 3.1.3),
-**Experimental** or **Untested**. On a recent phone the iPod touch 2G on iOS 3.1.3 prepares in about a minute; the
+is marked **Tested** (checked on LightTouch), **Experimental**, **Untested** or **Doesn't start yet** (the iPod touch 1G
+and the original iPhone, which stop at a white screen). On a recent phone the iPod touch 2G on iOS 3.1.3 prepares in about a minute; the
 iPod touch 4G on iOS 6.1.6 takes several minutes, because preparation starts iOS once so its first-start setup is done.
 
 Use firmware you are entitled to use, and keep firmware, boot ROMs and personal guest data out of public bug reports

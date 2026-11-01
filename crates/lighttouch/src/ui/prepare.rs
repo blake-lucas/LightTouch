@@ -55,9 +55,9 @@ impl PrepareState {
 fn support_color(p: &theme::Palette, support: Support) -> Color32 {
     match support {
         Support::Tested => p.primary,
-        Support::TestedSlow => Color32::from_rgb(0x8F, 0xB8, 0xFF),
         Support::Experimental => theme::WARNING,
         Support::Untested => p.on_surface_variant,
+        Support::DoesntStart => p.error,
     }
 }
 
@@ -219,7 +219,11 @@ fn files_step(app: &mut App, ui: &mut Ui) {
     }
     let support = firmware.support();
     if support != Support::Tested {
-        let color = if support == Support::Untested { p.on_surface_variant } else { theme::WARNING };
+        let color = match support {
+            Support::Untested => p.on_surface_variant,
+            Support::DoesntStart => p.error,
+            _ => theme::WARNING,
+        };
         ui.label(RichText::new(format!("{}: {}", support.label(), support.detail())).size(12.5).color(color));
         ui.add_space(8.0);
     }
