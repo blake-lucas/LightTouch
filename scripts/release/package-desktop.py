@@ -71,6 +71,7 @@ Icon=lighttouch
 Terminal=false
 Categories=System;Emulator;
 StartupNotify=true
+StartupWMClass=org.lighttouch.LightTouch
 """
 LAUNCHER = """#!/bin/sh
 # Puts the bundled libraries (libfdt, libimobiledevice) after the system's on the library path.
@@ -280,7 +281,9 @@ def appimage(out, tools):
             copy(f, appdir / "usr/lib" / f.name)
     (appdir / "AppRun").write_text(APPRUN)
     (appdir / "AppRun").chmod(0o755)
-    (appdir / "lighttouch.desktop").write_text(DESKTOP)
+    # Named for the window's app id, which GNOME on Wayland matches to a desktop entry for the window's icon once
+    # the AppImage is added to the app menu (AppImageLauncher, Gear Lever); StartupWMClass covers a renamed copy.
+    (appdir / "org.lighttouch.LightTouch.desktop").write_text(DESKTOP)
     copy(ICONS / "lighttouch.png", appdir / "lighttouch.png")
     files = {str(f.relative_to(appdir)): hashlib.sha256(f.read_bytes()).hexdigest()
              for f in sorted(appdir.rglob("*")) if f.is_file()}

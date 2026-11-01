@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Themed-icon layer (Android 13+): the phone and the touch as one-colour lines; the launcher tints it. -->
-  <rect x="362" y="206" width="300" height="612" rx="56" fill="none" stroke="#FFFFFF" stroke-width="22"/>
-  <rect x="396" y="290" width="232" height="384" rx="8" fill="none" stroke="#FFFFFF" stroke-width="14"/>
-  <circle cx="512" cy="748" r="26" fill="none" stroke="#FFFFFF" stroke-width="14"/>
-  <circle cx="512" cy="470" r="86" fill="none" stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="16"/>
-  <circle cx="512" cy="470" r="46" fill="#FFFFFF"/>
+  <!-- Themed-icon layer (Android 13+): the phone and the touch in one colour, which the launcher tints. -->
+  <path fill="#FFFFFF" fill-rule="evenodd" d="
+    M428,196H596A86,86 0 0 1 682,282V742A86,86 0 0 1 596,828H428A86,86 0 0 1 342,742V282A86,86 0 0 1 428,196Z
+    M388,300H636A12,12 0 0 1 648,312V696A12,12 0 0 1 636,708H388A12,12 0 0 1 376,696V312A12,12 0 0 1 388,300Z
+    M482,768a30,30 0 1 0 60,0a30,30 0 1 0 -60,0Z
+    M476,251a7,7 0 0 1 7,-7H541a7,7 0 0 1 0,14H483a7,7 0 0 1 -7,-7Z"/>
+  <circle cx="512" cy="504" r="60" fill="#FFFFFF"/>
 </svg>
