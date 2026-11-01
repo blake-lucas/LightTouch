@@ -113,7 +113,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::MICROPHONE,
                     "Microphone",
-                    "iOS apps can record from this computer's microphone. It is only on while an app is recording. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
+                    "iOS apps can record from this computer's microphone. It is only on while an app is recording. iPhone 4, iPod touch 4G and iPad",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.microphone);
                     },

@@ -57,7 +57,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
-                    SwitchRow(LtIcons.Mic, "Microphone", "iOS apps can record from your phone's microphone. It is only on while an app is recording. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
+                    SwitchRow(LtIcons.Mic, "Microphone", "iOS apps can record from your phone's microphone. It is only on while an app is recording. iPhone 4, iPod touch 4G and iPad",
                         s.microphone, "microphone_toggle") { if (it) host.enableMicrophone() else { s.microphone = false; host.applySettings() } }
                 }
                 SettingsGroup("Connection") {
