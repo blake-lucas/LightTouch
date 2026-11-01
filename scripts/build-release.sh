@@ -202,7 +202,7 @@ step_macos() {
     rsync -a "$n/linux/engine/qemu-ios" "$LT_MAC:$m/notices/engine/"
     rsync -a "$n/linux/usb/" "$LT_MAC:$m/notices/usb/"
     rsync -a "$LT_FFMPEG_ARCHIVE" "$LT_MAC:$m/"
-    # The engine links a decoder-only FFmpeg; the USB bridge is the LightTouchMac app's ($LT_MAC_VENDOR). The
+    # The engine links an FFmpeg with only the codecs it uses; the USB bridge is the LightTouchMac app's ($LT_MAC_VENDOR). The
     # packager bundles the Homebrew libraries both load, with their licence files, and signs the app ad hoc.
     ssh "$LT_MAC" "export PATH=\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
         caffeinate -s $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \

@@ -14,7 +14,7 @@ Scoped 2026-10-31 from the current scripts and the Un1box fork's CI. Nothing her
 ## Straighten out first (in order)
 
 1. **Linux release image**: `lighttouch-bullseye-collector08` exists only in local Docker (made with `docker commit`; its script was deleted in `c198b393`). Recreate it as a Dockerfile in the repo, publish to GHCR.
-2. **Pinned inputs**: one versioned "inputs" GitHub release with a sha256 manifest and a `fetch-inputs.py`, for what CI can't rebuild: ANGLE, PGO profile, the MSYS2 packages behind the Windows sysroot, desktop notices, appimagetool, the macOS USB bridge.
+2. **Pinned inputs**: one versioned "inputs" GitHub release with a sha256 manifest and a `fetch-inputs.py`, for what CI can't rebuild: ANGLE, PGO profile, the MSYS2 packages behind the Windows sysroot, desktop notices, appimagetool, the macOS USB bridge. FFmpeg now needs the AAC encoder too (`--enable-encoder=aac`, for the AMC encoder): the Android and Linux dev prefixes and the bullseye `deps-full` were rebuilt in place on 2026-11-01 (old `libavcodec.a` kept as `.before-aacenc`); Windows and macOS build it from the archive with the flag.
 3. **Signing**: back up the keystore; add it as a secret.
 4. **No machine paths**: remove the `~/Documents/LightTouch-Development` defaults (`build.sh:33`, `build-release.sh:28-47`); add `scripts/build.env.example`; `build-deps.py` honours `LT_JOBS` instead of `-j2`; slirp joins the pinned deps instead of coming from a configured checkout.
 5. **Engine pin**: an `ENGINE_REF` file (qemu-ios SHA) used by `build.sh` and the release; drops the paired-tag requirement.

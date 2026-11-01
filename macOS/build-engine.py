@@ -8,8 +8,9 @@ pkg-config, glib, pixman, libslirp, nettle, OpenSSL3 and the macOS Command Line 
 QEMU has no built-in AES any more: without nettle the guest's AES engine (the
 4.x+ data-protection keybag boot) fails with "no crypto library enabled".
 With --ffmpeg-archive the engine links an FFmpeg built here with only the
-decoders it uses (aac, mp3, alac, h264), as the Windows build does, instead of
-Homebrew's, which brings dozens of encoder and codec libraries along.
+codecs it uses (the aac, mp3, alac and h264 decoders and the aac encoder), as
+the Windows build does, instead of Homebrew's, which brings dozens of encoder
+and codec libraries along.
 """
 import argparse
 import hashlib
@@ -28,7 +29,7 @@ def main():
     parser.add_argument("--openssl-prefix", type=Path, required=True)
     parser.add_argument("--jobs", type=int, choices=[1, 2], default=2)
     parser.add_argument("--archive-revision", help="exact Git revision when using a recorded source archive")
-    parser.add_argument("--ffmpeg-archive", type=Path, help="FFmpeg source tarball, built decoder-only into OUTPUT/codec")
+    parser.add_argument("--ffmpeg-archive", type=Path, help="FFmpeg source tarball, built with only the codecs the engine uses into OUTPUT/codec")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("native macOS compiler/SDK required")
@@ -57,7 +58,7 @@ def main():
             ["sh", "-c", "cd ffmpeg-src && ./configure --prefix=" + str(codec) +
              " --disable-everything --disable-autodetect --disable-programs --disable-doc"
              " --disable-avdevice --disable-avformat --disable-avfilter --disable-swscale --disable-swresample"
-             " --enable-decoder=aac,mp3,alac,h264 --enable-shared --disable-static"
+             " --enable-decoder=aac,mp3,alac,h264 --enable-encoder=aac --enable-shared --disable-static"
              " --install-name-dir=" + str(codec / "lib") +
              " && make -j" + str(args.jobs) + " && make install"
              " && mkdir -p " + str(codec / "share/licenses/ffmpeg") +
