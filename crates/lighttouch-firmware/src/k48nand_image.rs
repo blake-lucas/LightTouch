@@ -47,7 +47,7 @@ pub fn data_extents(file: &File) -> io::Result<Vec<(u64, u64)>> {
 }
 
 #[cfg(unix)]
-fn extents(file: &File, _len: u64) -> io::Result<Vec<(u64, u64)>> {
+fn extents(file: &File, len: u64) -> io::Result<Vec<(u64, u64)>> {
     use std::os::unix::io::AsRawFd;
     // Declared here rather than through the libc crate: two calls, and the crate stays dependency-light.
     // macOS swapped the two whence values relative to Linux and the BSDs.
@@ -59,6 +59,7 @@ fn extents(file: &File, _len: u64) -> io::Result<Vec<(u64, u64)>> {
     const SEEK_DATA: i32 = 3;
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     const SEEK_HOLE: i32 = 4;
+    const ENXIO: i32 = 6; // the same on Linux, Android and macOS
     // lseek64 on Linux and Android: off_t is 32 bits on their 32-bit targets.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe extern "C" {
@@ -73,13 +74,18 @@ fn extents(file: &File, _len: u64) -> io::Result<Vec<(u64, u64)>> {
     let mut out = Vec::new();
     let mut offset = 0i64;
     loop {
-        // ENXIO past the last data is the loop's end; any other failure ends it too, as in FirmwareKit.
+        // ENXIO past the last data is the loop's end. Any other failure means the filesystem can't say (macOS's App
+        // Translocation mount answers ENOTSUP), so the rest is data rather than a hole.
         let start = unsafe { lseek(fd, offset, SEEK_DATA) };
         if start < 0 {
+            if io::Error::last_os_error().raw_os_error() != Some(ENXIO) {
+                out.push((offset as u64, len));
+            }
             break;
         }
         let end = unsafe { lseek(fd, start, SEEK_HOLE) };
         if end <= start {
+            out.push((start as u64, len));
             break;
         }
         out.push((start as u64, end as u64));

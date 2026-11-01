@@ -795,11 +795,16 @@ static void clone_sparse(const fs::path &from, const fs::path &to) {
         int64_t end = st.st_size;
 #ifdef SEEK_DATA
         int64_t data = lt::os::lseek(in.n, at, SEEK_DATA);
-        if (data < 0)
+        if (data < 0 && errno == ENXIO)
             break;  // only a hole remains
-        at = data;
-        end = lt::os::lseek(in.n, data, SEEK_HOLE);
-        io(end > 0, "seek hole " + from.string());
+        if (data >= 0) {
+            at = data;
+            end = lt::os::lseek(in.n, data, SEEK_HOLE);
+            if (end <= at)
+                end = st.st_size;
+        }
+        // Otherwise the filesystem can't say, and the rest is copied: macOS's App Translocation mount (an app opened
+        // from Downloads) answers ENOTSUP, and taking that for a hole left the record's guest package all zeros.
 #endif
 #endif
         while (at < end) {
@@ -831,8 +836,12 @@ static std::vector<std::pair<int64_t, int64_t>> data_ranges(int fd, int64_t size
 #ifdef SEEK_DATA
     for (int64_t at = 0; at < size;) {
         const int64_t start = lt::os::lseek(fd, at, SEEK_DATA);
-        if (start < 0)
-            break;  // only a hole remains (or no answer: ENXIO is the usual end)
+        if (start < 0 && errno == ENXIO)
+            break;  // only a hole remains
+        if (start < 0) {
+            ranges.emplace_back(at, size);  // the filesystem can't say (ENOTSUP on macOS's App Translocation mount)
+            break;
+        }
         const int64_t end = lt::os::lseek(fd, start, SEEK_HOLE);
         io(end > start, "seek hole");
         ranges.emplace_back(start, std::min(end, size));

@@ -13,8 +13,8 @@ OUT/resources/licenses/ frontend/ and firmware/ (stage-notices.py for the app an
                         --source-reference (LightTouch's)
 
 macOS (run on a Mac; OUT is LightTouch.app): the app in Contents/MacOS, the resources in Contents/Resources, and the
-non-system dylibs the engine and the USB bridge load (Homebrew's) copied into Contents/Frameworks with their install
-names rewritten; each one's licence files from its Homebrew keg join the engine group's notices. The bundle is signed
+non-system dylibs the engine and the USB bridge load (Homebrew's, or @rpath ones beside the binary they came from, like
+the LightTouchMac bridge's libimobiledevice) copied into Contents/Frameworks with their install names rewritten; each one's licence files from its Homebrew keg join the engine group's notices. The bundle is signed
 ad hoc.
 
 The binaries are built beforehand: the app and firmwarekit with `cargo build --release` (packaged builds use
@@ -147,7 +147,8 @@ def main():
         (args.out / "Contents/Info.plist").write_text(INFO_PLIST.replace("VERSION", version))
         copy(ICONS / "lighttouch.icns", res / "lighttouch.icns")
         given = sorted(libs.iterdir()) if libs.is_dir() else []
-        kegs = bundle_dylibs([res / engine, res / "usbmuxd-qemu", *given], libs)
+        kegs = bundle_dylibs({res / engine: args.engine, res / "usbmuxd-qemu": args.usbmuxd,
+                              **{f: given_from.get(f.name.lower(), f) for f in given}}, libs)
     elif windows:
         check_imports([args.out / "lighttouch.exe", *res.glob("*.exe"), *res.glob("*.dll")])
     else:
@@ -232,26 +233,45 @@ def check_imports(binaries):
 
 
 def bundle_dylibs(binaries, frameworks):
-    """Copy the non-system dylibs `binaries` load (recursively) into `frameworks`, point every load command at the
-    copies, and return (name, folder) for the licence files of what they came from: Homebrew kegs, or the
-    share/licenses/<name> folders of another prefix."""
-    def deps(path):
+    """Copy the non-system dylibs `binaries` (each bundled copy: the file it was copied from) load, recursively, into
+    `frameworks`, point every load command at the copies, and return (name, folder) for the licence files of what they
+    came from: Homebrew kegs, or the share/licenses/<name> folders of another prefix. An @rpath library is looked up
+    in the run paths of the file the copy came from (the LightTouchMac bridge keeps libimobiledevice and libplist in
+    its own Frameworks, which v0.0.12 left out, so its USB bridge couldn't start)."""
+    def deps(path, origin):
+        own = subprocess.check_output(["otool", "-D", str(path)], text=True).splitlines()[1:]
         lines = subprocess.check_output(["otool", "-L", str(path)], text=True).splitlines()
         # Universal binaries list each architecture under its own "FILE (architecture X):" header.
-        names = {line.strip().split(" (")[0] for line in lines if line.startswith("\t")}
-        return [n for n in names if not n.startswith(("/usr/lib/", "/System/", "@"))]
+        names = {line.strip().split(" (")[0] for line in lines if line.startswith("\t")} - {n.strip() for n in own}
+        found = []
+        for n in sorted(names):
+            if n.startswith("@rpath/"):
+                real = next((d / n[len("@rpath/"):] for d in rpaths(origin)
+                             if (d / n[len("@rpath/"):]).is_file()), None)
+                if real is None:
+                    sys.exit(f"package-desktop: {path.name} loads {n}, found in none of {origin}'s run paths")
+                found.append((n, real))
+            elif not n.startswith(("/usr/lib/", "/System/", "@")):
+                found.append((n, Path(n)))
+        return found
 
-    kegs, todo, done = set(), list(binaries), set()
+    def rpaths(origin):
+        lines = subprocess.check_output(["otool", "-l", str(origin)], text=True).splitlines()
+        paths = [lines[i + 2].split()[1] for i, line in enumerate(lines) if line.strip() == "cmd LC_RPATH"]
+        here = str(origin.resolve().parent)
+        return [Path(p.replace("@executable_path", here).replace("@loader_path", here)) for p in paths] + [Path(here)]
+
+    kegs, todo, done = set(), list(binaries.items()), set()
     while todo:
-        path = todo.pop()
-        for dep in deps(path):
-            real = Path(dep).resolve()
+        path, origin = todo.pop()
+        for dep, source in deps(path, origin):
+            real = source.resolve()
             local = frameworks / Path(dep).name
             if not local.exists():
                 copy(real, local, 0o644)
                 subprocess.run(["install_name_tool", "-id", "@rpath/" + local.name, str(local)], check=True,
                                stderr=subprocess.DEVNULL)
-                todo.append(local)
+                todo.append((local, real))
                 parts = real.parts
                 if "Cellar" in parts:
                     i = parts.index("Cellar")
