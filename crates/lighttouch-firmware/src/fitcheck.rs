@@ -727,7 +727,11 @@ pub fn sandbox_patch(kernel: Option<&[u8]>) -> Fit {
         return Fit::new(piece, false, "no decrypted kernelcache to check it against");
     };
     match sandbox_patch::locate(kernel) {
-        Ok(f) => Fit::new(piece, true, format!("sb_evaluate at 0x{:x} ({})", f.address, macho::hex_bytes(&f.original))),
+        Ok(f) => Fit::new(
+            piece,
+            true,
+            format!("sb_evaluate at 0x{:x} ({}), profile switch 0x{:02x}", f.address, macho::hex_bytes(&f.original), f.switch_bit),
+        ),
         Err(sandbox_patch::PatchError::NoSandboxKext | sandbox_patch::PatchError::NoString) => {
             Fit::new(piece, true, "no Seatbelt sandbox kext on this kernel: nothing to patch")
         }

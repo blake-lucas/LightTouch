@@ -14,15 +14,25 @@
 //! interpreter's bad-opcode report, inside sb_evaluate) is found, its reference in the kext text walked for (both the
 //! 4.x/5.x absolute literal-pool form and the 6.x/7.x PC-relative ldr/add form), and the function it sits in is taken
 //! as the Thumb push{..,lr} prologue nearest before it.
+//!
+//! The verdict also carries the profile-switch flag the execve hook needs: a process already in a sandbox may exec a
+//! program with a built-in profile of its own (BTServer runs BlueTool) only when sb_evaluate's action byte has that
+//! flag, else the hook kills it ("already in a sandbox, unable to switch to: "). Its bit differs by version (0x08 on
+//! 4.2.1, 6.x and 7.x; 0x10 on 4.3 and 5.x), so it is read from the hook's own test, found the same way from that
+//! message. Without it BTServer was killed on every start and launchd restarted it all session: a jailbroken iPod
+//! touch 3G on 4.2.1 drew its Home screen at ~2/3 of the stock frame rate.
 use crate::error::Result;
 use std::collections::HashMap;
 use std::fmt;
 
-/// Return "allowed" at once, writing the decision the caller reads back. sb_evaluate(result, …) leaves its verdict in
-/// the caller's `result` struct (status at +0, filter at +4; 0 = allow) and returns 0; a bare `return 0` left that
-/// struct unwritten and the sandboxed daemons faulted. So: `movs r1,#0; str r1,[r0]; str r1,[r0,#4]; movs r0,#0;
-/// bx lr` — allow, result cleared, return 0. r0 is the result pointer on entry (the caller's arg0).
-pub const PATCH: [u8; 10] = [0x00, 0x21, 0x01, 0x60, 0x41, 0x60, 0x00, 0x20, 0x70, 0x47];
+/// Return "allowed" at once, writing the decision the caller reads back. sb_evaluate returns its verdict through the
+/// caller's `result` struct (r0 on entry, returned in r0): an errno at +0 (0 = allow) and an action byte at +4, whose
+/// `switch_bit` lets the execve hook move a sandboxed process into the exec'd program's own profile. A bare
+/// `return 0` left that struct unwritten and the sandboxed daemons faulted. So: `movs r1,#0; str r1,[r0];
+/// movs r1,#switch_bit; strb r1,[r0,#4]; bx lr`.
+pub fn patch(switch_bit: u8) -> [u8; 10] {
+    [0x00, 0x21, 0x01, 0x60, switch_bit, 0x21, 0x01, 0x71, 0x70, 0x47]
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
@@ -30,6 +40,8 @@ pub struct Found {
     pub address: u32,
     /// The bytes there before the patch (a push{..,lr} prologue), for the record.
     pub original: Vec<u8>,
+    /// The action flag the execve hook tests before a sandboxed process may switch profiles on exec.
+    pub switch_bit: u8,
 }
 
 /// Why the patch site was not found. The fit check tells "no Seatbelt kext" (NoSandboxKext, NoString: iOS before the
@@ -43,6 +55,7 @@ pub enum PatchError {
     NoReference,
     NoPrologue,
     BadPatchSite,
+    NoSwitchCheck,
 }
 
 impl fmt::Display for PatchError {
@@ -55,6 +68,7 @@ impl fmt::Display for PatchError {
             PatchError::NoReference => "no reference to the \"bad opcode\" string in the kext text",
             PatchError::NoPrologue => "no push{..,lr} prologue before the reference",
             PatchError::BadPatchSite => "the patch site is not a push{..,lr} prologue",
+            PatchError::NoSwitchCheck => "no profile-switch test beside the execve hook's \"unable to switch\" message",
         })
     }
 }
@@ -74,12 +88,15 @@ pub fn locate(kernel: &[u8]) -> std::result::Result<Found, PatchError> {
     let klo = img.sandbox_kext_load_addr().ok_or(PatchError::NoSandboxKext)?;
     let (taddr, tsize) = img.kext_text(klo).ok_or(PatchError::NoKextText)?;
     let saddr = crate::kboot::find(kernel, b"bad opcode\0").and_then(|so| img.off_to_addr(so)).ok_or(PatchError::NoString)?;
+    let switch_addr = crate::kboot::find(kernel, SWITCH_MESSAGE).and_then(|so| img.off_to_addr(so));
     let toff = img.addr_to_off(taddr).ok_or(PatchError::NoKextText)?;
     let tsize = tsize as usize;
 
     // Resilient Thumb walk of the kext text: collect push{..,lr} prologues and references to saddr.
     let mut prologues: Vec<u32> = Vec::new();
     let mut refs: Vec<u32> = Vec::new();
+    let mut switch_refs: Vec<u32> = Vec::new();
+    let mut flag_tests: Vec<(u32, u8)> = Vec::new(); // tst.w / ands.w rN, #single-bit
     let mut reg_word: HashMap<i32, u32> = HashMap::new(); // register -> last pc-relative word loaded
     let mut pos: usize = 0;
     while pos + 1 < tsize {
@@ -102,6 +119,7 @@ pub fn locate(kernel: &[u8]) -> std::result::Result<Found, PatchError> {
             let base = addr.wrapping_add(4) & !3;
             let la = base.wrapping_add((hw1 & 0xFF) as u32 * 4);
             reference(&img, la, saddr, rt, addr, &mut reg_word, &mut refs);
+            literal(&img, la, switch_addr, addr, &mut switch_refs);
         } else if len == 4 && hw1 & 0xFF7F == 0xF85F {
             // ldr.w rT, [pc, #imm12]  (T2)
             let rt = ((hw2 >> 12) & 0xF) as i32;
@@ -109,14 +127,24 @@ pub fn locate(kernel: &[u8]) -> std::result::Result<Found, PatchError> {
             let imm = (hw2 & 0xFFF) as u32;
             let la = if hw1 & 0x0080 != 0 { base.wrapping_add(imm) } else { base.wrapping_sub(imm) };
             reference(&img, la, saddr, rt, addr, &mut reg_word, &mut refs);
-        } else if len == 2 && hw1 & 0xFFF8 == 0x4478 {
-            // add rD, pc  (Rm == pc): resolve a PC-relative delta loaded earlier
-            let rd = (hw1 & 7) as i32;
+            literal(&img, la, switch_addr, addr, &mut switch_refs);
+        } else if len == 2 && hw1 & 0xFF78 == 0x4478 {
+            // add rD, pc  (Rm == pc): resolve a PC-relative delta loaded earlier (sb_evaluate's string: r0-r7 only)
+            let rd = ((hw1 & 7) | (hw1 >> 4 & 8)) as i32;
             if let Some(&w) = reg_word.get(&rd) {
                 let resolved = addr.wrapping_add(4).wrapping_add(w);
-                if resolved == saddr {
+                if resolved == saddr && rd < 8 {
                     refs.push(addr);
                 }
+                if Some(resolved) == switch_addr {
+                    switch_refs.push(addr);
+                }
+            }
+        } else if len == 4 && hw1 & 0xFBF0 == 0xF010 && hw1 & 0x0400 == 0 && hw2 & 0xF000 == 0 {
+            // tst.w / ands.w rN, #imm8 (i = imm3 = 0): a flag test
+            let imm = (hw2 & 0xFF) as u8;
+            if imm.is_power_of_two() {
+                flag_tests.push((addr, imm));
             }
         }
         pos += len;
@@ -132,7 +160,27 @@ pub fn locate(kernel: &[u8]) -> std::result::Result<Found, PatchError> {
     if !is_push16 && !is_push32 {
         return Err(PatchError::BadPatchSite);
     }
-    Ok(Found { address: entry, original: orig })
+    // The hook's flag test sits just before the message's literal load (4.x/5.x: `tst.w; it eq; ldreq`) or just after
+    // its `add rD, pc` (6.x/7.x); every reference must agree on one bit.
+    let mut bits = switch_refs.iter().filter_map(|&r| {
+        flag_tests.iter().filter(|&&(a, _)| a + 12 >= r && a <= r + 8).min_by_key(|&&(a, _)| a.abs_diff(r)).map(|&(_, b)| b)
+    });
+    let switch_bit = bits.next().ok_or(PatchError::NoSwitchCheck)?;
+    if bits.any(|b| b != switch_bit) {
+        return Err(PatchError::NoSwitchCheck);
+    }
+    Ok(Found { address: entry, original: orig, switch_bit })
+}
+
+/// The execve hook's report when a sandboxed process may not switch to the exec'd program's own profile.
+const SWITCH_MESSAGE: &[u8] = b"already in a sandbox, unable to switch to: \0";
+
+/// A literal-pool word at `la` that is `target`'s address: a reference to it from `at`.
+fn literal(img: &Image, la: u32, target: Option<u32>, at: u32, refs: &mut Vec<u32>) {
+    let Some(lo) = img.addr_to_off(la) else { return };
+    if target.is_some() && lo + 4 <= img.bytes.len() && Some(img.u32(lo)) == target {
+        refs.push(at);
+    }
 }
 
 fn reference(img: &Image, la: u32, saddr: u32, rt: i32, at: u32, reg_word: &mut HashMap<i32, u32>, refs: &mut Vec<u32>) {
@@ -153,7 +201,8 @@ pub fn apply(kernel: &[u8]) -> std::result::Result<(Vec<u8>, Found), PatchError>
     let found = locate(kernel)?;
     let mut out = kernel.to_vec();
     let o = Image::new(kernel)?.addr_to_off(found.address).ok_or(PatchError::BadPatchSite)?;
-    out[o..o + PATCH.len()].copy_from_slice(&PATCH);
+    let bytes = patch(found.switch_bit);
+    out[o..o + bytes.len()].copy_from_slice(&bytes);
     Ok((out, found))
 }
 
@@ -514,9 +563,11 @@ mod tests {
                 Ok((patched, found)) => {
                     let img = Image::new(&patched).unwrap();
                     let o = img.addr_to_off(found.address).unwrap();
-                    assert_eq!(&patched[o..o + PATCH.len()], &PATCH);
+                    let bytes = patch(found.switch_bit);
+                    assert_eq!(&patched[o..o + bytes.len()], &bytes);
                     let changed: Vec<usize> = kernel.iter().zip(&patched).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
-                    assert!(changed.iter().all(|&i| (o..o + PATCH.len()).contains(&i)));
+                    assert!(changed.iter().all(|&i| (o..o + bytes.len()).contains(&i)));
+                    eprintln!("{}: sb_evaluate 0x{:x}, switch bit 0x{:02x}", entry.display(), found.address, found.switch_bit);
                     ok += 1;
                 }
                 Err(PatchError::NoSandboxKext) | Err(PatchError::NoString) => {} // iOS before the prelinked kext

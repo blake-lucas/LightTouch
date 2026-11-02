@@ -38,7 +38,7 @@ fn jailbreak_kernel(kernel: &[u8], log: &dyn Fn(&str)) -> Vec<u8> {
     let mut out = kernel.to_vec();
     match sandbox_patch::apply(&out) {
         Ok((patched, found)) => {
-            log(&format!("[sandbox] sb_evaluate patched at 0x{:x}", found.address));
+            log(&format!("[sandbox] sb_evaluate patched at 0x{:x} (profile switch 0x{:02x})", found.address, found.switch_bit));
             out = patched;
         }
         Err(e) => log(&format!("[sandbox] left stock: {e}")),
