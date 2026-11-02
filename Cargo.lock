@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "cpal",
  "eframe",
@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-catalog"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "flate2",
  "md5",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-core"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "libc",
  "lighttouch-sys",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-firmware"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "aes",
  "cbc",
@@ -1658,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-model"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "libc",
  "lighttouch-catalog",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-services"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "libc",
  "lighttouch-catalog",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "lighttouch-sys"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "cc",
  "libz-sys",
