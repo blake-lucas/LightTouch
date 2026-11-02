@@ -360,7 +360,9 @@ def push_record(record):
 
 # A one-button alert's button (iOS's push-notification notice, an app's first-run notice) in a portrait app, then
 # under a landscape app turned left and right: tried only while the game draws nothing.
-ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5)]
+# then the bottom button of a portrait alert with stacked buttons (Game Center's sign-in: Cancel) and the lower
+# button of a turned two-button alert (Location Services: Cancel).
+ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5), (0.5, 0.715), (0.33, 0.66), (0.67, 0.34)]
 # iPhone and iPod portrait; the iPad's panel scans landscape, its slider runs up the right edge in the scan's axes
 UNLOCK_SLIDES = [(0.2, 0.89, 0.95, 0.89), (0.94, 0.62, 0.94, 0.28), (0.22, 0.87, 0.95, 0.87), (0.93, 0.64, 0.93, 0.30)]
 
@@ -469,7 +471,7 @@ def run_game(s, g, out, tag, firmware, survey=False):
         if not drawing():
             # one alert can lead to another (Game Center's sign-in, then "Game Center Selected"): a few rounds
             r["alert_taps"] = 0
-            for x, y in ALERT_BUTTONS * 3:
+            for x, y in ALERT_BUTTONS * 2:
                 s.tap(x, y); r["alert_taps"] += 1; time.sleep(2)
                 if drawing():
                     break

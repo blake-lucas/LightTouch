@@ -37,19 +37,58 @@
    "name": "Jetpack Joyride",
    "bundle": "com.halfbrick.jetpack",
    "settle": 50,
-   "steps": [
-    20,
-    [
-     0.07,
-     0.45
+   "steps": {
+    "n72ap-7E18": [
+     20,
+     [
+      0.07,
+      0.45
+     ],
+     8,
+     [
+      0.07,
+      0.45
+     ]
     ],
-    8,
-    [
-     0.07,
-     0.45
+    "n18ap-8C148": [
+     20,
+     [
+      0.07,
+      0.45
+     ],
+     8,
+     [
+      0.07,
+      0.45
+     ]
+    ],
+    "*": [],
+    "n81ap-10B500": [
+     12,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.07,
+      0.04
+     ]
+    ],
+    "n90ap-10B329": [
+     12,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.07,
+      0.04
+     ]
     ]
-   ],
-   "note": "OpenFeint's offer (older versions): \"I don't want these awesome features\""
+   },
+   "note": "OpenFeint's offer (old versions); on iOS 6 the push notice's OK, then Cancel on Game Center's sheet"
   },
   {
    "name": "Angry Birds",
@@ -64,18 +103,117 @@
   {
    "name": "Cut the Rope",
    "bundle": "com.chillingo.cuttherope",
-   "settle": 30
+   "settle": 30,
+   "steps": {
+    "n88ap-9B206": [
+     10,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.5,
+      0.82
+     ]
+    ],
+    "n81ap-10B500": [
+     10,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.5,
+      0.82
+     ]
+    ],
+    "n90ap-10B329": [
+     10,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.5,
+      0.82
+     ]
+    ],
+    "*": []
+   },
+   "note": "2.6 (iOS 5+): the push notice's OK, then the age gate's OK"
   },
   {
    "name": "Plants vs. Zombies",
    "query": "Plants vs Zombies",
    "bundle": "com.popcap.PvZ",
-   "settle": 40
+   "settle": 40,
+   "steps": {
+    "n18ap-8C148": [
+     30,
+     [
+      0.42,
+      0.03
+     ],
+     1,
+     [
+      0.11,
+      0.925
+     ]
+    ],
+    "*": []
+   },
+   "note": "the 3G's version asks a player name first: a letter, then return"
   },
   {
    "name": "Temple Run",
    "bundle": "com.imangi.templerun",
-   "settle": 30
+   "settle": 30,
+   "steps": {
+    "n72ap-7E18": [
+     25,
+     [
+      0.5,
+      0.555
+     ]
+    ],
+    "n18ap-8C148": [
+     25,
+     [
+      0.5,
+      0.555
+     ]
+    ],
+    "*": [],
+    "n81ap-10B500": [
+     12,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.07,
+      0.04
+     ]
+    ],
+    "n90ap-10B329": [
+     12,
+     [
+      0.5,
+      0.66
+     ],
+     3,
+     [
+      0.07,
+      0.04
+     ]
+    ]
+   },
+   "measure": 15,
+   "note": "the title menu redraws at ~9 fps, so 3.x/4.x tap PLAY! and measure the run (the runner dies at the first turn); iOS 6: push OK, Game Center Cancel"
   },
   {
    "name": "Doodle Jump",
