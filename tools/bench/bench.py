@@ -375,6 +375,13 @@ def unlock(s, attempts=8):
     return "locked=0" in (s.guest(GUEST_LOCK_STATUS, timeout=5) or "")
 
 
+def home(s):
+    """Back to the Home screen. Only from an app: Home on the Home screen opens Spotlight, whose keyboard the alert
+    taps would then type into (and its web search opens Safari)."""
+    if frontmost(s) not in (None, "com.apple.springboard"):
+        s.button(HOME); time.sleep(3)
+
+
 def frontmost(s):
     out = s.guest(GUEST_FRONTMOST, timeout=5)
     return out.split("\n")[0].strip() if out else None
@@ -402,7 +409,7 @@ def steps_for(g, firmware):
 
 def run_game(s, g, out, tag, firmware, survey=False):
     r = {"bundle": g["bundle"], "name": g["name"]}
-    s.button(HOME); time.sleep(3)
+    home(s)
     # A notice the last game raised (iOS's "Connect to iTunes to Use Push Notifications") stays up over the next one
     # until its OK: tap where it is, which on an iPhone or iPod Home screen is the gap between two icons.
     def clear():
@@ -413,7 +420,7 @@ def run_game(s, g, out, tag, firmware, survey=False):
     started = time.monotonic()
     if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
         # SpringBoard refuses while locked or under an alert: Home, clear, once more
-        s.button(HOME); time.sleep(2); clear()
+        home(s); clear()
         started = time.monotonic()
         if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
             r["status"] = "launch refused"; s.screenshot(out / f"{tag}-refused"); return r
