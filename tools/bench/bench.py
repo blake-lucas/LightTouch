@@ -113,7 +113,7 @@ def prepare(args):
             gkey = key if n == 0 else f"{key}#{n + 1}"
             name = f"bench {c.get('name', fw)}" + (" JB" if args.jailbreak else "") + (f" ({n + 1})" if len(groups) > 1 else "")
             # no Game Center: its sign-in comes up over a game at every launch, and there is no network to sign in with
-        cmd = ["prepare", fw, "--name", name, "--no-game-center"] + (["--jailbreak"] if args.jailbreak else [])
+            cmd = ["prepare", fw, "--name", name, "--no-game-center"] + (["--jailbreak"] if args.jailbreak else [])
             ipsw = find_ipsw(entry)
             if ipsw:
                 cmd += ["--ipsw", ipsw]
