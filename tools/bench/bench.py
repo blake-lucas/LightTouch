@@ -347,7 +347,8 @@ def push_record(record):
 # A one-button alert's button (iOS's push-notification notice, an app's first-run notice) in a portrait app, then
 # under a landscape app turned left and right: tried only while the game draws nothing.
 ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5)]
-UNLOCK_SLIDES = [(0.2, 0.89, 0.95, 0.89), (0.31, 0.915, 0.85, 0.915), (0.22, 0.87, 0.95, 0.87)]
+# iPhone and iPod portrait; the iPad's panel scans landscape, its slider runs up the right edge in the scan's axes
+UNLOCK_SLIDES = [(0.2, 0.89, 0.95, 0.89), (0.94, 0.62, 0.94, 0.28), (0.22, 0.87, 0.95, 0.87), (0.93, 0.64, 0.93, 0.30)]
 
 
 def wait_for_home(s, seconds=300):
