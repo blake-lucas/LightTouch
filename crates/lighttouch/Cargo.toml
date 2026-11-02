@@ -25,5 +25,10 @@ serde_json = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The window draws with Metal on macOS (ui::run): macOS holds an OpenGL window to 60 Hz on a ProMotion panel, so a
+# 60 fps guest frame waited up to a whole refresh and the pages scrolled at 60.
+[target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["wgpu"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }

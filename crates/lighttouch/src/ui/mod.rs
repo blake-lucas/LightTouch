@@ -101,7 +101,14 @@ pub fn run() -> eframe::Result {
         .with_min_inner_size([880.0, 600.0])
         // Unused, and on Windows winit panics when OLE won't register the drop target.
         .with_drag_and_drop(false);
-    let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
+    let options = eframe::NativeOptions {
+        viewport,
+        centered: true,
+        // Metal on macOS, where an OpenGL window is held to 60 Hz on ProMotion panels (Cargo.toml); OpenGL elsewhere.
+        #[cfg(target_os = "macos")]
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
     eframe::run_native(
         "LightTouch",
         options,
