@@ -98,7 +98,25 @@
   {
    "name": "Fruit Ninja",
    "bundle": "com.Halfbrick.Fruit",
-   "settle": 30
+   "settle": 30,
+   "steps": {
+    "n81ap-10B500": [
+     15,
+     [
+      0.11,
+      0.5
+     ]
+    ],
+    "n90ap-10B329": [
+     15,
+     [
+      0.11,
+      0.5
+     ]
+    ],
+    "*": []
+   },
+   "note": "2.3 (iOS 6): close Halfbrick's thank-you scroll (its X on the left)"
   },
   {
    "name": "Cut the Rope",
