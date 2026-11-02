@@ -159,6 +159,8 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
                     Err(_) => {}
                 }
             }
+            // The driver went away: shut iOS down cleanly rather than run on with nobody steering.
+            let _ = live_tx.send(Command::Stop);
         });
     }
     let mut stdout = std::io::stdout();
