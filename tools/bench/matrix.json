@@ -1,0 +1,120 @@
+{
+ "about": "Baseline matrix: one Tested iOS version per device, popular games of the era. Each game is measured on the screen it settles on by itself (title, attract demo, flythrough) unless it has steps. settle: seconds from the launch request to the measurement; measure: seconds of frames recorded; steps: [x, y] taps, [x0, y0, x1, y1, ms] swipes and pauses in seconds, in normalized guest coordinates, run as soon as the game is in front (they count toward settle). Before each launch and when a game draws nothing, the harness also taps where a one-button iOS alert's OK sits.",
+ "defaults": {
+  "settle": 35,
+  "measure": 20
+ },
+ "configs": [
+  {
+   "firmware": "n72ap-7E18",
+   "name": "iPod touch 2G 3.1.3"
+  },
+  {
+   "firmware": "n18ap-8C148",
+   "name": "iPod touch 3G 4.2.1"
+  },
+  {
+   "firmware": "n88ap-9B206",
+   "name": "iPhone 3GS 5.1.1"
+  },
+  {
+   "firmware": "n81ap-10B500",
+   "name": "iPod touch 4G 6.1.6"
+  },
+  {
+   "firmware": "n90ap-10B329",
+   "name": "iPhone 4 6.1.3"
+  },
+  {
+   "firmware": "k48ap-9B206",
+   "name": "iPad 5.1.1"
+  }
+ ],
+ "games": [
+  {
+   "name": "Jetpack Joyride",
+   "bundle": "com.halfbrick.jetpack",
+   "settle": 50,
+   "steps": [
+    20,
+    [
+     0.07,
+     0.45
+    ],
+    8,
+    [
+     0.07,
+     0.45
+    ]
+   ],
+   "note": "OpenFeint's offer (older versions): \"I don't want these awesome features\""
+  },
+  {
+   "name": "Angry Birds",
+   "bundle": "com.clickgamer.AngryBirds",
+   "settle": 30
+  },
+  {
+   "name": "Fruit Ninja",
+   "bundle": "com.Halfbrick.Fruit",
+   "settle": 30
+  },
+  {
+   "name": "Cut the Rope",
+   "bundle": "com.chillingo.cuttherope",
+   "settle": 30
+  },
+  {
+   "name": "Plants vs. Zombies",
+   "query": "Plants vs Zombies",
+   "bundle": "com.popcap.PvZ",
+   "settle": 40
+  },
+  {
+   "name": "Temple Run",
+   "bundle": "com.imangi.templerun",
+   "settle": 30
+  },
+  {
+   "name": "Doodle Jump",
+   "bundle": "com.yourcompany.DoodleJump",
+   "settle": 25,
+   "steps": {
+    "n18ap-8C148": [
+     10,
+     [
+      0.29,
+      0.75
+     ]
+    ],
+    "*": []
+   },
+   "note": "the score-submit prompt: Don't submit"
+  },
+  {
+   "name": "Tiny Wings",
+   "bundle": "com.andreasilliger.tinywings",
+   "settle": 30
+  },
+  {
+   "name": "Real Racing",
+   "bundle": "com.firemint.realracing",
+   "settle": 60
+  },
+  {
+   "name": "Asphalt 5",
+   "bundle": "com.gameloft.Asphalt5",
+   "settle": 40
+  },
+  {
+   "name": "Infinity Blade",
+   "bundle": "com.chairentertainment.birthright",
+   "settle": 90
+  },
+  {
+   "name": "Epic Citadel",
+   "bundle": "com.epicgames.EpicCitadel",
+   "settle": 150
+  }
+ ]
+}

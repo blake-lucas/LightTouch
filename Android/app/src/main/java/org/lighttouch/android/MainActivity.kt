@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import org.json.JSONObject
 import android.os.*
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.view.KeyEvent
 import android.view.WindowInsets as PlatformInsets
 import android.view.WindowInsetsController
@@ -336,6 +337,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
+        benchIntent(intent)
         setContent {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
@@ -400,6 +402,26 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }
     }
+
+    // Benchmark control over ADB (tools/bench), debuggable builds only.
+    private val bench by lazy {
+        BenchControl(object : BenchControl.Host {
+            override val engine get() = this@MainActivity.engine
+            override val status get() = this@MainActivity.status
+            override val displayAsleep get() = this@MainActivity.displayAsleep
+            override fun select(id: String) = selectDevice(id)
+            override fun start() {
+                // the guest on screen: a first-run or settings page over it would stop its presentation
+                overlay = null; devicesOpen = false; licensesOpen = false; preparationOpen = false
+                startGuest()
+            }
+            override fun stop() = stopGuest()
+        }, File(filesDir, "bench"))
+    }
+    private fun benchIntent(intent: Intent?) {
+        if (intent?.action == BenchControl.ACTION && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) bench.handle(intent)
+    }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); benchIntent(intent) }
 
     // GuestHost: the screens' requests.
     /** The message the user dismissed: the worker goes on reporting it each poll, and it stays hidden until it changes. */

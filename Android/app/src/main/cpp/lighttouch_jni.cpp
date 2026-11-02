@@ -1087,8 +1087,14 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     // which is the space the engine takes touches in.
     const bool turned=scan_turned(frame);
     const auto view=viewport(width,height);lt_error error=LT_INIT(lt_error);
+    // width < 0: the coordinates are already the guest screen's normalized ones (the debug build's bench control).
+    const bool normalized=width<0;
     for(jsize i=0;i<count;++i) {
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
+        if(normalized) {
+            batch.contacts[i].x=std::clamp(double(coords[i*2]),0.0,1.0);batch.contacts[i].y=std::clamp(double(coords[i*2+1]),0.0,1.0);
+            continue;
+        }
         // A finger past the guest's edge (into a letterbox, or off the glass) holds at the nearest edge instead of
         // cancelling every finger's gesture, as a touchscreen that ends at the guest's border would.
         double px=coords[i*2],py=coords[i*2+1];
