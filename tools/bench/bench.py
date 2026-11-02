@@ -3,6 +3,7 @@
 
   bench.py fetch   [MATRIX]                 download each game's Legacy Store copy for each config (ipa/<firmware>/)
   bench.py prepare [MATRIX] [--jailbreak]   prepare one device per config with its games installed (prepare --ipa)
+  bench.py warm    [MATRIX]                 answer each game's first-run prompts once; runs start from that state
   bench.py push    [MATRIX]                 copy the prepared devices to the phone (run --host android does it too)
   bench.py run     [MATRIX] --host desktop|android [--config ID ...] [--game BUNDLE ...] [--rounds N]
   bench.py report  RESULTS.json [...]       Markdown tables of one or more runs
@@ -149,11 +150,18 @@ class Desktop:
     def __init__(self, record, out):
         self.out = out
         cmd = shlex.split(LIGHTTOUCH) + ["run", record, "--control", "--no-audio"]
-        self.log = open(out / f"{record}.log", "w")
-        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, bufsize=1)
-        self.frames, self.results, self.status, self.exited = [], queue.Queue(), {}, None
-        self.recording = False
-        threading.Thread(target=self._read, daemon=True).start()
+        for attempt in range(10):
+            self.log = open(out / f"{record}.log", "w")
+            self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True,
+                                      bufsize=1)
+            self.frames, self.results, self.status, self.exited = [], queue.Queue(), {}, None
+            self.recording = False
+            threading.Thread(target=self._read, daemon=True).start()
+            # sessions starting together share the library: one may be told to wait its turn
+            time.sleep(3)
+            if self.p.poll() is None or "library operation in progress" not in (out / f"{record}.log").read_text():
+                break
+            self.log.close(); time.sleep(5)
 
     def _read(self):
         for line in self.p.stdout:
@@ -331,16 +339,22 @@ def snapshot(record):
     return path
 
 
-def restore_desktop(record):
+def start_state(record):
+    """What runs start from: the warmed-up state (bench.py warm) if there is one, else the state as prepared."""
+    warm = WORK / "pristine" / f"{record}.warm.tar"
+    return warm if warm.exists() else snapshot(record)
+
+
+def restore_desktop(record, tar=None):
     rec = WORK / "data/library/records" / record
-    tar = snapshot(record)
+    tar = tar or start_state(record)
     subprocess.run(["rm", "-rf", str(rec / "state")], check=True)
     subprocess.run(["tar", "-xSf", str(tar), "-C", str(rec)], check=True)
 
 
 def push_record(record):
-    """The device on the phone: its base and assets copied once, its state replaced by the prepared one each time."""
-    tar = snapshot(record)
+    """The device on the phone: its base and assets copied once, its state replaced by the starting one each time."""
+    tar = start_state(record)
     remote = f"files/library/records/{record}"
     have = Android.adb("shell", "run-as", PKG, "ls", f"{remote}/record.json").strip()
     if not have.endswith("record.json"):
@@ -360,9 +374,12 @@ def push_record(record):
 
 # A one-button alert's button (iOS's push-notification notice, an app's first-run notice) in a portrait app, then
 # under a landscape app turned left and right: tried only while the game draws nothing.
-# then the bottom button of a portrait alert with stacked buttons (Game Center's sign-in: Cancel) and the lower
-# button of a turned two-button alert (Location Services: Cancel).
-ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5), (0.5, 0.715), (0.33, 0.66), (0.67, 0.34)]
+ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5)]
+# The warm-up's taps after each launch: those, Game Center's sign-in Cancel (the bottom button of a portrait alert
+# with stacked buttons; iOS 6's sheet: top left), the lower button of a turned two-button alert (Location Services:
+# Cancel), then the OK buttons again for what a cancel brings up. A tap that lands on the game instead only changes
+# the warm-up, which is why measured runs don't tap blindly.
+WARM_TAPS = ALERT_BUTTONS + [(0.5, 0.715), (0.07, 0.04), (0.33, 0.66)] + ALERT_BUTTONS
 # iPhone and iPod portrait; the iPad's panel scans landscape, its slider runs up the right edge in the scan's axes
 UNLOCK_SLIDES = [(0.2, 0.89, 0.95, 0.89), (0.94, 0.62, 0.94, 0.28), (0.22, 0.87, 0.95, 0.87), (0.93, 0.64, 0.93, 0.30)]
 
@@ -559,6 +576,49 @@ def table(result):
     return "\n".join(rows)
 
 
+def warm(args):
+    """Answer each game's first-run prompts once (iOS's push notice, Game Center's sign-in, which stops asking after
+    three cancels, and the like), then keep that state as the one runs start from: a tester's first launch of each
+    game, done before measuring. Desktop only; the phone gets the same state."""
+    m = load_matrix(args.matrix)
+    known = devices()
+    out = WORK / "results" / ("warm-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    out.mkdir(parents=True, exist_ok=True)
+    for c in selected(m["configs"], args.config, "firmware"):
+        for key, dev in config_devices(known, c["firmware"] + ("-jb" if args.jailbreak else "")):
+            rec = dev["record"]
+            if (WORK / "pristine" / f"{rec}.warm.tar").exists() and not args.again:
+                log(key, "already warmed"); continue
+            games = [g for g in selected(m["games"], args.game, "bundle") if g["bundle"] in dev["apps"]]
+            restore_desktop(rec, snapshot(rec))
+            log(key, "warming up", rec)
+            s = Desktop(rec, out)
+            if not wait_for_home(s):
+                log(key, "never unlocked"); s.stop(); continue
+            for g in games:
+                for i in range(3):
+                    home(s)
+                    if not c["firmware"].startswith("k48"):
+                        s.tap(*ALERT_BUTTONS[0]); time.sleep(1.5)
+                    unlock(s, 4)
+                    if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
+                        log(key, g["name"], "launch refused"); break
+                    time.sleep(min(g["settle"], 45) if i == 0 else 15)
+                    for x, y in WARM_TAPS:
+                        s.tap(x, y); time.sleep(1.5)
+                    s.screenshot(out / f"{key}-{g['bundle']}-{i + 1}")
+                log(key, g["name"], "warmed")
+            home(s)
+            if s.stop():
+                tar = WORK / "pristine" / f"{rec}.warm.tar"
+                subprocess.run(["tar", "-cSf", str(tar), "-C", str(WORK / "data/library/records" / rec), "--exclude",
+                                "state/work", "--exclude", "state/.lease", "--exclude", "state/serial.log", "--exclude",
+                                "state/engine-*.log", "state"], check=True)
+                log(key, "warm state kept:", tar)
+            else:
+                log(key, "no clean shutdown: warm state not kept")
+
+
 def push(args):
     m = load_matrix(args.matrix)
     known = devices()
@@ -575,15 +635,15 @@ def report(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
-    for name, fn in (("fetch", fetch), ("prepare", prepare), ("push", push), ("run", run)):
+    for name, fn in (("fetch", fetch), ("prepare", prepare), ("warm", warm), ("push", push), ("run", run)):
         p = sub.add_parser(name)
         p.add_argument("matrix", nargs="?", default=str(HERE / "matrix.json"))
         p.add_argument("--config", action="append", help="firmware id or config name (repeatable; default all)")
         p.add_argument("--game", action="append", help="bundle ID or game name (repeatable; default all)")
         p.add_argument("--jailbreak", action="store_true", help="the jailbroken devices (prepare: make them)")
         p.set_defaults(fn=fn)
-        if name == "prepare":
-            p.add_argument("--again", action="store_true", help="prepare even if devices.json has the config")
+        if name in ("prepare", "warm"):
+            p.add_argument("--again", action="store_true", help="prepare or warm up again what was done before")
         if name == "run":
             p.add_argument("--host", choices=["desktop", "android"], required=True)
             p.add_argument("--rounds", type=int, default=1)
