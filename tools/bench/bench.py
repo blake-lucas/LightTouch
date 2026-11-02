@@ -444,11 +444,9 @@ def steps_for(g, firmware):
 def run_game(s, g, out, tag, firmware, survey=False):
     r = {"bundle": g["bundle"], "name": g["name"]}
     home(s)
-    # A notice the last game raised (iOS's "Connect to iTunes to Use Push Notifications") stays up over the next one
-    # until its OK: tap where it is, which on an iPhone or iPod Home screen is the gap between two icons.
+    # No tap on the Home screen before a launch: iOS's push notices are answered by the warm-up, and on the phone a
+    # tap there can arrive late enough to read as a hold, which leaves SpringBoard editing icons and refusing launches.
     def clear():
-        if not firmware.startswith("k48"):
-            s.tap(*ALERT_BUTTONS[0]); time.sleep(1.5)
         unlock(s, 4)
     clear()
     started = time.monotonic()
