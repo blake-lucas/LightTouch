@@ -34,6 +34,9 @@ pub struct PrepareRequest {
     /// IPAs installed while the device is prepared (benchmark devices: `lighttouch prepare --ipa`).
     #[serde(default)]
     pub ipas: Vec<PathBuf>,
+    /// Game Center's daemon disabled (benchmark devices: `lighttouch prepare --no-game-center`).
+    #[serde(default)]
+    pub no_game_center: bool,
 }
 
 /// Whether this build can prepare devices, and why not.
@@ -254,6 +257,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         &mut timings,
         request.jailbreak,
         &request.ipas,
+        request.no_game_center,
     );
     let _ = std::fs::remove_dir_all(&cache);
     if let Err(e) = result {
@@ -323,6 +327,7 @@ fn run_firmwarekit(
     timings: &mut Vec<(String, f64)>,
     jailbreak: bool,
     ipas: &[PathBuf],
+    no_game_center: bool,
 ) -> Result<(), String> {
     let engine = ctx.resources.engine();
     let mut command = Command::new(ctx.resources.firmwarekit());
@@ -351,6 +356,9 @@ fn run_firmwarekit(
     }
     for ipa in ipas {
         command.arg("--ipa").arg(ipa);
+    }
+    if no_game_center {
+        command.arg("--no-game-center");
     }
     if let Some(sibling) = sibling {
         command.arg("--sibling-ipsw").arg(sibling);

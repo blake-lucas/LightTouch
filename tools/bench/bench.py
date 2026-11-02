@@ -112,7 +112,8 @@ def prepare(args):
         for n, group in enumerate(groups):
             gkey = key if n == 0 else f"{key}#{n + 1}"
             name = f"bench {c.get('name', fw)}" + (" JB" if args.jailbreak else "") + (f" ({n + 1})" if len(groups) > 1 else "")
-            cmd = ["prepare", fw, "--name", name] + (["--jailbreak"] if args.jailbreak else [])
+            # no Game Center: its sign-in comes up over a game at every launch, and there is no network to sign in with
+        cmd = ["prepare", fw, "--name", name, "--no-game-center"] + (["--jailbreak"] if args.jailbreak else [])
             ipsw = find_ipsw(entry)
             if ipsw:
                 cmd += ["--ipsw", ipsw]
@@ -375,11 +376,8 @@ def push_record(record):
 # A one-button alert's button (iOS's push-notification notice, an app's first-run notice) in a portrait app, then
 # under a landscape app turned left and right: tried only while the game draws nothing.
 ALERT_BUTTONS = [(0.5, 0.63), (0.26, 0.5), (0.74, 0.5)]
-# The warm-up's taps after each launch: those, Game Center's sign-in Cancel (the bottom button of a portrait alert
-# with stacked buttons; iOS 6's sheet: top left), the lower button of a turned two-button alert (Location Services:
-# Cancel), then the OK buttons again for what a cancel brings up. A tap that lands on the game instead only changes
-# the warm-up, which is why measured runs don't tap blindly.
-WARM_TAPS = ALERT_BUTTONS + [(0.5, 0.715), (0.07, 0.04), (0.33, 0.66)] + ALERT_BUTTONS
+# The warm-up's taps after each launch: the OK positions, twice (iOS's push notice comes once per app).
+WARM_TAPS = ALERT_BUTTONS * 2
 # iPhone and iPod portrait; the iPad's panel scans landscape, its slider runs up the right edge in the scan's axes
 UNLOCK_SLIDES = [(0.2, 0.89, 0.95, 0.89), (0.94, 0.62, 0.94, 0.28), (0.22, 0.87, 0.95, 0.87), (0.93, 0.64, 0.93, 0.30)]
 
@@ -575,9 +573,9 @@ def table(result):
 
 
 def warm(args):
-    """Answer each game's first-run prompts once (iOS's push notice, Game Center's sign-in, which stops asking after
-    three cancels, and the like), then keep that state as the one runs start from: a tester's first launch of each
-    game, done before measuring. Desktop only; the phone gets the same state."""
+    """Answer each game's first-run prompts once (iOS's push notice and each game's own, through its steps), then keep
+    that state as the one runs start from: a tester's first launch of each game, done before measuring. Desktop
+    only; the phone gets the same state."""
     m = load_matrix(args.matrix)
     known = devices()
     out = WORK / "results" / ("warm-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -594,14 +592,22 @@ def warm(args):
             if not wait_for_home(s):
                 log(key, "never unlocked"); s.stop(); continue
             for g in games:
-                for i in range(3):
+                for i in range(2):
                     home(s)
                     if not c["firmware"].startswith("k48"):
                         s.tap(*ALERT_BUTTONS[0]); time.sleep(1.5)
                     unlock(s, 4)
                     if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
                         log(key, g["name"], "launch refused"); break
-                    time.sleep(min(g["settle"], 45) if i == 0 else 15)
+                    t0 = time.monotonic()
+                    for step in steps_for(g, c["firmware"]):
+                        if isinstance(step, (int, float)):
+                            time.sleep(step)
+                        elif len(step) == 2:
+                            s.tap(*step)
+                        elif len(step) == 5:
+                            s.swipe(*step)
+                    time.sleep(max(0, (min(g["settle"], 45) if i == 0 else 15) - (time.monotonic() - t0)))
                     for x, y in WARM_TAPS:
                         s.tap(x, y); time.sleep(1.5)
                     s.screenshot(out / f"{key}-{g['bundle']}-{i + 1}")

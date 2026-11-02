@@ -47,6 +47,8 @@ pub struct Options {
     pub bootrom: Option<PathBuf>,
     /// IPAs to install on the data volume (`--ipa`, repeated): benchmark devices start with their games.
     pub apps: Vec<PathBuf>,
+    /// Game Center's daemon disabled (`--no-game-center`, benchmark devices).
+    pub no_game_center: bool,
 }
 
 /// What the steps share; boards read and fill it.

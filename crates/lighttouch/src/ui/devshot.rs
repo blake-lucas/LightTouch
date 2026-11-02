@@ -84,6 +84,7 @@ pub fn start(app: &mut App) {
                 name: None,
                 jailbreak: false,
                 ipas: Vec::new(),
+                no_game_center: false,
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;

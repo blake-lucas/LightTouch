@@ -397,6 +397,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
             name: Some(app.prepare.name.clone()).filter(|n| !n.trim().is_empty()),
             jailbreak: app.prepare.jailbreak,
             ipas: Vec::new(),
+            no_game_center: false,
         });
         app.prepare.started = Some(Instant::now());
         app.prepare.step = Step::Progress;

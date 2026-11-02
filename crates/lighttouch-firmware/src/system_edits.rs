@@ -63,6 +63,9 @@ pub struct Options {
     pub quiet_services: bool,
     /// IPAs installed on the data volume (create --ipa; preinstall).
     pub apps: Vec<PathBuf>,
+    /// Game Center's daemon disabled (create --no-game-center): benchmark devices, whose games would otherwise open
+    /// on its sign-in prompt at every launch (there is no network to sign in with).
+    pub no_game_center: bool,
 }
 
 impl Default for Options {
@@ -84,6 +87,7 @@ impl Default for Options {
             keyboards: None,
             quiet_services: true,
             apps: Vec::new(),
+            no_game_center: false,
         }
     }
 }
@@ -177,6 +181,7 @@ pub const BT_JOB: &str = "System/Library/LaunchDaemons/com.apple.BTServer.plist"
 /// Jobs launchd starts at boot for services an emulated device has no use for, each Disabled where present: Apple's
 /// servers for them are gone or refuse these releases, or the hardware is absent (together ~12% of n81ap 6.1.6's
 /// first-start guest CPU). Not usbptpd: without it usbmux never enumerates. Not backupd: MobileBackup raises without it.
+pub const GAMED_JOB: &str = "System/Library/LaunchDaemons/com.apple.gamed.plist";
 pub const DEAD_SERVICE_JOBS: [&str; 13] = [
     "com.apple.imagent",
     "com.apple.imavagent",
@@ -457,6 +462,10 @@ pub fn build_k48(
             disable(&mut ed, j)?;
         }
         log(&format!("quiet services: {} jobs disabled", quieted.len()));
+    }
+    if o.no_game_center && ed.exists(GAMED_JOB) {
+        disable(&mut ed, GAMED_JOB)?;
+        log("Game Center: gamed disabled");
     }
     result.activation = Some(match activate(&mut ed, log) {
         Ok(r) => r,
