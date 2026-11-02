@@ -426,8 +426,9 @@ def run_game(s, g, out, tag, firmware, survey=False):
             s.frames_start(name + "-probe"); time.sleep(2)
             return len(s.frames_stop(name + "-probe")) >= 3
         if not drawing():
+            # one alert can lead to another (Game Center's sign-in, then "Game Center Selected"): a few rounds
             r["alert_taps"] = 0
-            for x, y in ALERT_BUTTONS:
+            for x, y in ALERT_BUTTONS * 3:
                 s.tap(x, y); r["alert_taps"] += 1; time.sleep(2)
                 if drawing():
                     break
