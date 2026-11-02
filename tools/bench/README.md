@@ -1,6 +1,6 @@
 # Game benchmark matrix
 
-Results now live in [docs/GAME-BENCHMARKS.md](../../docs/GAME-BENCHMARKS.md).
+Results: [docs/GAME-BENCHMARKS.md](../../docs/GAME-BENCHMARKS.md).
 
 `bench.py` measures games across guest configs (a device and iOS version) on any host: headless on the desktop
 (Linux, macOS, Windows: anything that runs the `lighttouch` command) and on an Android phone over ADB. Each run
@@ -10,6 +10,7 @@ percentiles, and how long it took to come to the front.
 ```sh
 tools/bench/bench.py fetch                      # each game's Legacy Store copy for each config (ipa/<firmware>/)
 tools/bench/bench.py prepare                    # one device per config, its games installed while it is prepared
+tools/bench/bench.py warm                       # each game's first-run prompts answered once; runs start from that
 tools/bench/bench.py run --host desktop         # headless, this computer
 ANDROID_SERIAL=192.168.1.55:40049 LT_PKG=org.lighttouch.android.bench tools/bench/bench.py run --host android
 tools/bench/bench.py report results/*/results.json
@@ -33,6 +34,12 @@ first-run prompts differ by version takes `"steps": {"<firmware id>": [...], "*"
   data volume while the device is built, before its first start, which registers them the way a restore with apps
   would. A dozen games add about half a minute to a preparation, against minutes each through the USB installer.
   `lighttouch fetch FIRMWARE QUERY --bundle ID --out DIR` downloads the store copy that runs on that firmware.
+- **First-run prompts.** Benchmark devices are prepared without Game Center (`prepare --no-game-center`): its
+  sign-in came up over the games at every launch, and there is no network to sign in with. `warm` then launches
+  each game twice on the desktop, runs its steps and taps iOS's push notice away, and keeps the state after a clean
+  shutdown; both hosts start every run from it. Measured runs only tap an alert's OK when a game draws nothing.
+- **iOS 6** registers only some of a dozen apps installed at once, so its configs split their games over devices
+  (`apps_per_device`).
 - **Desktop.** `lighttouch run RECORD --control` takes the session's commands as JSON lines on stdin as they come and
   prints every event as a JSON line on stdout (frames with their publish time, guest-agent answers, status).
 - **Android.** Debuggable builds take the same verbs as `BENCH` intents (`BenchControl.kt`) and answer on logcat (tag
