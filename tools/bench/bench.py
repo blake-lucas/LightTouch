@@ -360,7 +360,12 @@ def wait_for_home(s, seconds=300):
     else:
         return False
     time.sleep(8)  # let SpringBoard finish its launch work before the first gesture
-    for attempt in range(8):
+    return unlock(s)
+
+
+def unlock(s, attempts=8):
+    """Unlock if the lock screen is up (it comes back with Auto-Lock between games)."""
+    for attempt in range(attempts):
         status = s.guest(GUEST_LOCK_STATUS, timeout=5) or ""
         if "locked=0" in status:
             return True
@@ -400,11 +405,18 @@ def run_game(s, g, out, tag, firmware, survey=False):
     s.button(HOME); time.sleep(3)
     # A notice the last game raised (iOS's "Connect to iTunes to Use Push Notifications") stays up over the next one
     # until its OK: tap where it is, which on an iPhone or iPod Home screen is the gap between two icons.
-    if not firmware.startswith("k48"):
-        s.tap(*ALERT_BUTTONS[0]); time.sleep(1.5)
+    def clear():
+        if not firmware.startswith("k48"):
+            s.tap(*ALERT_BUTTONS[0]); time.sleep(1.5)
+        unlock(s, 4)
+    clear()
     started = time.monotonic()
     if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
-        r["status"] = "launch refused"; return r
+        # SpringBoard refuses while locked or under an alert: Home, clear, once more
+        s.button(HOME); time.sleep(2); clear()
+        started = time.monotonic()
+        if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
+            r["status"] = "launch refused"; s.screenshot(out / f"{tag}-refused"); return r
     while time.monotonic() - started < 60 and frontmost(s) != g["bundle"]:
         time.sleep(1)
     r["front_s"] = round(time.monotonic() - started, 1)
