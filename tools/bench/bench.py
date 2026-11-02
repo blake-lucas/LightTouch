@@ -440,7 +440,7 @@ def run_game(s, g, out, tag, firmware, survey=False):
         # SpringBoard refuses for a while at times (iOS 6: error 7, the app registered): Home, clear, again
         if tries == 4:
             r["status"] = "launch refused"; s.screenshot(out / f"{tag}-refused"); return r
-        tries += 1; home(s); time.sleep(5); clear()
+        home(s); time.sleep(5 * 2 ** (tries - 1)); clear(); tries += 1  # 5, 10, 20 s: a phone right after boot needs a while
         started = time.monotonic()
     r["launch_tries"] = tries
     while time.monotonic() - started < 60 and frontmost(s) != g["bundle"]:
