@@ -1,5 +1,5 @@
 {
- "about": "Baseline matrix: one Tested iOS version per device, popular games of the era. Each game is measured on the screen it settles on by itself (title, attract demo, flythrough) unless it has steps. settle: seconds from the launch request to the measurement; measure: seconds of frames recorded; steps: [x, y] taps, [x0, y0, x1, y1, ms] swipes and pauses in seconds, in normalized guest coordinates, run as soon as the game is in front (they count toward settle). Before each launch and when a game draws nothing, the harness also taps where a one-button iOS alert's OK sits.",
+ "about": "Baseline matrix: one Tested iOS version per device, popular games of the era. Each game is measured on the screen it settles on by itself (title, attract demo, flythrough) unless it has steps. settle: seconds from the launch request to the measurement; measure: seconds of frames recorded; steps: [x, y] taps, [x0, y0, x1, y1, ms] swipes and pauses in seconds, in normalized guest coordinates, run as soon as the game is in front (they count toward settle). Before each launch and when a game draws nothing, the harness also taps where a one-button iOS alert's OK sits. apps_per_device splits a config's games over several devices: iOS 6's first start registers only some of a dozen preinstalled apps.",
  "defaults": {
   "settle": 35,
   "measure": 20
@@ -19,11 +19,13 @@
   },
   {
    "firmware": "n81ap-10B500",
-   "name": "iPod touch 4G 6.1.6"
+   "name": "iPod touch 4G 6.1.6",
+   "apps_per_device": 6
   },
   {
    "firmware": "n90ap-10B329",
-   "name": "iPhone 4 6.1.3"
+   "name": "iPhone 4 6.1.3",
+   "apps_per_device": 6
   },
   {
    "firmware": "k48ap-9B206",

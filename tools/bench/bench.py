@@ -102,24 +102,38 @@ def prepare(args):
         ipas = sorted((WORK / "ipa" / fw).glob("*.ipa"))
         wanted = {g["bundle"] for g in selected(m["games"], args.game, "bundle")}
         ipas = [p for p in ipas if p.stem in wanted]
-        name = f"bench {c.get('name', fw)}" + (" JB" if args.jailbreak else "")
-        cmd = ["prepare", fw, "--name", name] + (["--jailbreak"] if args.jailbreak else [])
-        ipsw = find_ipsw(entry)
-        if ipsw:
-            cmd += ["--ipsw", ipsw]
-        for p in ipas:
-            cmd += ["--ipa", p]
-        log(key, f"preparing with {len(ipas)} apps", f"({ipsw or 'downloading the IPSW'})")
-        started = time.monotonic()
-        r = lt(*cmd)
-        found = re.search(r"added .* \(([0-9a-f]{32})\)", r.stdout)
-        if not found:
-            log(key, "prepare failed:", (r.stderr.strip().splitlines() or ["?"])[-1]); continue
-        known[key] = {"record": found[1], "name": name, "apps": [p.stem for p in ipas],
-                      "prepared_s": round(time.monotonic() - started, 1)}
-        DEVICES.write_text(json.dumps(known, indent=1) + "\n")
-        snapshot(found[1])
-        log(key, "prepared", found[1], f"in {known[key]['prepared_s']} s")
+        # iOS 6's first start registers only some of a dozen preinstalled apps (SpringBoard never lists the rest):
+        # such configs take their games over several devices (apps_per_device)
+        per = c.get("apps_per_device") or len(ipas) or 1
+        groups = [ipas[i:i + per] for i in range(0, len(ipas), per)] or [[]]
+        for k in [k for k in known if k.startswith(key + "#")]:
+            del known[k]
+        for n, group in enumerate(groups):
+            gkey = key if n == 0 else f"{key}#{n + 1}"
+            name = f"bench {c.get('name', fw)}" + (" JB" if args.jailbreak else "") + (f" ({n + 1})" if len(groups) > 1 else "")
+            cmd = ["prepare", fw, "--name", name] + (["--jailbreak"] if args.jailbreak else [])
+            ipsw = find_ipsw(entry)
+            if ipsw:
+                cmd += ["--ipsw", ipsw]
+            for p in group:
+                cmd += ["--ipa", p]
+            log(gkey, f"preparing with {len(group)} apps", f"({ipsw or 'downloading the IPSW'})")
+            started = time.monotonic()
+            r = lt(*cmd)
+            found = re.search(r"added .* \(([0-9a-f]{32})\)", r.stdout)
+            if not found:
+                log(gkey, "prepare failed:", (r.stderr.strip().splitlines() or ["?"])[-1]); continue
+            known[gkey] = {"record": found[1], "name": name, "apps": [p.stem for p in group],
+                           "prepared_s": round(time.monotonic() - started, 1)}
+            DEVICES.write_text(json.dumps(known, indent=1) + "\n")
+            snapshot(found[1])
+            log(gkey, "prepared", found[1], f"in {known[gkey]['prepared_s']} s")
+
+
+def config_devices(known, key):
+    """A config's devices in order: KEY, then KEY#2, KEY#3... when its games are split over several."""
+    return [(k, known[k]) for k in [key] + sorted((k for k in known if k.startswith(key + "#")),
+                                                  key=lambda k: int(k.split("#")[1])) if k in known]
 
 
 def selected(items, wanted, key):
@@ -482,39 +496,42 @@ def run(args):
     path = out / "results.json"
     for rnd in range(args.rounds):
         for c in selected(m["configs"], args.config, "firmware"):
-            key = c["firmware"] + ("-jb" if args.jailbreak else "")
-            dev = known.get(key)
-            if not dev:
-                log(key, "not prepared: bench.py prepare"); continue
-            games = [g for g in selected(m["games"], args.game, "bundle") if g["bundle"] in dev["apps"]]
-            cr = {"firmware": c["firmware"], "name": c.get("name", c["firmware"]), "jailbreak": args.jailbreak,
-                  "record": dev["record"], "round": rnd + 1, "games": []}
-            result["configs"].append(cr)
-            if args.host == "android":
-                push_record(dev["record"])
-            else:
-                restore_desktop(dev["record"])
-                if args.thermal:
-                    cr["battery_c_start"] = battery_c()
-            log(key, f"round {rnd + 1}: starting {dev['record']}")
-            s = (Android if args.host == "android" else Desktop)(dev["record"], out)
-            boot = time.monotonic()
-            if not wait_for_home(s):
-                cr["error"] = "never unlocked"; log(key, "never unlocked"); s.screenshot(out / f"{key}-unlock")
-            else:
-                cr["home_s"] = round(time.monotonic() - boot, 1)
-                for g in games:
-                    log(key, "game", g["name"])
-                    gr = run_game(s, g, out, f"{key}-r{rnd + 1}-{g['bundle']}", c["firmware"], args.survey)
-                    cr["games"].append(gr)
-                    log(key, g["name"], json.dumps({k: v for k, v in gr.items() if k not in ("bundle", "name")}))
-                    path.write_text(json.dumps(result, indent=1) + "\n")
-                    if not s.running():
-                        cr["error"] = f"guest stopped during {g['name']}"; break
-            cr["clean_stop"] = s.stop()
-            path.write_text(json.dumps(result, indent=1) + "\n")
-            if args.host == "android" and args.cool:
-                time.sleep(args.cool)
+            ckey = c["firmware"] + ("-jb" if args.jailbreak else "")
+            devs = config_devices(known, ckey)
+            if not devs:
+                log(ckey, "not prepared: bench.py prepare"); continue
+            for key, dev in devs:
+                games = [g for g in selected(m["games"], args.game, "bundle") if g["bundle"] in dev["apps"]]
+                if not games:
+                    continue
+                cr = {"firmware": c["firmware"], "name": c.get("name", c["firmware"]), "jailbreak": args.jailbreak,
+                      "record": dev["record"], "round": rnd + 1, "games": []}
+                result["configs"].append(cr)
+                if args.host == "android":
+                    push_record(dev["record"])
+                    if args.thermal:
+                        cr["battery_c_start"] = battery_c()
+                else:
+                    restore_desktop(dev["record"])
+                log(key, f"round {rnd + 1}: starting {dev['record']}")
+                s = (Android if args.host == "android" else Desktop)(dev["record"], out)
+                boot = time.monotonic()
+                if not wait_for_home(s):
+                    cr["error"] = "never unlocked"; log(key, "never unlocked"); s.screenshot(out / f"{key}-unlock")
+                else:
+                    cr["home_s"] = round(time.monotonic() - boot, 1)
+                    for g in games:
+                        log(key, "game", g["name"])
+                        gr = run_game(s, g, out, f"{key}-r{rnd + 1}-{g['bundle']}", c["firmware"], args.survey)
+                        cr["games"].append(gr)
+                        log(key, g["name"], json.dumps({k: v for k, v in gr.items() if k not in ("bundle", "name")}))
+                        path.write_text(json.dumps(result, indent=1) + "\n")
+                        if not s.running():
+                            cr["error"] = f"guest stopped during {g['name']}"; break
+                cr["clean_stop"] = s.stop()
+                path.write_text(json.dumps(result, indent=1) + "\n")
+                if args.host == "android" and args.cool:
+                    time.sleep(args.cool)
     print(table(result))
     (out / "results.md").write_text(table(result) + "\n")
     log("results:", path)
@@ -544,8 +561,7 @@ def push(args):
     m = load_matrix(args.matrix)
     known = devices()
     for c in selected(m["configs"], args.config, "firmware"):
-        dev = known.get(c["firmware"] + ("-jb" if args.jailbreak else ""))
-        if dev:
+        for _, dev in config_devices(known, c["firmware"] + ("-jb" if args.jailbreak else "")):
             push_record(dev["record"])
 
 
