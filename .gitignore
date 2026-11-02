@@ -18,6 +18,7 @@ docs/*
 !docs/PERFORMANCE.md
 !docs/TODO.md
 !docs/GUEST-BENCHMARKS.md
+!docs/GAME-BENCHMARKS.md
 !docs/BUILDING.md
 !docs/PROFILING.md
 !docs/COMPATIBILITY.md

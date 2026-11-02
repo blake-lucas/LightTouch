@@ -1,5 +1,7 @@
 # Game benchmark matrix
 
+Results now live in [docs/GAME-BENCHMARKS.md](../../docs/GAME-BENCHMARKS.md).
+
 `bench.py` measures games across guest configs (a device and iOS version) on any host: headless on the desktop
 (Linux, macOS, Windows: anything that runs the `lighttouch` command) and on an Android phone over ADB. Each run
 reports, per config and game, whether the game launched and stayed up, its frame rate, 1% low and frame-time
