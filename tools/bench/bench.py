@@ -418,12 +418,14 @@ def run_game(s, g, out, tag, firmware, survey=False):
         unlock(s, 4)
     clear()
     started = time.monotonic()
-    if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
-        # SpringBoard refuses while locked or under an alert: Home, clear, once more
-        home(s); clear()
-        started = time.monotonic()
-        if s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
+    tries = 1
+    while s.guest(GUEST_LAUNCH_APP, g["bundle"], timeout=20) is None:
+        # SpringBoard refuses for a while at times (iOS 6: error 7, the app registered): Home, clear, again
+        if tries == 4:
             r["status"] = "launch refused"; s.screenshot(out / f"{tag}-refused"); return r
+        tries += 1; home(s); time.sleep(5); clear()
+        started = time.monotonic()
+    r["launch_tries"] = tries
     while time.monotonic() - started < 60 and frontmost(s) != g["bundle"]:
         time.sleep(1)
     r["front_s"] = round(time.monotonic() - started, 1)
