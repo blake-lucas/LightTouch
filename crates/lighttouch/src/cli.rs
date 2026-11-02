@@ -2,10 +2,18 @@
 //!
 //! ```text
 //! lighttouch list
-//! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME]
-//! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
+//! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME] [--jailbreak] [--ipa FILE]...
+//! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
+//! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
 //! ```
+//!
+//! `prepare --ipa` installs apps while the device is prepared (benchmark devices). `run --control` (tools/bench)
+//! takes command JSON lines on stdin as they come and prints every event as a JSON line on stdout; it runs until
+//! stopped (`{"cmd":"stop"}`) unless --seconds is given. `run --frames` writes one line per
+//! guest frame, `<sequence> <published_ns>`, for frame-time statistics. `fetch` downloads the Legacy Store copy of the
+//! first app matching the query (and the bundle ID, if given) that runs on the firmware, as DIR/<bundle id>.ipa, and
+//! prints `<bundle id>\t<version>\t<name>\t<path>`.
 //!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
 //! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
@@ -22,7 +30,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "run" | "prepare")
+    matches!(command, "list" | "run" | "prepare" | "fetch")
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -31,6 +39,7 @@ pub fn main(args: &[String]) -> i32 {
         "list" => list(&dirs),
         "run" => run(&dirs, &args[1..]),
         "prepare" => prepare(dirs, &args[1..]),
+        "fetch" => fetch(&dirs, &args[1..]),
         _ => unreachable!(),
     };
     match result {
@@ -65,8 +74,14 @@ fn list(dirs: &DataDirs) -> Result<(), String> {
 
 fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     let record = args.first().ok_or("run needs a record id")?.clone();
-    let seconds: f64 = option(args, "--seconds").and_then(|s| s.parse().ok()).unwrap_or(120.0);
+    let control = args.iter().any(|a| a == "--control");
+    let default_seconds = if control { f64::INFINITY } else { 120.0 };
+    let seconds: f64 = option(args, "--seconds").and_then(|s| s.parse().ok()).unwrap_or(default_seconds);
     let shot = option(args, "--shot").map(PathBuf::from);
+    let mut frame_log = match option(args, "--frames") {
+        Some(path) => Some(std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| format!("{path}: {e}"))?)),
+        None => None,
+    };
     let script = match option(args, "--script") {
         Some(path) => parse_script(&std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?)?,
         None => Vec::new(),
@@ -130,6 +145,23 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             }
         }
     });
+    let (live_tx, live) = std::sync::mpsc::channel::<Command>();
+    if control {
+        std::thread::spawn(move || {
+            for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                match serde_json::from_str::<Command>(line.trim()) {
+                    Ok(command) => {
+                        if live_tx.send(command).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) if !line.trim().is_empty() => eprintln!("bad command {line:?}: {e}"),
+                    Err(_) => {}
+                }
+            }
+        });
+    }
+    let mut stdout = std::io::stdout();
     let started = Instant::now();
     let mut stop_sent = false;
     let mut script = script.into_iter().peekable();
@@ -144,6 +176,10 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             let (_, command) = script.next().unwrap();
             send(&mut stdin, &command);
         }
+        while let Ok(command) = live.try_recv() {
+            stop_sent |= matches!(command, Command::Stop);
+            send(&mut stdin, &command);
+        }
         if !stop_sent && started.elapsed().as_secs_f64() >= seconds {
             // A missing frame is reported, but the guest still gets its shutdown.
             if let Some(Err(e)) = shot.as_ref().map(|path| save_frame(&frames, path)) {
@@ -155,10 +191,20 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         }
         // Wake for the next script line on time: lines sent in a burst reach the engine closer together than a
         // person's input would.
-        let next = script.peek().map_or(0.1, |(at, _)| (at - started.elapsed().as_secs_f64()).clamp(0.001, 0.1));
-        match rx.recv_timeout(Duration::from_secs_f64(next)) {
-            Ok(Event::Frame { .. }) => {
+        let next = script.peek().map_or(if control { 0.01 } else { 0.1 }, |(at, _)| {
+            (at - started.elapsed().as_secs_f64()).clamp(0.001, 0.1)
+        });
+        let received = rx.recv_timeout(Duration::from_secs_f64(next));
+        if control && let Ok(event) = &received {
+            let _ = stdout.write_all(event.to_line().as_bytes());
+            let _ = stdout.flush();
+        }
+        match received {
+            Ok(Event::Frame { sequence, published_ns }) => {
                 frame_count += 1;
+                if let Some(log) = frame_log.as_mut() {
+                    let _ = writeln!(log, "{sequence} {published_ns}");
+                }
                 if last_frame_log.elapsed() >= Duration::from_secs(10) {
                     eprintln!("[{:6.1}] {frame_count} frames", started.elapsed().as_secs_f64());
                     last_frame_log = Instant::now();
@@ -184,8 +230,47 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    if let Some(mut log) = frame_log {
+        let _ = log.flush();
+    }
     let status = child.wait().map_err(|e| e.to_string())?;
     eprintln!("worker exited with {status}; {frame_count} frames");
+    Ok(())
+}
+
+/// Download the Legacy Store's copy of an app for a firmware (benchmark devices get theirs with `prepare --ipa`).
+fn fetch(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
+    use lighttouch_catalog::{catalog::Catalog, store, target::Target};
+    let (Some(id), Some(query)) = (args.first(), args.get(1)) else {
+        return Err("fetch needs a firmware id and a query, e.g. fetch n81ap-10B500 \"Jetpack Joyride\" --out DIR".into());
+    };
+    let out = PathBuf::from(option(args, "--out").ok_or("fetch needs --out DIR")?);
+    let firmware = Catalog::get().find(id).ok_or_else(|| format!("{id} is not in the catalog"))?;
+    let target = Target::of(&firmware.product_type, &firmware.version)
+        .ok_or_else(|| format!("{}: no store target", firmware.product_type))?;
+    let bundle = option(args, "--bundle");
+    let apps = store::search(query, &target).map_err(|e| format!("store: {e}"))?;
+    for a in &apps {
+        let why = a.incompatibility().unwrap_or_default();
+        eprintln!("  {} {} {:?} {why}", a.bundle_id, a.version.as_deref().unwrap_or(""), a.name);
+    }
+    let app = apps
+        .into_iter()
+        .filter(|a| bundle.as_ref().is_none_or(|b| &a.bundle_id == b))
+        .find(|a| a.incompatibility().is_none())
+        .ok_or_else(|| format!("store: nothing for {query:?} runs on {id}"))?;
+    let scratch = dirs.cache().join("fetch");
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let ipa = store::download(&app, &target, &scratch, &mut |_, _| true).map_err(|e| format!("store: {e}"))?;
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let path = out.join(format!("{}.ipa", app.bundle_id));
+    if std::fs::rename(&ipa, &path).is_err() {
+        std::fs::copy(&ipa, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if let Some(dir) = ipa.parent() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    println!("{}\t{}\t{}\t{}", app.bundle_id, app.version.unwrap_or_default(), app.name, path.display());
     Ok(())
 }
 
@@ -244,6 +329,7 @@ fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
         bootrom: option(args, "--rom").map(PathBuf::from),
         name: option(args, "--name"),
         jailbreak: args.iter().any(|a| a == "--jailbreak"),
+        ipas: args.windows(2).filter(|w| w[0] == "--ipa").map(|w| PathBuf::from(&w[1])).collect(),
     };
     let mut model = lighttouch_model::Model::new(dirs, Resources::locate(), std::sync::Arc::new(|| {}));
     lighttouch_model::prepare::availability(&model.resources)?;

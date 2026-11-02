@@ -43,6 +43,8 @@ pub const LT_GUEST_NETWORK_TRUST: u32 = 7;
 pub const LT_GUEST_NETWORK_ROUTE: u32 = 8;
 pub const LT_GUEST_NETWORK_TRUST_CHUNK: u32 = 9;
 pub const LT_GUEST_NETWORK_ROUTE_CHUNK: u32 = 10;
+pub const LT_GUEST_LAUNCH_APP: u32 = 11;
+pub const LT_GUEST_LOCK_STATUS: u32 = 12;
 
 macro_rules! abi_struct {
     ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {

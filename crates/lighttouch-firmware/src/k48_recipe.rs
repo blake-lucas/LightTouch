@@ -386,6 +386,7 @@ impl Board for K48Board {
         options.cydia = c.cydia.clone();
         options.language = c.o.language.clone();
         options.keyboards = c.o.keyboards.clone();
+        options.apps = c.o.apps.clone();
         let uuid_hash = files::sha256(format!("k48 data volume {}", c.seed).as_bytes());
         let mut uuid = [0u8; 8];
         uuid.copy_from_slice(&hex::decode(&uuid_hash[..16]).unwrap_or_default());

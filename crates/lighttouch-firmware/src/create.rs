@@ -45,6 +45,8 @@ pub struct Options {
     pub keyboards: Option<Vec<String>>,
     /// The iPod touch 2G's SecureROM, for its keybag boot.
     pub bootrom: Option<PathBuf>,
+    /// IPAs to install on the data volume (`--ipa`, repeated): benchmark devices start with their games.
+    pub apps: Vec<PathBuf>,
 }
 
 /// What the steps share; boards read and fill it.

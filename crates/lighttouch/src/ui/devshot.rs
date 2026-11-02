@@ -83,6 +83,7 @@ pub fn start(app: &mut App) {
                 bootrom: None,
                 name: None,
                 jailbreak: false,
+                ipas: Vec::new(),
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;

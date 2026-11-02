@@ -391,7 +391,7 @@ fn create(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     };
     let (Some(ipsw), Some(out)) = (path("--ipsw"), path("--out")) else {
-        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE]");
+        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE] [--ipa FILE]...");
         return ExitCode::from(64);
     };
     let setup = || -> lighttouch_firmware::error::Result<Options> {
@@ -438,6 +438,7 @@ fn create(args: &[String]) -> ExitCode {
             language: option(args, "--language"),
             keyboards: option(args, "--keyboards").map(|k| k.split(',').map(str::to_string).collect()),
             bootrom: path("--bootrom"),
+            apps: args.windows(2).filter(|w| w[0] == "--ipa").map(|w| PathBuf::from(&w[1])).collect(),
         })
     };
     let options = match setup() {

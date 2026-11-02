@@ -396,6 +396,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
             bootrom: app.prepare.bootrom.clone(),
             name: Some(app.prepare.name.clone()).filter(|n| !n.trim().is_empty()),
             jailbreak: app.prepare.jailbreak,
+            ipas: Vec::new(),
         });
         app.prepare.started = Some(Instant::now());
         app.prepare.step = Step::Progress;

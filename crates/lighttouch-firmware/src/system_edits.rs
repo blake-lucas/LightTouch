@@ -61,6 +61,8 @@ pub struct Options {
     pub keyboards: Option<Vec<String>>,
     /// Disable the jobs of services that cannot work on an emulated device (recipe option quiet_services).
     pub quiet_services: bool,
+    /// IPAs installed on the data volume (create --ipa; preinstall).
+    pub apps: Vec<PathBuf>,
 }
 
 impl Default for Options {
@@ -81,6 +83,7 @@ impl Default for Options {
             language: None,
             keyboards: None,
             quiet_services: true,
+            apps: Vec::new(),
         }
     }
 }
@@ -516,6 +519,13 @@ pub fn build_k48(
         assets::seed_preinstalled_assets(&mut dv, "", product_major, &product_version, &product_build, region)?
     {
         log(&format!("preinstalled assets: {} installed as mobileassetd would at the first boot", installed.len()));
+    }
+    for ipa in &o.apps {
+        let app = crate::preinstall::install(&mut dv, "", ipa, &work.join("apps"))?;
+        log(&format!("app: {} ({}) in /private/var/{}", app.name, app.bundle_id, app.container));
+    }
+    if !o.apps.is_empty() {
+        crate::preinstall::skip_reorder_tip(&mut dv, "")?;
     }
     let paths = dv.walk("")?;
     remove_junk(&mut dv)?;

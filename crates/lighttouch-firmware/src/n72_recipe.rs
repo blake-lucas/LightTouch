@@ -441,6 +441,14 @@ impl N72Board {
             owners.extend(jb.root.into_iter().map(|p| (0, p)));
             owners.extend(jb.mobile.into_iter().map(|p| (501, p)));
         }
+        for ipa in &c.o.apps {
+            let app = crate::preinstall::install(ed, "private/var", ipa, &c.work.join("apps"))?;
+            report.insert(format!("app {}", app.bundle_id), json!(app.container));
+            owners.extend(app.paths.into_iter().map(|p| (501, p)));
+        }
+        if !c.o.apps.is_empty() {
+            owners.push((501, crate::preinstall::skip_reorder_tip(ed, "private/var")?));
+        }
         if appsync {
             // patch-appsync-dylib.sh
             let log = |s: &str| c.log(s);

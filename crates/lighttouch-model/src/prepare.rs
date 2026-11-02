@@ -31,6 +31,9 @@ pub struct PrepareRequest {
     /// Install the jailbreak (afc2 + Cydia) during preparation.
     #[serde(default)]
     pub jailbreak: bool,
+    /// IPAs installed while the device is prepared (benchmark devices: `lighttouch prepare --ipa`).
+    #[serde(default)]
+    pub ipas: Vec<PathBuf>,
 }
 
 /// Whether this build can prepare devices, and why not.
@@ -250,6 +253,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         reporter,
         &mut timings,
         request.jailbreak,
+        &request.ipas,
     );
     let _ = std::fs::remove_dir_all(&cache);
     if let Err(e) = result {
@@ -318,6 +322,7 @@ fn run_firmwarekit(
     reporter: &Reporter,
     timings: &mut Vec<(String, f64)>,
     jailbreak: bool,
+    ipas: &[PathBuf],
 ) -> Result<(), String> {
     let engine = ctx.resources.engine();
     let mut command = Command::new(ctx.resources.firmwarekit());
@@ -343,6 +348,9 @@ fn run_firmwarekit(
     }
     if jailbreak {
         command.arg("--jailbreak");
+    }
+    for ipa in ipas {
+        command.arg("--ipa").arg(ipa);
     }
     if let Some(sibling) = sibling {
         command.arg("--sibling-ipsw").arg(sibling);

@@ -402,7 +402,12 @@ typedef enum {
     /* argument: decimal offset, final 0/1, base64 bytes (at most 2048).
      * Only the fixed bundled network helper destinations are permitted. */
     LT_GUEST_NETWORK_TRUST_CHUNK = 9,
-    LT_GUEST_NETWORK_ROUTE_CHUNK = 10
+    LT_GUEST_NETWORK_ROUTE_CHUNK = 10,
+    /* argument: an installed app's bundle ID (any app, not only com.apple.*): benchmark harnesses open games by ID
+     * instead of tapping icons. */
+    LT_GUEST_LAUNCH_APP = 11,
+    /* No argument; output "locked=0|1 passcode=0|1": whether the lock screen is up (benchmarks unlock until 0). */
+    LT_GUEST_LOCK_STATUS = 12
 } lt_guest_operation;
 typedef struct {
     uint32_t size, version;

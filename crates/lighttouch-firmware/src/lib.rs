@@ -65,6 +65,7 @@ pub mod oneshot;
 pub mod page_nand;
 pub mod plistedit;
 pub mod posio;
+pub mod preinstall;
 pub mod prefs1x;
 pub mod progress;
 pub mod rootfs_patch;

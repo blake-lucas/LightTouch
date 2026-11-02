@@ -1222,6 +1222,13 @@ lt_status lt_runtime_guest_request(lt_runtime *r, const lt_guest_request *c, uin
             lt::require(argument.rfind("com.apple.", 0) == 0, "only builtin app IDs allowed");
             op = "launch";
             break;
+        case LT_GUEST_LAUNCH_APP:
+            op = "launch";
+            break;
+        case LT_GUEST_LOCK_STATUS:
+            op = "lockstatus";
+            lt::require(argument.empty(), "lockstatus takes no argument");
+            break;
         case LT_GUEST_LAUNCH_GYRO_PROBE:
             lt::require(r->guest_capabilities & QEMU_IOS_CAP_GYRO,
                         "guest gyro unavailable; authorized gyro workload remains blocked", LT_UNSUPPORTED);
