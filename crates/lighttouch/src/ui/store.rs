@@ -129,11 +129,21 @@ fn more_menu(app: &mut App, ui: &mut Ui) {
                 app.model.store.install_file(file);
             }
         }
+        let idle = connected && !app.model.store.watching;
+        let why = if app.model.store.watching { "Recording the launch…" } else { "Why did the last app quit?" };
+        if ui.add_enabled(idle, egui::Button::new(widgets::icon_label(icons::INFO, why, None))).clicked() {
+            let logs = app.model.device_logs();
+            app.model.store.show_last_crash(logs);
+        }
         if ui
-            .add_enabled(connected, egui::Button::new(widgets::icon_label(icons::INFO, "Show last crash", None)))
+            .add_enabled(
+                idle,
+                egui::Button::new(widgets::icon_label(icons::INFO, "Record the next app launch (30 s)", None)),
+            )
             .clicked()
         {
-            app.model.store.show_last_crash();
+            let logs = app.model.device_logs();
+            app.model.store.watch_launch(logs);
         }
     });
 }
@@ -304,15 +314,23 @@ fn notices(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     if let Some(crash) = app.model.store.crash.clone() {
         widgets::card(ui, &p, |ui| {
-            ui.label(RichText::new("Last crash").font(theme::title()));
+            let title = if app.model.store.watching { "Recording the launch…" } else { "Why it quit" };
+            ui.label(RichText::new(title).font(theme::title()));
             ui.add_space(6.0);
-            egui::ScrollArea::vertical().max_height(260.0).id_salt("crash").show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(320.0).id_salt("crash").show(ui, |ui| {
                 ui.add(egui::Label::new(RichText::new(&crash).monospace().size(12.0)).wrap());
             });
             ui.add_space(4.0);
-            if widgets::text_button(ui, &p, "Close").clicked() {
-                app.model.store.dismiss_crash();
-            }
+            ui.horizontal(|ui| {
+                if widgets::text_button(ui, &p, "Copy").clicked() {
+                    ui.ctx().copy_text(crash.clone());
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::text_button(ui, &p, "Close").clicked() {
+                        app.model.store.dismiss_crash();
+                    }
+                });
+            });
         });
         ui.add_space(12.0);
     }

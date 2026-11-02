@@ -14,6 +14,29 @@ use std::time::{Duration, Instant};
 const AFC: &str = "com.apple.afc";
 const INSTPROXY: &str = "com.apple.mobile.installation_proxy";
 const CRASH_REPORTS: &str = "com.apple.crashreportcopymobile";
+const SYSLOG: &str = "com.apple.syslog_relay";
+/// What the system log keeps of a launch: the lines that explain one (dyld's complaints, SpringBoard or the kernel
+/// killing an app, a missing service). The Android app service keeps the same.
+const LOG_KEYWORDS: &[&str] = &[
+    "dyld",
+    "libobjc",
+    "SpringBoard",
+    "backboardd",
+    "launchd",
+    "Jetsam",
+    "watchdog",
+    "EXC_",
+    "Termination",
+    "code signature",
+    "sandbox",
+    "assert",
+    "abnormal",
+    "not found",
+    "no such file",
+    "unable to",
+    "failed",
+    "error",
+];
 const STAGING: &str = "PublicStaging";
 /// One AFC write each, answered before the next: at 64 KiB the iPod touch 2G spent ~20 ms of every write waiting.
 const UPLOAD_CHUNK: usize = 1 << 20;
@@ -157,6 +180,48 @@ impl Guest {
         let _ = afc.close(handle);
         let text = String::from_utf8_lossy(&text).into_owned();
         Ok(Some((name, report_body(&text))))
+    }
+
+    /// Up to `window` of the guest's own system log, trimmed to the lines that explain a launch. It is what an app
+    /// writes in the seconds before iOS writes its crash report, and the only record of a launch that never got far
+    /// enough to crash. `cancelled` returning true ends it early.
+    pub fn system_log(&mut self, window: Duration, cancelled: &dyn Fn() -> bool) -> Result<String> {
+        // Its read timeout is how often the deadline and `cancelled` are checked.
+        let mut conn = self.service(SYSLOG, Duration::from_secs(1))?;
+        let deadline = Instant::now() + window;
+        let mut text = Vec::new();
+        let mut chunk = [0u8; 16 << 10];
+        while Instant::now() < deadline && !cancelled() {
+            match conn.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    text.extend_from_slice(&chunk[..n]);
+                    // Bounded: an idle launch prints little, a busy one prints faster than anything reads it.
+                    if text.len() > 512 << 10 {
+                        text.drain(..text.len() - (256 << 10));
+                    }
+                }
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(e) => return Err(Error(format!("the system log: {e}"))),
+            }
+        }
+        // Lines end in a newline, each message in a NUL.
+        let text = String::from_utf8_lossy(&text);
+        let lines: Vec<&str> = text.split(['\0', '\n']).map(str::trim).filter(|l| !l.is_empty()).collect();
+        let explained: Vec<&str> = lines
+            .iter()
+            .copied()
+            .filter(|l| {
+                let lower = l.to_lowercase();
+                LOG_KEYWORDS.iter().any(|k| lower.contains(&k.to_lowercase()))
+            })
+            .collect();
+        let chosen = if explained.is_empty() {
+            &lines[lines.len().saturating_sub(40)..]
+        } else {
+            &explained[explained.len().saturating_sub(60)..]
+        };
+        Ok(chosen.join("\n"))
     }
 
     /// Install `ipa` (checked by `lighttouch_catalog::ipa::prepare`, which also gives its `unpacked` size) and

@@ -1,6 +1,7 @@
 //! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod crash;
 pub mod inspector;
 pub mod network;
 pub mod notices;
@@ -228,6 +229,14 @@ impl Model {
         match &self.session {
             Some(s) => self.devices.iter().find(|d| d.id == s.record_id),
             None => self.selected(),
+        }
+    }
+
+    /// The running device's emulator log (its session's) and serial console, for "why did the last app quit".
+    pub fn device_logs(&self) -> crash::DeviceLogs {
+        crash::DeviceLogs {
+            engine: self.session.as_ref().map(|s| s.log_path.clone()),
+            serial: self.current().map(|d| d.record.state_path.join("serial.log")),
         }
     }
 

@@ -279,6 +279,8 @@ pub struct Store {
     /// The install queue as of the last tick.
     pub queue: Vec<QueueItem>,
     pub crash: Option<String>,
+    /// The guest's system log is being recorded for the next app launch.
+    pub watching: bool,
     /// The app being removed from the guest, and why the last removal failed.
     pub removing: Option<String>,
     pub remove_error: Option<String>,
@@ -366,6 +368,7 @@ impl Store {
             browser: Browser::default(),
             queue: Vec::new(),
             crash: None,
+            watching: false,
             removing: None,
             remove_error: None,
             usb_problem: None,
@@ -633,7 +636,10 @@ impl Store {
                     self.set_installed(apps);
                 }
             }
-            Message::Crash(text) => self.crash = Some(text),
+            Message::Crash(text) => {
+                self.crash = Some(text);
+                self.watching = false;
+            }
             Message::Removed { socket, bundle_id, result } => {
                 self.removing = None;
                 if self.guest_socket.as_ref() != Some(&socket) {
@@ -790,8 +796,9 @@ impl Store {
         self.installer.clear_finished();
     }
 
-    /// Read why the last app quit: the useful lines of the guest's newest crash report.
-    pub fn show_last_crash(&mut self) {
+    /// Why the last app quit: the guest's newest crash report read for where it died, with the device's own logs
+    /// (`crash::report`).
+    pub fn show_last_crash(&mut self, logs: crate::crash::DeviceLogs) {
         let Some(socket) = self.guest_socket.clone() else {
             self.crash = Some("Start the device to read its crash reports.".into());
             return;
@@ -799,11 +806,38 @@ impl Store {
         self.crash = Some("Reading the device's crash reports…".into());
         self.spawn("store-crash", move || {
             let text = match Guest::connect(&socket, Duration::from_secs(30)).and_then(|mut g| g.last_crash()) {
-                Ok(Some((name, body))) => format!("{name}\n\n{}", crash_summary(&body)),
-                Ok(None) => "The device has no crash reports.".into(),
+                Ok(last) => crate::crash::report(&logs, last.as_ref().map(|(n, b)| (n.as_str(), b.as_str())), None),
                 Err(e) => format!("Couldn't read crash reports: {e}"),
             };
             Message::Crash(text)
+        });
+    }
+
+    /// The crash report is written after the fact; the system log is not, so it has to be listened to while the app
+    /// starts. Records 30 s of it, then reads the report and the logs into the same answer.
+    pub fn watch_launch(&mut self, logs: crate::crash::DeviceLogs) {
+        if self.watching {
+            return;
+        }
+        let Some(socket) = self.guest_socket.clone() else {
+            self.crash = Some("Start the device to record its system log.".into());
+            return;
+        };
+        self.watching = true;
+        self.crash = Some("Recording the system log for 30 seconds. Open the app now and wait for it to quit.".into());
+        self.spawn("store-launch-log", move || {
+            let mut guest = match Guest::connect(&socket, Duration::from_secs(30)) {
+                Ok(guest) => guest,
+                Err(e) => return Message::Crash(format!("Couldn't record the system log: {e}")),
+            };
+            let log = guest.system_log(Duration::from_secs(30), &|| false);
+            let last = guest.last_crash().ok().flatten();
+            let text =
+                crate::crash::report(&logs, last.as_ref().map(|(n, b)| (n.as_str(), b.as_str())), log.as_deref().ok());
+            Message::Crash(match log {
+                Err(e) => format!("Couldn't record the system log ({e}).\n\n{text}"),
+                Ok(_) => text,
+            })
         });
     }
 
@@ -1273,32 +1307,4 @@ impl queue::Work<InstallRequest> for Installer {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
-}
-
-/// The lines of a crash report that say why an app quit.
-fn crash_summary(body: &str) -> String {
-    const KEEP: &[&str] = &[
-        "Process",
-        "Date/Time",
-        "OS Version",
-        "Exception Type",
-        "Exception Codes",
-        "Crashed Thread",
-        "Dyld Error Message",
-        "  Symbol not found",
-        "  Referenced from",
-        "  Expected in",
-        "Termination Reason",
-        "Application Specific Information",
-    ];
-    let lines: Vec<&str> = body.lines().collect();
-    let dyld = lines.iter().position(|l| l.starts_with("Dyld Error Message"));
-    let mut kept: Vec<&str> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let near_dyld = dyld.is_some_and(|d| i > d && i <= d + 3);
-        if (KEEP.iter().any(|k| line.starts_with(k)) || near_dyld) && !kept.contains(line) {
-            kept.push(line);
-        }
-    }
-    if kept.is_empty() { body.chars().take(1500).collect() } else { kept.join("\n") }
 }
