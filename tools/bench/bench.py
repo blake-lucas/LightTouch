@@ -270,7 +270,12 @@ class Android:
         self.cmd("swipe", f"{x0} {y0} {x1} {y1} {ms}")
 
     def running(self):
-        return self.cmd("status").split(" ")[0] in ("state=starting", "state=running")
+        state = self.cmd("status").split(" ")[0]
+        # A first start checks a freshly copied base and can read "stopped" meanwhile: only "failed", or "stopped"
+        # once that has had time, means the guest is gone.
+        if state == "state=stopped" and time.monotonic() - self.started < 240:
+            return True
+        return state in ("state=starting", "state=running")
 
     def frames_start(self, name):
         self.cmd("frames", f"start {name}")
