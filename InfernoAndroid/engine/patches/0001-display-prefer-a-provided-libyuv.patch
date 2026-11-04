@@ -1,0 +1,19 @@
+diff --git a/hw/display/meson.build b/hw/display/meson.build
+index 629efad..50a21dd 100644
+--- a/hw/display/meson.build
++++ b/hw/display/meson.build
+@@ -1,7 +1,12 @@
+ hw_display_modules = {}
+ 
+-libyuv = subproject('libyuv')
+-libyuv_dep = libyuv.get_variable('yuv_dep')
++# A libyuv the build machine provides (an Android cross build has no CMake
++# bridge for the subproject) wins; otherwise the subproject.
++libyuv_dep = dependency('libyuv', required: false, method: 'pkg-config')
++if not libyuv_dep.found()
++  libyuv = subproject('libyuv')
++  libyuv_dep = libyuv.get_variable('yuv_dep')
++endif
+ system_ss.add(when: 'CONFIG_APPLE_SOC', if_true: [libyuv_dep, files('apple_displaypipe_v4.c', 'apple_displaypipe_v2.c', 'synopsys_mipi_dsim.c', 'apple_scaler.c')])
+ system_ss.add(when: 'CONFIG_DDC', if_true: files('i2c-ddc.c'))
+ system_ss.add(when: 'CONFIG_EDID', if_true: files('edid-generate.c', 'edid-region.c'))

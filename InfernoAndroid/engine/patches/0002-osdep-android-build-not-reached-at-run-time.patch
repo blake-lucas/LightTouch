@@ -1,0 +1,19 @@
+diff --git a/include/qemu/osdep.h b/include/qemu/osdep.h
+index 10f3453..ab2227b 100644
+--- a/include/qemu/osdep.h
++++ b/include/qemu/osdep.h
+@@ -329,7 +329,13 @@ extern "C"
+      */
+     G_NORETURN
+     void QEMU_ERROR("code path is reachable") qemu_build_not_reached_always(void);
+-#if defined(__OPTIMIZE__) && !defined(__NO_INLINE__)
++/*
++ * Inferno's sources use qemu_build_not_reached() in switch defaults that only
++ * Apple's clang folds away; the NDK's clang 19 cannot prove them dead and
++ * stops the build. On Android they become the run-time check an unoptimised
++ * build already makes.
++ */
++#if defined(__OPTIMIZE__) && !defined(__NO_INLINE__) && !defined(__ANDROID__)
+     #define qemu_build_not_reached() qemu_build_not_reached_always()
+ #else
+     #define qemu_build_not_reached() assert_not_reached()
