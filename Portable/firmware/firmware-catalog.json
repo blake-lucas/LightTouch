@@ -11105,5 +11105,37 @@
   "recipe": {"name": "n90", "version": 2, "storage": "16g", "system_mib": 1664, "data_size": "partition", "boot": "kboot", "options": {"ca_ogl": true, "appsync": true, "web_proxy": true}},
   "emulator": {"min_protocol": 1},
   "estimates": {"prepared_bytes": 1905891738, "peak_bytes": 4604616680, "seconds": 90}
+ },
+ {
+  "id": "n41ap-14G60",
+  "board": "n41ap",
+  "product_type": "iPhone5,1",
+  "version": "10.3.3",
+  "build": "14G60",
+  "released": "2017-07-19",
+  "status": "experimental",
+  "status_note": "The kernel starts; no storage, display or touch yet (docs/TODO.md, iPhone 5).",
+  "media": ["Music", "Photos", "Videos"],
+  "source": {"kind": "ipsw", "url": "http://appldnld.apple.com/ios10.3.3/091-23384-20170719-CA966D80-6977-11E7-9F96-3E9100BA0AE3/iPhone_4.0_32bit_10.3.3_14G60_Restore.ipsw", "sha1": "db8a4d22bda6b9a88b429eb439b5721ceb4e9fd3", "bytes": 2000885186},
+  "keys": {},
+  "recipe": {"name": "n41", "version": 1, "storage": "16g", "system_mib": 2560, "data_size": "partition", "boot": "kboot", "options": {}},
+  "emulator": {"min_protocol": 1},
+  "estimates": {"prepared_bytes": 3221225472, "peak_bytes": 7516192768, "seconds": 300}
+ },
+ {
+  "id": "n42ap-14G60",
+  "board": "n42ap",
+  "product_type": "iPhone5,2",
+  "version": "10.3.3",
+  "build": "14G60",
+  "released": "2017-07-19",
+  "status": "experimental",
+  "status_note": "The kernel starts; no storage, display or touch yet (docs/TODO.md, iPhone 5).",
+  "media": ["Music", "Photos", "Videos"],
+  "source": {"kind": "ipsw", "url": "http://appldnld.apple.com/ios10.3.3/091-23384-20170719-CA966D80-6977-11E7-9F96-3E9100BA0AE3/iPhone_4.0_32bit_10.3.3_14G60_Restore.ipsw", "sha1": "db8a4d22bda6b9a88b429eb439b5721ceb4e9fd3", "bytes": 2000885186},
+  "keys": {},
+  "recipe": {"name": "n41", "version": 1, "storage": "16g", "system_mib": 2560, "data_size": "partition", "boot": "kboot", "options": {}},
+  "emulator": {"min_protocol": 1},
+  "estimates": {"prepared_bytes": 3221225472, "peak_bytes": 7516192768, "seconds": 300}
  }
 ]}

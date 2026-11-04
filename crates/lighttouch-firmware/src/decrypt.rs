@@ -69,6 +69,9 @@ pub fn decrypt(ipsw: &Ipsw, entry: &Entry, dir: &Path, rootfs: bool, log: &dyn F
     let mut plain_tail = false;
     let kernel = if apple8900::is_container(&kc_raw) {
         lzss::complzss(&apple8900::body(&kc_raw)?)?
+    } else if !has_kbag(&kc_raw)? {
+        // iOS 10 on the A6 (and 5c): the IPSW's img3s carry no KBAG, the payload is in the clear.
+        lzss::complzss(&img3::payload(&kc_raw)?)?
     } else {
         let (iv, key) = img3_key(&kc_path)?;
         match img3::decrypt(&kc_raw, &iv, &key, false).and_then(|d| lzss::complzss(&d)) {
@@ -121,11 +124,22 @@ pub fn decrypt(ipsw: &Ipsw, entry: &Entry, dir: &Path, rootfs: bool, log: &dyn F
     }
     if rootfs {
         let os = path("OS")?;
+        let out = dir.join("rootfs.dmg");
+        // iOS 10's root filesystem is a plain UDIF (no FileVault "encrcdsa" header): nothing to decrypt.
+        if entry.key_for_path(&os).is_err() {
+            ipsw.extract(&os, &out)?;
+            let mut head = [0u8; 8];
+            std::io::Read::read_exact(&mut std::fs::File::open(&out)?, &mut head)?;
+            if &head != b"encrcdsa" {
+                files.push("rootfs.dmg".to_string());
+                return Ok(Decrypted { plain_tail, paths: comp, files });
+            }
+            std::fs::remove_file(&out)?;
+        }
         let k = entry.key_for_path(&os)?;
         let key = from_hex(&k.key).filter(|k| k.len() == 36).ok_or_else(|| {
             Error::new(Code::KeyMissing, format!("{}: no key for the root filesystem {os}", entry.id))
         })?;
-        let out = dir.join("rootfs.dmg");
         ipsw.stream(&os, |reader| vfdecrypt::decrypt(reader, &out, &key))?;
         files.push("rootfs.dmg".to_string());
     }

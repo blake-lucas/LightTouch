@@ -181,6 +181,17 @@ impl DeviceTree {
         Ok(())
     }
 
+    /// Clears every property's placeholder flag (bit 31 of its length word), as iBoot does when it hands the tree over:
+    /// the IPSW marks the properties iBoot is to fill that way. Kernels up to iOS 9 mask the bit when they walk the
+    /// tree; iOS 10's (xnu-3789 DTFindEntry) adds the raw length and walks off the end.
+    pub fn clear_placeholder_flags(&mut self) {
+        let offsets: Vec<usize> = self.props.values().flat_map(|p| p.values().map(|s| s.offset)).collect();
+        for at in offsets {
+            let len = u32le(&self.data, at + 32) & 0x7FFF_FFFF;
+            self.data[at + 32..at + 36].copy_from_slice(&len.to_le_bytes());
+        }
+    }
+
     fn reparse(&mut self) -> Result<()> {
         self.props.clear();
         self.nodes.clear();
