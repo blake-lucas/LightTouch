@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A phone outline with a notch and a flame on its screen. The safe zone is the middle 66dp of 108. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- body -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:pathData="M44,30h20a7,7 0,0 1,7 7v34a7,7 0,0 1,-7 7h-20a7,7 0,0 1,-7 -7v-34a7,7 0,0 1,7 -7z" />
+    <!-- notch -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M48.5,31.5h11a1.5,1.5 0,0 1,1.5 1.5v0.5a2,2 0,0 1,-2 2h-10a2,2 0,0 1,-2 -2v-0.5a1.5,1.5 0,0 1,1.5 -1.5z" />
+    <!-- flame -->
+    <path
+        android:fillColor="#FFFF9F59"
+        android:pathData="M54,42c0,5 -7,8.5 -7,15.5a7,7 0,0 0,14 0c0,-3.5 -2,-5.5 -3,-7c-0.5,2.5 -1.8,3.5 -3,3.5c1,-3.5 0.5,-8.5 -1,-12z" />
+    <path
+        android:fillColor="#FFFFD27A"
+        android:pathData="M54,52.5c0.4,2.5 -3,4 -3,6.5a3,3 0,0 0,6 0c0,-1.5 -1,-2.5 -1.5,-3.2c-0.4,1 -0.9,1.4 -1.4,1.4c0.4,-1.5 0.3,-3.2 -0.1,-4.7z" />
+</vector>

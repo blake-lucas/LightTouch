@@ -1,0 +1,59 @@
+name: InfernoAndroid APK
+
+# Builds the Inferno engine for Android arm64 and the app around it, and
+# attaches the APK to the run. Only by hand, from the Actions tab.
+# No iOS image, firmware or key is involved: those are the user's own.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq ninja-build pkg-config autoconf automake libtool m4 python3-pip
+          pip3 install --user --break-system-packages meson
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache engine dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            InfernoAndroid/build/deps-prefix
+            InfernoAndroid/build/cross-android-arm64.txt
+          key: inferno-deps-${{ env.NDK_VERSION }}-${{ hashFiles('InfernoAndroid/engine/build-deps.sh') }}
+
+      - name: Engine dependencies
+        run: |
+          if [ ! -e InfernoAndroid/build/deps-prefix/.done-libyuv ]; then InfernoAndroid/engine/build-deps.sh; fi
+
+      - name: Engine
+        run: InfernoAndroid/engine/build-engine.sh
+
+      - name: APK
+        working-directory: InfernoAndroid
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inferno-android
+          path: InfernoAndroid/app/build/outputs/apk/release/*.apk

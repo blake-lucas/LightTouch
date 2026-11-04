@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Night-blue into violet, like the launcher's accent. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="315"
+        android:startColor="#FF0E1120"
+        android:centerColor="#FF2B1B6B"
+        android:endColor="#FF5B2A86" />
+</shape>
