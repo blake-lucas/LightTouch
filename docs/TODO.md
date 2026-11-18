@@ -182,8 +182,8 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   0.5,0.60 for landscape apps, 0.57,0.52 for portrait).
 - [ ] Epic Citadel intro judder fix (engine `dev/a4-video`: pictures written in decode order) is checked by buffer
   timing on the iPad only; watch a movie on the 4G/iPhone 4 before merging.
-- [ ] Infinity Blade at 12 fps on the Poco (iPad) against 30 on v0.0.13, independent of the judder fix: measure a
-  release build with serial 46, then with `LT_LDST_LIVE=off` / `LT_LDM_BLOCK=off`.
+- [x] Infinity Blade "12 fps" on the Poco (iPad) was the game paused behind the push alert. With the alert
+  dismissed its title flythrough runs 28.4 fps (27.6 with `LT_LDST_LIVE=off` and `LT_LDM_BLOCK=off`), as before.
 - [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
   The LDM/STM fault-midway checks (tcg-ldm f, g) fail on the old and new engine alike: find out whether it's the
   harness.
