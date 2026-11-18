@@ -168,6 +168,16 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
   reaches 60, so ADPF is not causing it (it is worth 1.7× here). Next: per-frame gaps against the
   BQL hold log, to see whether the slow seconds line up with main-loop work (audio DMA, LCD).
+- [x] Upstream qemu-ios's November fixes (engine `6da406a458`, branch `dev/upstream-nov`: 29 commits, no iPhone 5 work):
+  LDM/STM moving 4 or 2 words at once (`LT_LDM_BLOCK=off` for the old pairs), aarch64 loads and stores that keep
+  guest registers live (`LT_LDST_LIVE=off`), macOS MAP_JIT switches only on change, storage writes off the BQL, the
+  A4 JPEG interrupt, display stride and VXD fixes, iOS 6 Safari text, matrix palette, Cover Flow art, Wi-Fi country,
+  GL and snapshot hardening; guest package serial 46. Linux: five boards boot and stop cleanly; Doodle Jump on the 3G
+  and 4G at 59-60 fps with serial 46. Left out: 8ffe1bebb3 and the H2FMI async pair (they need the iPhone 5 code),
+  the slirp destination-class rule (our patch stack diverged).
+- [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
+  The LDM/STM fault-midway checks (tcg-ldm f, g) fail on the old and new engine alike: find out whether it's the
+  harness.
 - [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
