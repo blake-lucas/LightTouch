@@ -1,7 +1,7 @@
 //! Full screen: the guest centred on black, with a button bar docked below it when there is room, or floating over
 //! it (hiding after a few seconds without the mouse) when there is not. Esc leaves.
 use super::device_frame::{self, Skin};
-use super::{App, Dialog, Page, home, icons, overlay, theme, widgets};
+use super::{App, Dialog, Page, icons, overlay, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
 use std::time::{Duration, Instant};
@@ -17,16 +17,22 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, Color32::BLACK);
     let board = app.model.current().map(|d| d.board.clone());
-    let aspect = Skin::for_board(board.as_deref()).shown_aspect(app.model.settings.rotation);
-    let fit = home::fit_aspect(full, aspect);
+    let skin = Skin::for_board(board.as_deref());
+    let rotation = app.model.settings.rotation;
+    let real = device_frame::real_scale(&skin, &app.model.settings, ui.ctx());
+    let fit = device_frame::place(&skin, full, rotation, false, real).screen;
     let docked = (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
-    let screen = if docked { home::fit_aspect(full.shrink2(vec2(0.0, BAR)), aspect) } else { fit };
+    let screen = if docked {
+        device_frame::place(&skin, full.shrink2(vec2(0.0, BAR)), rotation, false, real).screen
+    } else {
+        fit
+    };
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
     let editing = app.model.gamepads.editing;
     app.guest.show(ui, screen, &mut app.model, running && !asleep && !editing);
     if running {
-        overlay::show(ui, &app.model, screen, 1.0);
+        overlay::show(ui, &app.model, screen.intersect(full), 1.0);
         super::controller::overlay(app, ui, screen);
     }
     super::controller::step(app, ui, screen);

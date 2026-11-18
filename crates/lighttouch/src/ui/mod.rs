@@ -8,6 +8,7 @@ mod guest;
 mod home;
 pub mod icons;
 mod inspector;
+mod ipad_size;
 mod licenses;
 mod network;
 mod overlay;
@@ -35,6 +36,8 @@ pub enum Page {
     Licenses,
     /// Settings → Network.
     Network,
+    /// Settings → iPad size (its unsaved measure is `App::ipad_size`).
+    IpadSize,
     /// The frame inspector (the guest is paused; its state is `App::inspector`).
     Inspector,
     Setup(setup::Step),
@@ -80,6 +83,7 @@ pub struct App {
     pub licenses: licenses::LicenseState,
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
+    pub ipad_size: ipad_size::IpadSizeState,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -245,6 +249,7 @@ impl App {
             licenses: licenses::LicenseState::default(),
             inspector: None,
             controller: controller::ControllerUi::default(),
+            ipad_size: Default::default(),
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
@@ -664,6 +669,7 @@ impl eframe::App for App {
                     Page::Settings => settings::show(self, ui),
                     Page::Licenses => licenses::show(self, ui),
                     Page::Network => network::show(self, ui),
+                    Page::IpadSize => ipad_size::show(self, ui),
                     Page::Inspector => inspector::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),

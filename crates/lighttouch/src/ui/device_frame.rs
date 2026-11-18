@@ -3,7 +3,7 @@
 use eframe::egui::{Color32, CornerRadius, Mesh, Painter, Pos2, Rect, Shape, Stroke, Vec2, epaint, pos2, vec2};
 use lighttouch_model::rotation::Rotation;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Skin {
     pub width: f32,
     pub height: f32,
@@ -150,8 +150,12 @@ const MARGIN: f32 = 3.0;
 
 pub fn layout(skin: &Skin, space: Rect) -> Layout {
     let scale = (space.width() / (skin.width + 2.0 * MARGIN)).min(space.height() / (skin.height + 2.0 * MARGIN));
-    let outer =
-        Rect::from_center_size(space.center(), vec2(skin.width + 2.0 * MARGIN, skin.height + 2.0 * MARGIN) * scale);
+    layout_at(skin, space.center(), scale)
+}
+
+/// The device drawn at `scale` points per millimetre, centred on `center`.
+pub fn layout_at(skin: &Skin, center: Pos2, scale: f32) -> Layout {
+    let outer = Rect::from_center_size(center, vec2(skin.width + 2.0 * MARGIN, skin.height + 2.0 * MARGIN) * scale);
     let mm = |x: f32, y: f32| outer.min + vec2(x, y) * scale;
     let body = Rect::from_min_size(mm(MARGIN, MARGIN), vec2(skin.width, skin.height) * scale);
     let screen = Rect::from_min_size(
@@ -185,6 +189,16 @@ pub fn layout_turned(skin: &Skin, space: Rect, rotation: Rotation) -> Layout {
     }
     let center = space.center();
     let upright = layout(skin, Rect::from_center_size(center, vec2(space.height(), space.width())));
+    turn(upright, center, rotation)
+}
+
+/// `layout_at` for the device turned to `rotation`.
+pub fn layout_turned_at(skin: &Skin, center: Pos2, scale: f32, rotation: Rotation) -> Layout {
+    let upright = layout_at(skin, center, scale);
+    if rotation.landscape() { turn(upright, center, rotation) } else { upright }
+}
+
+fn turn(upright: Layout, center: Pos2, rotation: Rotation) -> Layout {
     let turn = |r: Rect| {
         let corner = |p: Pos2| {
             let (dx, dy) = rotation.turn(p.x - center.x, p.y - center.y);
@@ -199,6 +213,63 @@ pub fn layout_turned(skin: &Skin, space: Rect, rotation: Rotation) -> Layout {
         side: upright.side.map(|(id, rect, hit)| (id, turn(rect), turn(hit))),
         ..upright
     }
+}
+
+/// Where the screen goes in `space`, and the drawn device around it when there is one.
+pub struct Placed {
+    pub screen: Rect,
+    pub device: Option<Layout>,
+}
+
+/// Fit the device (or only its screen) into `space`, or at `real` points per millimetre when the device shows at its
+/// real size. At real size the screen is centred in `space` and may be larger than it, and the drawn device around it
+/// usually is: the caller crops both to `space`, so the screen is the last part cut off.
+pub fn place(skin: &Skin, space: Rect, rotation: Rotation, frame: bool, real: Option<f32>) -> Placed {
+    match real {
+        None if frame => {
+            let layout = layout_turned(skin, space, rotation);
+            Placed { screen: layout.screen, device: Some(layout) }
+        }
+        None => {
+            let aspect = skin.shown_aspect(rotation);
+            let (w, h) = if space.width() / space.height() > aspect {
+                (space.height() * aspect, space.height())
+            } else {
+                (space.width(), space.width() / aspect)
+            };
+            Placed { screen: Rect::from_center_size(space.center(), vec2(w, h)), device: None }
+        }
+        Some(scale) => {
+            // The whole device centred when it fits, else its screen.
+            let layout = layout_turned_at(skin, space.center(), scale, rotation);
+            let fits = frame && space.expand(0.5).contains_rect(layout.body);
+            let layout = if fits { layout } else { shifted(layout, space.center() - layout.screen.center()) };
+            Placed { screen: layout.screen, device: frame.then_some(layout) }
+        }
+    }
+}
+
+/// Every part of a layout moved by `by`.
+fn shifted(layout: Layout, by: Vec2) -> Layout {
+    Layout {
+        body: layout.body.translate(by),
+        screen: layout.screen.translate(by),
+        home: layout.home.translate(by),
+        side: layout.side.map(|(id, rect, hit)| (id, rect.translate(by), hit.translate(by))),
+        ..layout
+    }
+}
+
+/// Points per millimetre for showing this device at its real size, when that's on and applies to it (iPads).
+pub fn real_scale(
+    skin: &Skin,
+    settings: &lighttouch_model::settings::Settings,
+    ctx: &eframe::egui::Context,
+) -> Option<f32> {
+    if *skin != Skin::IPAD {
+        return None;
+    }
+    settings.ipad_px_per_mm().map(|d| lighttouch_model::real_size::points_per_mm(d, ctx.pixels_per_point()))
 }
 
 /// Draw the device (everything except the screen contents). `pressed` darkens held buttons.

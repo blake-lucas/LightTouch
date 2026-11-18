@@ -120,30 +120,36 @@ impl GuestView {
         Some(Color32::from_rgb((sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8))
     }
 
+    /// Draw the newest frame into `rect`, turned to `rotation`. Returns false when there is none.
+    pub fn paint(&self, painter: &egui::Painter, rect: Rect, rotation: lighttouch_model::rotation::Rotation) -> bool {
+        let Some(texture) = self.texture.as_ref() else { return false };
+        // Each corner shows the guest pixel the rotation puts there.
+        let turned = self.scan_turned();
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        for corner in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
+            let u = ((corner.x - rect.left()) / rect.width()) as f64;
+            let v = ((corner.y - rect.top()) / rect.height()) as f64;
+            let (x, y) = rotation.to_scan(u, v, turned);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: corner,
+                uv: egui::pos2(x as f32, y as f32),
+                color: Color32::WHITE,
+            });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+        true
+    }
+
     /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
     /// as on the device: the engine sends no frames then, so the last one would otherwise stay up.
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &mut Model, interactive: bool) -> egui::Response {
         let response = ui.interact(rect, ui.scope_id().with("guest-screen"), Sense::click_and_drag());
         ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
         let asleep = model.session.as_ref().is_some_and(|s| s.display_asleep());
-        if let Some(texture) = self.texture.as_ref().filter(|_| !asleep) {
-            // Each corner shows the guest pixel the rotation puts there.
-            let rotation = model.settings.rotation;
-            let turned = self.scan_turned();
-            let mut mesh = egui::Mesh::with_texture(texture.id());
-            for corner in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
-                let u = ((corner.x - rect.left()) / rect.width()) as f64;
-                let v = ((corner.y - rect.top()) / rect.height()) as f64;
-                let (x, y) = rotation.to_scan(u, v, turned);
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: corner,
-                    uv: egui::pos2(x as f32, y as f32),
-                    color: Color32::WHITE,
-                });
-            }
-            mesh.add_triangle(0, 1, 2);
-            mesh.add_triangle(0, 2, 3);
-            ui.painter().add(egui::Shape::mesh(mesh));
+        if !asleep {
+            self.paint(ui.painter(), rect, model.settings.rotation);
         }
         if interactive {
             self.pointer_input(ui, rect, &response, model);

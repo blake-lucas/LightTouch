@@ -104,6 +104,10 @@ pub struct Settings {
     pub controller_preset: Option<String>,
     /// Controllers keep acting while another window is in front.
     pub controller_background: bool,
+    /// iPads show at the real device's size (Settings → iPad size), using `display`.
+    pub ipad_real_size: bool,
+    /// The display's measured density, for `ipad_real_size`.
+    pub display: Option<crate::real_size::DisplayMeasure>,
 }
 
 impl Default for Settings {
@@ -129,6 +133,8 @@ impl Default for Settings {
             rotation: crate::rotation::Rotation::Portrait,
             controller_preset: None,
             controller_background: false,
+            ipad_real_size: false,
+            display: None,
         }
     }
 }
@@ -139,6 +145,11 @@ impl Settings {
             std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
         settings.network = settings.network.sanitized(crate::network::Day::today());
         settings
+    }
+
+    /// The display's density in physical pixels per millimetre when iPads show at their real size.
+    pub fn ipad_px_per_mm(&self) -> Option<f32> {
+        self.display.filter(|_| self.ipad_real_size).map(|d| crate::real_size::clamp(d.px_per_mm))
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {

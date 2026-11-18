@@ -22,6 +22,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let recording = app.model.recording_status();
             let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
             let mut toggle_recording = false;
+            let mut open_ipad_size = false;
+            let ipad_summary = super::ipad_size::summary(app);
             let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Display");
@@ -54,11 +56,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::PHONE,
                     "Show the device",
-                    "Draw the iPod or iPhone around its screen",
+                    "Draw the iPod, iPhone or iPad around its screen",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.device_frame);
                     },
                 );
+                widgets::setting_row(ui, &p, super::ipad_size::TABLET, "iPad size", ipad_summary, |ui| {
+                    if widgets::tonal(ui, &p, "Open").clicked() {
+                        open_ipad_size = true;
+                    }
+                });
                 widgets::setting_row(
                     ui,
                     &p,
@@ -333,6 +340,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             });
             ui.add_space(28.0);
 
+            if open_ipad_size {
+                super::ipad_size::open(app);
+            }
             if toggle_recording {
                 app.model.toggle_recording();
             }

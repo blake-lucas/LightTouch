@@ -8,6 +8,7 @@ pub mod network;
 pub mod notices;
 pub mod prepare;
 pub mod queue;
+pub mod real_size;
 pub mod rotation;
 pub mod session;
 pub mod settings;

@@ -18,26 +18,30 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let board = app.model.current().map(|d| d.board.clone());
     let skin = Skin::for_board(board.as_deref());
     let device_space = space.shrink2(vec2(24.0, 16.0));
-    let screen = if app.model.settings.device_frame {
-        let layout = device_frame::layout_turned(&skin, device_space, app.model.settings.rotation);
-        device_frame::paint(ui.painter(), &skin, &layout, |b| app.guest.is_held(b));
-        hardware_buttons(app, ui, &layout);
-        layout.screen
-    } else {
-        fit_aspect(device_space, skin.shown_aspect(app.model.settings.rotation))
-    };
+    let rotation = app.model.settings.rotation;
+    let real = device_frame::real_scale(&skin, &app.model.settings, ui.ctx());
+    let placed = device_frame::place(&skin, device_space, rotation, app.model.settings.device_frame, real);
+    // A device at its real size can be larger than the room: it is cropped to it (buttons cut off can't be
+    // pressed), and touches still land where they would on the whole screen.
+    let mut view = ui.new_child(egui::UiBuilder::new().id_salt("device-view").max_rect(space));
+    view.set_clip_rect(space.intersect(ui.clip_rect()));
+    if let Some(layout) = &placed.device {
+        device_frame::paint(view.painter(), &skin, layout, |b| app.guest.is_held(b));
+        hardware_buttons(app, &mut view, layout);
+    }
+    let screen = placed.screen;
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
     let editing = app.model.gamepads.editing;
-    app.guest.show(ui, screen, &mut app.model, running && !asleep && !editing);
+    app.guest.show(&mut view, screen, &mut app.model, running && !asleep && !editing);
     if running && app.model.settings.overlay_in_device_view {
-        overlay::show(ui, &app.model, screen, 0.85);
+        overlay::show(&mut view, &app.model, screen.intersect(space), 0.85);
     }
     if running {
-        super::controller::overlay(app, ui, screen);
+        super::controller::overlay(app, &mut view, screen);
     }
-    super::controller::step(app, ui, screen);
-    state_card(app, ui, screen);
+    super::controller::step(app, &mut view, screen);
+    state_card(app, &mut view, screen.intersect(space));
 
     if active {
         let dock = Rect::from_min_max(egui::pos2(space.left(), space.bottom()), ui.max_rect().max);
@@ -136,15 +140,6 @@ fn glow(ui: &Ui, rect: Rect, color: Color32) {
         mesh.add_triangle(0, 1 + i, 1 + (i + 1) % steps as u32);
     }
     ui.painter().with_clip_rect(rect).add(egui::Shape::mesh(mesh));
-}
-
-pub fn fit_aspect(space: Rect, aspect: f32) -> Rect {
-    let (w, h) = if space.width() / space.height() > aspect {
-        (space.height() * aspect, space.height())
-    } else {
-        (space.width(), space.width() / aspect)
-    };
-    Rect::from_center_size(space.center(), vec2(w, h))
 }
 
 /// Home and the side buttons on the drawn device: press and hold, like hardware.
