@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Which devices and iOS versions work
+    url: https://github.com/blake-lucas/LightTouch/blob/main/docs/COMPATIBILITY.md
+    about: The devices and iOS versions that are tested, and what's known not to work yet.

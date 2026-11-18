@@ -1,0 +1,72 @@
+name: App or game report
+description: An iOS app or game that won't install, quits, looks wrong or runs slowly
+labels: [compatibility]
+body:
+  - type: input
+    id: app
+    attributes:
+      label: App and its version
+      description: For example "Doodle Jump 1.4.2". Say whether it came from the Store screen or your own IPA.
+    validations:
+      required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What goes wrong
+      options:
+        - Won't install
+        - Quits when opened
+        - Quits later
+        - Looks wrong (missing or broken graphics)
+        - Runs slowly or stutters
+        - No sound or wrong sound
+        - Controls don't work
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LightTouch version
+      description: From Settings › About, or the release you downloaded (for example "v0.0.14").
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Phone or computer
+      description: For example "Poco F3" or "Ryzen 7 3700X with an RTX 2080, Windows 11".
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Emulated device and iOS version, and whether it's jailbroken
+      description: For example "iPod touch 4G, iOS 6.1.6, not jailbroken".
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: >
+        Where in the app it happens and what you see. If it quits, paste what "Why did it quit?" says. For speed,
+        the frame rate you see and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots or a short video help most with graphics. Please don't attach IPAs, firmware or personal data.
