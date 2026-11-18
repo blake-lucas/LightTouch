@@ -342,28 +342,14 @@ fn drag_to(action: &mut Action, handle: Handle, u: f32, v: f32, view: &View, scr
     }
 }
 
-/// While the layout is being edited: what to do, and Done, along the top of the screen.
+/// While the layout is being edited: Done, at the top of the screen.
 fn edit_banner(app: &mut App, ui: &mut Ui, screen: Rect) {
     let p = app.palette;
-    let area = Rect::from_center_size(
-        pos2(screen.center().x, screen.top() + 30.0),
-        vec2(screen.width().min(300.0) - 16.0, 40.0),
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
-        Frame::new()
-            .fill(p.container.gamma_multiply(0.94))
-            .corner_radius(CornerRadius::same(20))
-            .inner_margin(Margin { left: 14, right: 4, top: 4, bottom: 4 })
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Drag spots to place them").size(12.5));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if pill_button(ui, &p, "Done", true).clicked() {
-                            app.model.gamepads.editing = false;
-                        }
-                    });
-                });
-            });
+    let area = Rect::from_center_size(pos2(screen.center().x, screen.top() + 28.0), vec2(screen.width(), 32.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Center)), |ui| {
+        if pill_button(ui, &p, "Done", true).clicked() {
+            app.model.gamepads.editing = false;
+        }
     });
 }
 
@@ -1057,7 +1043,7 @@ fn bindings(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// "Bindings", with placing the spots and adding a binding beside it. Returns the binding picked to add.
+/// "Bindings", with editing the layout (moving the spots on the screen) and adding a binding beside it. Returns the binding picked to add.
 fn bindings_header(app: &mut App, ui: &mut Ui) -> Option<Action> {
     let p = app.palette;
     let has = app.model.gamepads.active.is_some();
@@ -1082,12 +1068,12 @@ fn bindings_header(app: &mut App, ui: &mut Ui) -> Option<Action> {
             });
             let editing = app.model.gamepads.editing;
             let running = app.model.session.as_ref().is_some_and(|s| s.phase.active());
-            let label = if editing { "Done placing" } else { "Place on screen" };
+            let label = if editing { "Done" } else { "Edit layout" };
             let r = ui
                 .add_enabled_ui(running || editing, |ui| pill_button(ui, &p, label, editing))
                 .inner
-                .on_hover_text("Drag the spots on the device's screen to where each input touches")
-                .on_disabled_hover_text("Start the device to place spots on its screen");
+                .on_hover_text("Move each binding's spot on the device's screen")
+                .on_disabled_hover_text("Start the device to edit the layout");
             if r.clicked() {
                 app.model.gamepads.editing = !editing;
                 app.model.gamepads.release(app.model.session.as_mut());
@@ -1337,7 +1323,7 @@ fn binding_settings(
             }
             row(ui, "Area", &mut |ui| {
                 if widgets::text_button(ui, p, "Whole screen")
-                    .on_hover_text("Or drag the area's corner with Place on screen")
+                    .on_hover_text("Or drag the area's corner in Edit layout")
                     .clicked()
                 {
                     *half = [0.5, 0.5];
