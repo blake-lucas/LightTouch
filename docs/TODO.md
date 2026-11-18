@@ -24,6 +24,10 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   The iPad on the Poco: Infinity Blade and Epic Citadel launched after Temple Run kept showing Temple Run's last frame
   (the desktop draws them), and Epic Citadel's intro movie judders as if frames came out of order (gameplay ~35-40 fps).
 - [ ] iPod touch 1G / original iPhone white screen: iBoot never boots the kernel after preparation.
+- [ ] iPhone 5 (n42ap, A6, iOS 10.3.4): upstream qemu-ios added it in November 2026 (s5l8950 machine, generic timer, AIC,
+  TLB and jump-cache work for iOS 10's process counts, `0ad2a354b5` and the commits around it; reviewed in the v0.0.14
+  upstream pull). Left out of our engine for now; pull it in, with its catalog and firmwarekit side, when we add the
+  device.
 - [ ] iPhone 3GS microphone records silence (the setting attaches the mic only to the A4 devices).
 - [ ] A validation run per target that a person doesn't have to watch, extending LT Bench and the
   compat harness (`tools/compat/`):
