@@ -1,7 +1,9 @@
 name: Guest packages
 
-# Builds the guest tools packages (armv6.itpack, armv7.itpack) from blake-lucas/qemu-ios on a GitHub macOS runner, so
-# a release doesn't need the development Mac. Runs when ci/guest-package-engine (the engine commit to build) or this
+# Builds the guest tools packages (armv6.itpack, armv7.itpack) and the full guest-tools set the apps bundle (the
+# packages plus the helpers firmwarekit installs when it prepares an IPSW: contrib/export-guest-artifacts.sh's
+# ipad-guest-tools, artifact "guest-tools") from blake-lucas/qemu-ios on a GitHub macOS runner, so a release doesn't
+# need the development Mac. Runs when ci/guest-package-engine (the engine commit to build) or this
 # file changes, or by hand. The packages are the run's artifact; scripts/build-release.sh takes them through
 # LT_GUEST_TOOLS.
 
@@ -94,6 +96,28 @@ jobs:
           echo "$ENGINE_REF" > "$OUT/ENGINE"
           (cd "$OUT" && shasum -a 256 armv6.itpack armv7.itpack | tee SHA256SUMS)
 
+      - name: Export the full guest-tools set
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/guest-export"
+          if ! ARMV6_SDK="$RUNNER_TEMP/guest-sdks/iPhoneOS3.1.3.sdk" IPAD_SDK="$RUNNER_TEMP/guest-sdks/iPhoneOS3.2.sdk" \
+               bash qemu-ios/contrib/export-guest-artifacts.sh "$OUT" > "$RUNNER_TEMP/guest-export.log" 2>&1; then
+            tail -200 "$RUNNER_TEMP/guest-export.log"
+            exit 1
+          fi
+          T="$OUT/ipad-guest-tools"
+          test -s "$T/armv6.itpack" && test -s "$T/armv7.itpack" && test -s "$T/it_seal"
+          cp qemu-ios/contrib/guest-package/VERSION "$T/VERSION"
+          echo "$ENGINE_REF" > "$T/ENGINE"
+          cp "$OUT/manifest.json" "$T/manifest.json"
+          ls -la "$T"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guest-tools
+          path: ${{ runner.temp }}/guest-export/ipad-guest-tools
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: guest-packages
@@ -112,6 +136,7 @@ jobs:
           name: guest-package-log
           path: |
             ${{ runner.temp }}/guest-package.log
+            ${{ runner.temp }}/guest-export.log
             ${{ runner.temp }}/guest-package/logs/
           if-no-files-found: ignore
           retention-days: 7
