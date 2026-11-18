@@ -175,6 +175,15 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   GL and snapshot hardening; guest package serial 46. Linux: five boards boot and stop cleanly; Doodle Jump on the 3G
   and 4G at 59-60 fps with serial 46. Left out: 8ffe1bebb3 and the H2FMI async pair (they need the iPhone 5 code),
   the slirp destination-class rule (our patch stack diverged).
+- [x] iPad: Infinity Blade / Epic Citadel stuck on Temple Run's frame. Upstream's 512 MiB GL cap counted suspended
+  games (TR 65 + IB 130 + EC 320 MiB); now 2 GiB (engine `2e10c356d0`), checked with the desktop cycle.
+- [ ] iOS's "Connect to iTunes to Use Push Notifications" alert pauses each game on an unactivated iPad until OK is
+  tapped (all versions). Decide whether to suppress it; the bench's alert taps miss on the iPad (OK sits at scan
+  0.5,0.60 for landscape apps, 0.57,0.52 for portrait).
+- [ ] Epic Citadel intro judder fix (engine `dev/a4-video`: pictures written in decode order) is checked by buffer
+  timing on the iPad only; watch a movie on the 4G/iPhone 4 before merging.
+- [ ] Infinity Blade at 12 fps on the Poco (iPad) against 30 on v0.0.13, independent of the judder fix: measure a
+  release build with serial 46, then with `LT_LDST_LIVE=off` / `LT_LDM_BLOCK=off`.
 - [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
   The LDM/STM fault-midway checks (tcg-ldm f, g) fail on the old and new engine alike: find out whether it's the
   harness.
