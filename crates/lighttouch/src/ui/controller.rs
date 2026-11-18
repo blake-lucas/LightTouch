@@ -38,6 +38,9 @@ pub struct ControllerUi {
     /// The Controller window had the keyboard last frame.
     window_focused: bool,
     asked_front: Option<Instant>,
+    /// Frames drawn since the window opened, and whether its title bar has been given the theme since it was shown.
+    frames: u32,
+    title_themed: bool,
 }
 
 /// Waiting for the input to bind: which binding and which of its inputs.
@@ -382,6 +385,8 @@ fn pill_button(ui: &mut Ui, p: &theme::Palette, text: &str, primary: bool) -> eg
 pub fn window(app: &mut App, ctx: &egui::Context) {
     if !app.controller.open {
         app.controller.window_focused = false;
+        app.controller.frames = 0;
+        app.controller.title_themed = false;
         return;
     }
     app.model.gamepads.start();
@@ -399,6 +404,15 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
         }
         app.controller.window_focused = ctx.input(|i| i.focused);
         let p = app.palette;
+        // egui gives a new window the theme on its first frame, before Windows shows it, and Windows then keeps the
+        // system's title bar (dark buttons on a dark bar in light mode) until the window is deactivated and activated
+        // again. Once it's up and focused, give it the theme again: that also repaints the title bar.
+        app.controller.frames = app.controller.frames.saturating_add(1);
+        if !app.controller.title_themed && app.controller.frames > 2 && app.controller.window_focused {
+            app.controller.title_themed = true;
+            let theme = if p.dark { egui::SystemTheme::Dark } else { egui::SystemTheme::Light };
+            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme));
+        }
         egui::CentralPanel::default().frame(Frame::new().fill(p.background).inner_margin(Margin::same(0))).show(
             ui,
             |ui| {
