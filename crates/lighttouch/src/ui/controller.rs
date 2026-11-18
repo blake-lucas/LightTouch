@@ -345,6 +345,8 @@ fn drag_to(action: &mut Action, handle: Handle, u: f32, v: f32, view: &View, scr
 /// While the layout is being edited: Done, at the top of the screen.
 fn edit_banner(app: &mut App, ui: &mut Ui, screen: Rect) {
     let p = app.palette;
+    // At the top of the part that shows: an iPad at its real size may be cropped.
+    let screen = screen.intersect(ui.clip_rect());
     let area = Rect::from_center_size(pos2(screen.center().x, screen.top() + 28.0), vec2(screen.width(), 32.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Center)), |ui| {
         if pill_button(ui, &p, "Done", true).clicked() {

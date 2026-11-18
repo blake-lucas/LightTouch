@@ -101,7 +101,7 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
     let ppp = ctx.pixels_per_point();
     let monitor = monitor_pixels(&ctx);
     let saved = app.model.settings.display;
-    let measure = |px_per_mm: f32| DisplayMeasure { px_per_mm, monitor };
+    let measure = |px_per_mm: f32| DisplayMeasure { px_per_mm, monitor, estimate: false };
 
     widgets::card(ui, &p, |ui| {
         let mut on = app.model.settings.ipad_real_size;
@@ -115,9 +115,9 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
         );
         if on != app.model.settings.ipad_real_size {
             app.model.settings.ipad_real_size = on;
-            // Turned on before any measure: the size shown here is the one to use.
+            // Turned on before any measure: the size shown here is the one to use, until one is saved.
             if on && saved.is_none() {
-                app.model.settings.display = Some(measure(*draft));
+                app.model.settings.display = Some(DisplayMeasure { estimate: true, ..measure(*draft) });
             }
         }
     });
@@ -130,11 +130,11 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
         let text = match reference {
             Reference::Card => {
                 "Hold a bank or ID card flat against the screen, its corner in the outline's top-left corner. Drag \
-                 until the outline's right edge meets the card's."
+                 the handle until the outline's right edge meets the card's."
             }
             Reference::Ruler => {
-                "Lay a ruler along the marks, its 0 on the first one. Drag until the last mark meets the same number \
-                 on the ruler."
+                "Lay a ruler along the marks, its 0 on the first one. Drag the handle until the last mark meets the \
+                 same number on the ruler."
             }
         };
         ui.label(widgets::muted(&p, text).size(12.5));
@@ -185,13 +185,13 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
         }
         ui.add_space(10.0);
 
-        let unsaved = saved.is_none_or(|s| (s.px_per_mm - *draft).abs() > 1e-4 || s.monitor != monitor);
+        let unsaved = saved.is_none_or(|s| s.estimate || (s.px_per_mm - *draft).abs() > 1e-4 || s.monitor != monitor);
         ui.horizontal(|ui| {
             if widgets::primary_enabled(ui, &p, "Save", unsaved).clicked() {
                 app.model.settings.display = Some(measure(*draft));
                 app.model.settings.ipad_real_size = true;
             }
-            if let Some(s) = saved.filter(|s| (s.px_per_mm - *draft).abs() > 1e-4) {
+            if let Some(s) = saved.filter(|s| !s.estimate && (s.px_per_mm - *draft).abs() > 1e-4) {
                 if widgets::text_button(ui, &p, "Back to saved").clicked() {
                     *draft = s.px_per_mm;
                 }
@@ -210,6 +210,8 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
                     .size(12.5)
                     .color(theme::WARNING),
                 );
+            } else if s.estimate {
+                ui.label(widgets::muted(&p, "Using an estimate until you measure and save").size(12.5));
             } else {
                 ui.label(
                     widgets::muted(&p, format!("Saved: {:.1} pixels per inch", real_size::per_inch(s.px_per_mm)))
@@ -234,7 +236,7 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
 fn card(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
     let ppm = real_size::points_per_mm(*draft, ppp);
     let size = vec2(CARD_WIDTH, CARD_HEIGHT) * ppm;
-    let (area, response) = ui.allocate_exact_size(vec2(ui.available_width(), size.y + 4.0), Sense::drag());
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), size.y + 4.0), Sense::hover());
     let outline = Rect::from_min_size(area.min + vec2(2.0, 2.0), size);
     let painter = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
     let corner = CornerRadius::same((CARD_CORNER * ppm).min(255.0) as u8);
@@ -253,7 +255,7 @@ fn card(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
         p.primary.gamma_multiply(0.7),
     );
     grip(&painter, p, egui::pos2(outline.right(), outline.center().y));
-    drag(ui, &response, draft, ppp, CARD_WIDTH);
+    drag(ui, area, outline.right_center(), draft, ppp, CARD_WIDTH);
     CARD_WIDTH
 }
 
@@ -262,7 +264,7 @@ fn ruler(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
     let ppm = real_size::points_per_mm(*draft, ppp);
     let room = ui.available_width() - 24.0;
     let length = [150.0, 100.0, 80.0, 50.0].into_iter().find(|mm| mm * ppm <= room).unwrap_or(50.0);
-    let (area, response) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::drag());
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
     let painter = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
     let x0 = area.left() + 6.0;
     let top = area.top() + 2.0;
@@ -289,7 +291,7 @@ fn ruler(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
         }
     }
     grip(&painter, p, egui::pos2(x0 + length * ppm, top + 8.0));
-    drag(ui, &response, draft, ppp, length);
+    drag(ui, area, egui::pos2(x0 + length * ppm, top), draft, ppp, length);
     length
 }
 
@@ -298,9 +300,13 @@ fn grip(painter: &egui::Painter, p: &theme::Palette, at: egui::Pos2) {
     painter.rect(rect, CornerRadius::same(4), p.primary, Stroke::new(1.5, p.container), egui::StrokeKind::Outside);
 }
 
-/// Dragging anywhere over a reference moves its far end with the pointer.
-fn drag(ui: &Ui, response: &egui::Response, draft: &mut f32, ppp: f32, length: f32) {
-    let response = response.clone().on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+/// Dragging the reference's far end (its grip, or near it) moves it with the pointer. Only there: elsewhere the
+/// hand holding a card to the screen would move it too.
+fn drag(ui: &Ui, area: Rect, end: egui::Pos2, draft: &mut f32, ppp: f32, length: f32) {
+    let handle = Rect::from_center_size(egui::pos2(end.x, area.center().y), vec2(36.0, area.height()));
+    let response = ui
+        .interact(handle, ui.scope_id().with("reference-end"), Sense::drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     if response.dragged() {
         let dx = response.drag_delta().x;
         if dx != 0.0 {

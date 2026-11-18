@@ -21,6 +21,9 @@ pub struct DisplayMeasure {
     /// The monitor it was measured on, in physical pixels, when the system said.
     #[serde(default)]
     pub monitor: Option<[u32; 2]>,
+    /// Not measured: the first guess, kept when real size was turned on before saving a measure.
+    #[serde(default)]
+    pub estimate: bool,
 }
 
 impl DisplayMeasure {
@@ -90,7 +93,7 @@ mod tests {
         assert!((per_inch(guess(2.0)) - 192.0).abs() < 1e-3);
         assert_eq!(clamp(0.0), MIN_PX_PER_MM);
         assert_eq!(clamp(f32::NAN), guess(1.0));
-        let measure = DisplayMeasure { px_per_mm: 4.0, monitor: Some([1920, 1080]) };
+        let measure = DisplayMeasure { px_per_mm: 4.0, monitor: Some([1920, 1080]), estimate: false };
         assert!(!measure.other_display(None));
         assert!(!measure.other_display(Some([1920, 1080])));
         assert!(measure.other_display(Some([2560, 1440])));
