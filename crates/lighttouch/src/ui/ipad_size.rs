@@ -23,8 +23,6 @@ pub enum Reference {
 pub struct IpadSizeState {
     draft: Option<f32>,
     reference: Reference,
-    /// The card stands upright: on its side it wouldn't fit beside the preview. Changed only between drags.
-    portrait: bool,
 }
 
 /// Open the page from Settings, starting from the saved measure.
@@ -60,20 +58,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let before = (app.model.settings.ipad_real_size, app.model.settings.display);
 
     let area = ui.available_rect_before_wrap();
-    // The settings column holds the card at this density, on its side or else upright, with its handle, padding and
-    // the scroll bar: on a display denser than the first guess it widens, leaving the preview at least 320 points,
-    // and when even the upright card leaves less, the preview goes below the settings instead.
+    // The settings column holds the card (upright, so only its 54 mm side runs across) with its padding and the
+    // scroll bar: on a much denser display than the first guess it widens, leaving the preview at least 320 points,
+    // and when that leaves the preview too little, the preview goes below the settings instead.
     let ppm = real_size::points_per_mm(draft, ctx.pixels_per_point());
-    let (side_room, upright_room) = (CARD_WIDTH * ppm + 90.0, CARD_HEIGHT * ppm + 90.0);
+    let card_room = CARD_HEIGHT * ppm + 90.0;
     let cap = area.width() - 48.0 - 28.0 - 320.0;
-    let wide = area.width() >= 820.0 && upright_room.max(420.0) <= cap.max(420.0);
-    let column = if !wide {
-        (area.width() - 48.0).max(200.0)
-    } else if side_room <= cap {
-        side_room.max(420.0)
-    } else {
-        upright_room.clamp(420.0, cap.max(420.0))
-    };
+    let wide = area.width() >= 820.0 && card_room.max(420.0) <= cap.max(420.0);
+    let column = if wide { card_room.clamp(420.0, cap.max(420.0)) } else { (area.width() - 48.0).max(200.0) };
     let left = Rect::from_min_size(area.min + vec2(24.0, 0.0), vec2(column, area.height()));
     let mut left_ui = ui.new_child(egui::UiBuilder::new().id_salt("ipad-size-settings").max_rect(left));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut left_ui, |ui| {
@@ -138,33 +130,23 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
 
     widgets::section(ui, &p, "Measure this display");
     widgets::card(ui, &p, |ui| {
-        // On its side when it fits, else upright; never switched mid-drag.
-        let fits = CARD_WIDTH * real_size::points_per_mm(*draft, ppp) + 24.0 <= ui.available_width();
-        if !ui.input(|i| i.pointer.any_down()) {
-            app.ipad_size.portrait = !fits;
-        }
-        let portrait = app.ipad_size.portrait;
         let reference = &mut app.ipad_size.reference;
         widgets::segmented(ui, &p, reference, &[(Reference::Card, "Bank card"), (Reference::Ruler, "Ruler")]);
         ui.add_space(8.0);
         let text = match reference {
-            Reference::Card if portrait => {
+            Reference::Card => {
                 "Hold a bank or ID card upright against the screen, its corner in the outline's top-left corner. \
                  Drag the handle until the outline's bottom edge meets the card's."
             }
-            Reference::Card => {
-                "Hold a bank or ID card flat against the screen, its corner in the outline's top-left corner. Drag \
-                 the handle until the outline's right edge meets the card's."
-            }
             Reference::Ruler => {
-                "Lay a ruler along the marks, its 0 on the first one. Drag the handle until the last mark meets the \
-                 same number on the ruler."
+                "Hold a ruler upright along the marks, its 0 on the top one. Drag the handle until the bottom mark \
+                 meets the same number on the ruler."
             }
         };
         ui.label(widgets::muted(&p, text).size(12.5));
         ui.add_space(10.0);
         let length = match reference {
-            Reference::Card => card(ui, &p, draft, ppp, portrait),
+            Reference::Card => card(ui, &p, draft, ppp),
             Reference::Ruler => ruler(ui, &p, draft, ppp),
         };
         ui.add_space(6.0);
@@ -257,11 +239,10 @@ fn settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) {
 }
 
 /// A card's outline at the draft density, its right edge dragged to fit. Returns the reference's length in mm.
-fn card(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32, upright: bool) -> f32 {
+fn card(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
     let ppm = real_size::points_per_mm(*draft, ppp);
-    let size = if upright { vec2(CARD_HEIGHT, CARD_WIDTH) } else { vec2(CARD_WIDTH, CARD_HEIGHT) } * ppm;
-    let (area, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), size.y + if upright { 16.0 } else { 4.0 }), Sense::hover());
+    let size = vec2(CARD_HEIGHT, CARD_WIDTH) * ppm;
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), size.y + 16.0), Sense::hover());
     let outline = Rect::from_min_size(area.min + vec2(2.0, 2.0), size);
     let painter = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
     let corner = CornerRadius::same((CARD_CORNER * ppm).min(255.0) as u8);
@@ -279,52 +260,48 @@ fn card(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32, upright: boo
         FontId::new(13.0, theme::medium()),
         p.primary.gamma_multiply(0.7),
     );
-    if upright {
-        grip(&painter, p, outline.center_bottom(), true);
-        let handle = Rect::from_center_size(outline.center_bottom(), vec2(outline.width(), 36.0));
-        drag(ui, handle, true, draft, ppp, CARD_WIDTH);
-    } else {
-        grip(&painter, p, outline.right_center(), false);
-        let handle = Rect::from_center_size(outline.right_center(), vec2(36.0, area.height()));
-        drag(ui, handle, false, draft, ppp, CARD_WIDTH);
-    }
+    grip(&painter, p, outline.center_bottom(), true);
+    let handle = Rect::from_center_size(outline.center_bottom(), vec2(outline.width(), 36.0));
+    drag(ui, handle, true, draft, ppp, CARD_WIDTH);
     CARD_WIDTH
 }
 
 /// Ruler marks at the draft density: millimetres, half centimetres and numbered centimetres, as long as fits.
+/// Ruler marks down the page at the draft density: millimetres, half centimetres and numbered centimetres, 10 cm
+/// unless that would run far down the page.
 fn ruler(ui: &mut Ui, p: &theme::Palette, draft: &mut f32, ppp: f32) -> f32 {
     let ppm = real_size::points_per_mm(*draft, ppp);
-    let room = ui.available_width() - 24.0;
-    let length = [150.0, 100.0, 80.0, 50.0].into_iter().find(|mm| mm * ppm <= room).unwrap_or(50.0);
-    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
+    let length = [100.0, 80.0, 50.0].into_iter().find(|mm| mm * ppm <= 480.0).unwrap_or(50.0);
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), length * ppm + 26.0), Sense::hover());
     let painter = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
-    let x0 = area.left() + 6.0;
-    let top = area.top() + 2.0;
+    let x0 = area.left() + 2.0;
+    let y0 = area.top() + 8.0;
     let line = Stroke::new(1.0, p.on_surface);
-    painter.line_segment([egui::pos2(x0, top), egui::pos2(x0 + length * ppm, top)], line);
+    painter.line_segment([egui::pos2(x0, y0), egui::pos2(x0, y0 + length * ppm)], line);
     for mm in 0..=length as u32 {
-        let x = x0 + mm as f32 * ppm;
-        let (tall, stroke) = if mm % 10 == 0 {
+        let y = y0 + mm as f32 * ppm;
+        let (long, stroke) = if mm % 10 == 0 {
             (16.0, Stroke::new(1.5, p.primary))
         } else if mm % 5 == 0 {
             (10.0, line)
         } else {
             (5.0, Stroke::new(1.0, p.on_surface_variant))
         };
-        painter.line_segment([egui::pos2(x, top), egui::pos2(x, top + tall)], stroke);
+        painter.line_segment([egui::pos2(x0, y), egui::pos2(x0 + long, y)], stroke);
         if mm % 10 == 0 {
             painter.text(
-                egui::pos2(x, top + 20.0),
-                Align2::CENTER_TOP,
+                egui::pos2(x0 + 22.0, y),
+                Align2::LEFT_CENTER,
                 format!("{}", mm / 10),
                 FontId::new(11.0, egui::FontFamily::Proportional),
                 p.on_surface_variant,
             );
         }
     }
-    grip(&painter, p, egui::pos2(x0 + length * ppm, top + 8.0), false);
-    let handle = Rect::from_center_size(egui::pos2(x0 + length * ppm, area.center().y), vec2(36.0, area.height()));
-    drag(ui, handle, false, draft, ppp, length);
+    let end = egui::pos2(x0 + 8.0, y0 + length * ppm);
+    grip(&painter, p, end, true);
+    let handle = Rect::from_center_size(egui::pos2(area.left() + 40.0, end.y), vec2(80.0, 36.0));
+    drag(ui, handle, true, draft, ppp, length);
     length
 }
 
