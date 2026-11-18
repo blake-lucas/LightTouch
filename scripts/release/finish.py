@@ -54,7 +54,7 @@ with zipfile.ZipFile(apk) as z:
 tools = itpack_manifest(out / 'armv6.itpack')
 
 files = ['LightTouch-' + VERSION + '-android-arm64.apk', 'LightTouch-' + VERSION + '-Linux-x86_64.AppImage',
-         'LightTouch-' + VERSION + '-Windows-x86_64.zip', 'LightTouch-' + VERSION + '-macOS-arm64.zip',
+         'LightTouch-' + VERSION + '-Windows-x86_64.exe', 'LightTouch-' + VERSION + '-macOS-arm64.zip',
          'armv6.itpack', 'armv7.itpack', 'LightTouch-' + VERSION + '-source.tar.gz', 'qemu-ios-' + VERSION + '-source.tar.gz']
 records = [dict(file=f, bytes=(out / f).stat().st_size, sha256=sha(out / f)) for f in files]
 manifest = dict(version=VERSION, status='alpha' if os.environ.get('LT_PRERELEASE') == 'false' else 'provisional alpha (pre-release)',

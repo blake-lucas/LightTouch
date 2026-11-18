@@ -115,14 +115,105 @@ pub fn run() -> eframe::Result {
         Box::new(|cc| {
             theme::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            let ctx = cc.egui_ctx.clone();
-            let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
-            let model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
-            let mut app = App::new(model);
-            devshot::start(&mut app);
-            Ok(Box::new(app))
+            // The Windows single-file build unpacks its resources at a version's first start: show it doing so.
+            if let Some(embedded) = Resources::pending_unpack() {
+                return Ok(Box::new(Root::Unpacking(Unpacking::start(embedded, &cc.egui_ctx))));
+            }
+            Ok(Box::new(Root::Ready(Box::new(ready_app(&cc.egui_ctx)))))
         }),
     )
+}
+
+fn ready_app(ctx: &egui::Context) -> App {
+    let ctx = ctx.clone();
+    let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
+    let model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
+    let mut app = App::new(model);
+    devshot::start(&mut app);
+    app
+}
+
+/// The window's content: the app, or the first start of a single-file build unpacking its resources.
+enum Root {
+    Unpacking(Unpacking),
+    Ready(Box<App>),
+}
+
+struct Unpacking {
+    /// Payload bytes processed, of `total`.
+    done: Arc<std::sync::atomic::AtomicU64>,
+    total: u64,
+    result: Arc<std::sync::Mutex<Option<Result<(), String>>>>,
+}
+
+impl Unpacking {
+    fn start(embedded: lighttouch_core::bundle::Embedded, ctx: &egui::Context) -> Self {
+        let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let result = Arc::new(std::sync::Mutex::new(None));
+        let total = embedded.len().max(1);
+        let (d, r, ctx) = (done.clone(), result.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let outcome = embedded.unpack(&mut |n, _| {
+                d.store(n, std::sync::atomic::Ordering::Relaxed);
+                ctx.request_repaint();
+            });
+            *r.lock().unwrap() = Some(outcome.map(|_| ()));
+            ctx.request_repaint();
+        });
+        Self { done, total, result }
+    }
+}
+
+impl eframe::App for Root {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Root::Unpacking(u) = self {
+            if matches!(*u.result.lock().unwrap(), Some(Ok(()))) {
+                *self = Root::Ready(Box::new(ready_app(ctx)));
+            }
+        }
+        match self {
+            Root::Ready(app) => app.logic(ctx, frame),
+            Root::Unpacking(_) => theme::apply(ctx, &theme::DARK),
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let u = match self {
+            Root::Ready(app) => return app.ui(ui, frame),
+            Root::Unpacking(u) => u,
+        };
+        let p = theme::DARK;
+        let error = u.result.lock().unwrap().as_ref().and_then(|r| r.as_ref().err().cloned());
+        let fraction = u.done.load(std::sync::atomic::Ordering::Relaxed) as f32 / u.total as f32;
+        egui::CentralPanel::default().frame(Frame::new().fill(p.background)).show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.38);
+                ui.label(RichText::new("Getting LightTouch ready").font(theme::headline()));
+                ui.add_space(12.0);
+                match error {
+                    Some(e) => {
+                        ui.label(RichText::new(format!("LightTouch couldn't unpack its files: {e}")).color(p.error));
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new("Unpacking the files this version needs. This happens once per version.")
+                                .color(p.on_surface_variant),
+                        );
+                        ui.add_space(16.0);
+                        widgets::progress(ui, &p, Some(fraction), 320.0);
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(format!("{:.0}%", fraction * 100.0)).color(p.on_surface_variant));
+                    }
+                }
+            });
+        });
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let Root::Ready(app) = self {
+            app.on_exit(gl);
+        }
+    }
 }
 
 impl App {

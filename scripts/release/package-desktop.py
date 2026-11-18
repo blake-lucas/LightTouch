@@ -3,6 +3,7 @@
 
     package-desktop.py OUT --os linux|windows|macos --app BIN --firmwarekit BIN --engine LIB --usbmuxd BIN
         --guest-tools DIR [--lib FILE_OR_DIR]... [--notices GROUP=DIR]... [--group-source GROUP=URL]... [--source-reference URL] [--zip] [--appimage TOOLS]
+        [--onefile]
 
 OUT/                    lighttouch[.exe]; Linux also gets LightTouch, a launcher that puts lib/ on the library path
 OUT/resources/          the engine, firmwarekit, the USB bridge, guest-tools/ (and on Windows, every --lib DLL)
@@ -20,11 +21,13 @@ ad hoc.
 The binaries are built beforehand: the app and firmwarekit with `cargo build --release` (packaged builds use
 --features lighttouch-services/vendored-openssl, so the app needs no system OpenSSL), the engine with qemu-ios's
 contrib/portable scripts, the USB bridge with its own build (scripts/release/build-desktop-linux.sh builds the Linux app
-against glibc 2.31). --zip also writes OUT.zip. --appimage (Linux) also writes OUT.AppImage: an AppDir with the app in
+against glibc 2.31). --zip also writes OUT.zip. --onefile (Windows) also writes OUT.exe, the app carrying its resources:
+the resources folder zipped and appended to lighttouch.exe with a trailer (offset, length, SHA-256, magic) that
+lighttouch_core::bundle reads to unpack it at each version's first start. --appimage (Linux) also writes OUT.AppImage: an AppDir with the app in
 usr/bin, the resources in usr/lib/lighttouch and the libraries in usr/lib, sealed by Linux/packaging/seal-appimage.py
 with the pinned appimagetool and runtime in TOOLS.
 """
-import argparse, hashlib, json, re, shutil, subprocess, sys, zipfile
+import argparse, hashlib, io, json, os, re, shutil, struct, subprocess, sys, zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -118,6 +121,7 @@ def main():
     a.add_argument("--source-reference", default="https://github.com/blake-lucas/LightTouch")
     a.add_argument("--zip", action="store_true")
     a.add_argument("--appimage", type=Path, metavar="TOOLS", help="appimagetool-x86_64.AppImage and runtime-x86_64")
+    a.add_argument("--onefile", action="store_true", help="(Windows) also write OUT.exe with the resources inside")
     args = a.parse_args()
     windows, macos = args.os == "windows", args.os == "macos"
     exe = ".exe" if windows else ""
@@ -198,11 +202,36 @@ def main():
                     with f.open("rb") as s:
                         z.writestr(info, s.read(), zipfile.ZIP_DEFLATED)
         print(archive)
+    if args.onefile:
+        if not windows:
+            raise SystemExit("package-desktop: --onefile is for Windows")
+        print(onefile(args.out / "lighttouch.exe", res, args.out.parent / (args.out.name + ".exe")))
     if args.appimage:
         if windows:
             raise SystemExit("package-desktop: --appimage is for Linux")
         print(appimage(args.out, args.appimage))
     print(args.out)
+
+
+ONEFILE_MAGIC = b"LTRES01\0"  # lighttouch_core::bundle
+
+
+def onefile(app, resources, target):
+    """`app` with the `resources` folder appended as a zip (stored with fixed dates, so the same inputs make the same
+    file), then the trailer: payload offset and length (little-endian u64), its SHA-256, the magic."""
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        files = sorted(Path(d, n) for d, _, names in os.walk(resources, followlinks=True) for n in names)
+        for f in files:
+            info = zipfile.ZipInfo(f.relative_to(resources).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (f.stat().st_mode & 0o777) << 16
+            z.writestr(info, f.read_bytes(), zipfile.ZIP_DEFLATED, 9)
+    data = payload.getvalue()
+    program = app.read_bytes()
+    trailer = struct.pack("<QQ", len(program), len(data)) + hashlib.sha256(data).digest() + ONEFILE_MAGIC
+    target.write_bytes(program + data + trailer)
+    return target
 
 
 def check_imports(binaries):

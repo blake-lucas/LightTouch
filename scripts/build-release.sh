@@ -9,7 +9,7 @@
 #   android   non-debuggable arm64 APK carrying the guest tools ($LT_GUEST_TOOLS)
 #   windows   the engine + FFmpeg cross-built with MinGW
 #   linux     the engine in the Debian 11 image (Docker), with the USB bridge and the libraries both load
-#   desktop   the desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows zip, from the linux and windows
+#   desktop   the desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows .exe, from the linux and windows
 #             steps' engines
 #   macos     the engine and the desktop app on the Mac ($LT_MAC) over ssh, from the pushed commits
 #   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json (status from
@@ -181,10 +181,10 @@ step_desktop() {
     python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Windows-x86_64" --os windows \
         --app "$w/lighttouch.exe" --firmwarekit "$w/firmwarekit.exe" --engine "$d/win-engine/libqemu-arm.dll" \
         --usbmuxd "$services/lighttouch-usbmuxd.exe" --guest-tools "$tools" --lib "$services" --lib "$d/win-runtime" \
-        --notices "engine=$n/windows/engine" --notices "usb=$n/windows/usb" --group-source "engine=$GH_ENGINE" --zip \
+        --notices "engine=$n/windows/engine" --notices "usb=$n/windows/usb" --group-source "engine=$GH_ENGINE" --onefile \
         > "$R/desktop-windows-package.log" 2>&1 || { tail -30 "$R/desktop-windows-package.log" >&2; exit 1; }
-    cp "$d/LightTouch-$V-Linux-x86_64.AppImage" "$d/LightTouch-$V-Windows-x86_64.zip" "$OUTD/"
-    ls -1 "$OUTD"/*.AppImage "$OUTD"/*Windows*.zip
+    cp "$d/LightTouch-$V-Linux-x86_64.AppImage" "$d/LightTouch-$V-Windows-x86_64.exe" "$OUTD/"
+    ls -1 "$OUTD"/*.AppImage "$OUTD"/*Windows*.exe
 }
 
 step_macos() {
@@ -231,7 +231,7 @@ step_publish() {
     need "$notes" "release notes"
     grep -q CHECKSUMS "$notes" && { echo "run finish first: NOTES.md has no checksums" >&2; exit 1; }
     title=$(head -1 "$notes" | sed 's/^# *//')
-    for f in LightTouch-$V-android-arm64.apk LightTouch-$V-Linux-x86_64.AppImage LightTouch-$V-Windows-x86_64.zip \
+    for f in LightTouch-$V-android-arm64.apk LightTouch-$V-Linux-x86_64.AppImage LightTouch-$V-Windows-x86_64.exe \
              LightTouch-$V-macOS-arm64.zip armv6.itpack armv7.itpack LightTouch-$V-source.tar.gz qemu-ios-$V-source.tar.gz \
              SHA256SUMS RELEASE-MANIFEST.json LICENSE.txt; do need "$OUTD/$f" "package"; assets+=("$OUTD/$f"); done
     (cd "$OUTD" && sha256sum -c --quiet SHA256SUMS)

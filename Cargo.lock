@@ -1692,7 +1692,9 @@ dependencies = [
  "memmap2",
  "serde",
  "serde_json",
+ "sha2",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]

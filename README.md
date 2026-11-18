@@ -20,7 +20,7 @@ Both recorded on a Pixel 10. Click to watch on YouTube.
 | --- | --- | --- |
 | Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, internet inside iOS and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
 | Linux | x86_64 AppImage | The desktop app. Prepares devices from an IPSW; accelerated graphics, audio, internet inside iOS, the Legacy Store and IPA installs work. Needs glibc 2.31 or later (Debian 11, Ubuntu 20.04 and newer). |
-| Windows | x86_64 ZIP | The same app as on Linux. Preparing devices, graphics, audio, Legacy Store installs and internet confirmed on Windows 10 and 11. |
+| Windows | x86_64 EXE | The same app as on Linux, one file to download and run. Preparing devices, graphics, audio, Legacy Store installs and internet confirmed on Windows 10 and 11. |
 | macOS | Apple Silicon app ZIP | The same app as on Linux. Preparing devices, running them and Legacy Store installs checked on an M-series Mac; internet not yet. Needs macOS 26. The app isn't notarized: the first time, allow it in System Settings › Privacy & Security. |
 
 ## Devices

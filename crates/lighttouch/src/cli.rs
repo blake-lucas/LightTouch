@@ -245,7 +245,9 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
 fn fetch(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     use lighttouch_catalog::{catalog::Catalog, store, target::Target};
     let (Some(id), Some(query)) = (args.first(), args.get(1)) else {
-        return Err("fetch needs a firmware id and a query, e.g. fetch n81ap-10B500 \"Jetpack Joyride\" --out DIR".into());
+        return Err(
+            "fetch needs a firmware id and a query, e.g. fetch n81ap-10B500 \"Jetpack Joyride\" --out DIR".into()
+        );
     };
     let out = PathBuf::from(option(args, "--out").ok_or("fetch needs --out DIR")?);
     let firmware = Catalog::get().find(id).ok_or_else(|| format!("{id} is not in the catalog"))?;
@@ -265,7 +267,8 @@ fn fetch(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     // The search row can name a broken copy (Fruit Ninja 1.7.4's executable is cut short); take the one the store
     // screens select first.
     let good = store::preferred(app.ipa_id);
-    let app = match store::versions(&app, &target).map_err(|e| format!("store: {e}"))?.iter().find(|c| c.ipa_id == good) {
+    let app = match store::versions(&app, &target).map_err(|e| format!("store: {e}"))?.iter().find(|c| c.ipa_id == good)
+    {
         Some(copy) if good != app.ipa_id => app.with_copy(copy),
         _ => app,
     };

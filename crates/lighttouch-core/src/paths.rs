@@ -124,8 +124,9 @@ pub fn plain(path: &Path) -> PathBuf {
 
 /// Bundled resources: the engine library, guest tools, firmwarekit and its helpers.
 ///
-/// Looked up, in order: `LIGHTTOUCH_RESOURCES`; `resources/` next to the executable (Windows zip, dev builds);
-/// `../Resources` (macOS app bundle); `../lib/lighttouch` (Linux AppImage / install prefix).
+/// Looked up, in order: `LIGHTTOUCH_RESOURCES`; `resources/` next to the executable (dev builds); `../Resources`
+/// (macOS app bundle); `../lib/lighttouch` (Linux AppImage / install prefix); the executable's own payload, unpacked
+/// (the Windows single-file build, [`crate::bundle`]; unpacked here, without progress, when the app hasn't already).
 #[derive(Debug, Clone)]
 pub struct Resources {
     pub dir: PathBuf,
@@ -143,13 +144,33 @@ impl Resources {
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
         let candidates = [exe_dir.join("resources"), exe_dir.join("../Resources"), exe_dir.join("../lib/lighttouch")];
-        let dir = candidates
-            .iter()
-            .find(|dir| dir.join(engine_file_name()).is_file())
-            .or_else(|| candidates.iter().find(|dir| dir.is_dir()))
-            .cloned()
-            .unwrap_or_else(|| exe_dir.join("resources"));
+        if let Some(dir) = candidates.iter().find(|dir| dir.join(engine_file_name()).is_file()) {
+            return Self { dir: dir.clone() };
+        }
+        if let Some(embedded) = crate::bundle::Embedded::current() {
+            match embedded.unpack(&mut |_, _| {}) {
+                Ok(dir) => return Self { dir },
+                Err(e) => eprintln!("LightTouch couldn't unpack its resources: {e}"),
+            }
+        }
+        let dir = candidates.iter().find(|dir| dir.is_dir()).cloned().unwrap_or_else(|| exe_dir.join("resources"));
         Self { dir }
+    }
+
+    /// The executable's resource payload, when [`Resources::locate`] would have to unpack it first (a single-file
+    /// build's first start of this version), so the app can show that happening.
+    pub fn pending_unpack() -> Option<crate::bundle::Embedded> {
+        if std::env::var_os("LIGHTTOUCH_RESOURCES").is_some() {
+            return None;
+        }
+        let exe_dir = std::env::current_exe().ok()?.canonicalize().ok().map(|p| plain(&p))?.parent()?.to_path_buf();
+        if ["resources", "../Resources", "../lib/lighttouch"]
+            .iter()
+            .any(|d| exe_dir.join(d).join(engine_file_name()).is_file())
+        {
+            return None;
+        }
+        crate::bundle::Embedded::current().filter(|e| !e.ready())
     }
 
     /// The engine library. `LIGHTTOUCH_ENGINE` overrides it.

@@ -136,7 +136,7 @@ restricted-DNS patch is checked); `prepare` copies them into the release's engin
 | `android` | `out/LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with the guest tools and firmwarekit; checked non-debuggable and versioned |
 | `windows` | the MinGW engine build in `win-cross/` | `Windows/tools/build-engine.sh` (engine and FFmpeg) |
 | `linux` | `linux-build/runtime/`: the engine, `usbmuxd-qemu` and the libraries they load | `scripts/release/linux-inner.sh` in the Debian 11 Docker image `$LT_LINUX_IMAGE` |
-| `desktop` | `out/LightTouch-vX-Linux-x86_64.AppImage`, `out/LightTouch-vX-Windows-x86_64.zip` | the app built against glibc 2.31 (`scripts/release/build-desktop-linux.sh`) and cross-built for Windows, the Windows engine relinked as a DLL, then `scripts/release/package-desktop.py` |
+| `desktop` | `out/LightTouch-vX-Linux-x86_64.AppImage`, `out/LightTouch-vX-Windows-x86_64.exe` | the app built against glibc 2.31 (`scripts/release/build-desktop-linux.sh`) and cross-built for Windows, the Windows engine relinked as a DLL, then `scripts/release/package-desktop.py` (Windows: one `.exe` carrying its resources, `--onefile`) |
 | `macos` | `out/LightTouch-vX-macOS-arm64.zip` | on `$LT_MAC`: fetches both commits from GitHub, `macOS/build-engine.py`, `cargo build`, `package-desktop.py --os macos` (signed ad hoc), `ditto` |
 | `finish` | source archives, `armv6.itpack` and `armv7.itpack`, `LICENSE.txt`, `SHA256SUMS`, `RELEASE-MANIFEST.json` | `scripts/release/finish.py`; checks the APK carries `$LT_GUEST_TOOLS` |
 
