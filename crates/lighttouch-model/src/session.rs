@@ -329,9 +329,16 @@ impl Session {
         Some(meta)
     }
 
+    /// Send touch contacts in order. The engine takes at most eight a batch and each contact id once (it rejects
+    /// the whole batch otherwise), but a frame can hold several steps of one finger (Windows reports a touchscreen
+    /// finger's moves faster than frames, a swipe's last move comes with its lift): a repeated id, or a ninth
+    /// contact, starts the next batch.
     pub fn touch(&mut self, contacts: Vec<Contact>) {
-        if matches!(self.phase, Phase::Running) && !contacts.is_empty() {
-            self.send(&Command::Touch { contacts });
+        if !matches!(self.phase, Phase::Running) {
+            return;
+        }
+        for batch in touch_batches(contacts) {
+            self.send(&Command::Touch { contacts: batch });
         }
     }
 
@@ -769,5 +776,34 @@ impl FrameStats {
             worst_ms: intervals.last().copied().unwrap_or(0.0),
             idle: false,
         }
+    }
+}
+
+/// `contacts` split, in order, into batches the engine takes: at most eight, no contact id twice.
+pub fn touch_batches(contacts: Vec<Contact>) -> Vec<Vec<Contact>> {
+    let mut out: Vec<Vec<Contact>> = Vec::new();
+    for c in contacts {
+        match out.last_mut() {
+            Some(b) if b.len() < lighttouch_core::sys::LT_MAX_CONTACTS && !b.iter().any(|x| x.id == c.id) => b.push(c),
+            _ => out.push(vec![c]),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod touch_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_ids_and_ninth_contacts_start_a_batch() {
+        let c = |id, phase| Contact { id, phase, x: 0.5, y: 0.5 };
+        // One finger moved twice and lifted in a frame, a second finger alongside.
+        let ids = |b: &Vec<Contact>| b.iter().map(|c| c.id).collect::<Vec<_>>();
+        let batches = touch_batches(vec![c(3, 1), c(4, 1), c(3, 1), c(3, 2), c(4, 2)]);
+        assert_eq!(batches.iter().map(ids).collect::<Vec<_>>(), vec![vec![3, 4], vec![3], vec![3, 4]]);
+        let many = touch_batches((0..10).map(|i| c(i, 0)).collect());
+        assert_eq!(many.iter().map(Vec::len).collect::<Vec<_>>(), vec![8, 2]);
+        assert!(touch_batches(Vec::new()).is_empty());
     }
 }
