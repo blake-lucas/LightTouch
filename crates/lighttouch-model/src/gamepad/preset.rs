@@ -355,8 +355,9 @@ pub struct Preset {
     pub name: String,
     #[serde(default)]
     pub bindings: Vec<Binding>,
-    /// Draw the spots on the screen while playing (a pointer's bubble is always drawn).
-    #[serde(default = "yes")]
+    /// Draw the spots on the screen while playing (a pointer's bubble is always drawn). Off unless turned on: spots
+    /// over a game puzzle someone who hasn't set up a controller.
+    #[serde(default)]
     pub show_spots: bool,
     /// How far a stick moves before it counts, 0..1.
     #[serde(default = "default_deadzone")]
@@ -364,10 +365,6 @@ pub struct Preset {
     /// Apps (bundle IDs) this preset switches on for when they come to the front.
     #[serde(default)]
     pub apps: Vec<String>,
-}
-
-fn yes() -> bool {
-    true
 }
 
 fn default_deadzone() -> f32 {
@@ -379,7 +376,7 @@ impl Preset {
         Preset {
             name: name.into(),
             bindings: Vec::new(),
-            show_spots: true,
+            show_spots: false,
             deadzone: default_deadzone(),
             apps: Vec::new(),
         }
@@ -487,7 +484,7 @@ mod tests {
         // Older files without the optional fields still load.
         let bare: Preset =
             serde_json::from_str(r#"{"name":"x","bindings":[{"action":{"kind":"tilt","stick":"left"}}]}"#).unwrap();
-        assert!(bare.show_spots && bare.deadzone > 0.0);
+        assert!(!bare.show_spots && bare.deadzone > 0.0);
         assert_eq!(bare.bindings[0].action, Action::Tilt { stick: Stick::Left, strength: 1.0 });
     }
 }
