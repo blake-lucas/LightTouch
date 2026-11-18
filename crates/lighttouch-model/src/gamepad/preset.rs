@@ -197,6 +197,15 @@ impl Stick {
         }
     }
 
+    /// Pressing the stick in (L3, R3): the natural button for a stick's own finger. None for the D-pad and keys.
+    pub fn click(&self) -> Option<Input> {
+        match self {
+            Stick::Left => Some(Input::Pad(PadButton::LeftStick)),
+            Stick::Right => Some(Input::Pad(PadButton::RightStick)),
+            Stick::Dpad | Stick::Keys { .. } => None,
+        }
+    }
+
     /// The short form drawn on the screen.
     pub fn short(&self) -> String {
         match self {
@@ -232,6 +241,40 @@ pub enum TapMode {
     Toggle,
     /// Taps over and over while held.
     Repeat,
+}
+
+/// When a stick binding's finger is on the screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Press {
+    /// While the stick is pushed well enough (a nudge or drift doesn't touch).
+    #[default]
+    Pushed,
+    /// While `input` is held.
+    Hold { input: Input },
+    /// A press of `input` puts the finger down, the next lifts it.
+    Toggle { input: Input },
+}
+
+impl Press {
+    pub fn input(&self) -> Option<&Input> {
+        match self {
+            Press::Pushed => None,
+            Press::Hold { input } | Press::Toggle { input } => Some(input),
+        }
+    }
+
+    pub fn input_mut(&mut self) -> Option<&mut Input> {
+        match self {
+            Press::Pushed => None,
+            Press::Hold { input } | Press::Toggle { input } => Some(input),
+        }
+    }
+
+    /// Pressed with the stick's click, or with nothing yet where the stick has none (the D-pad, keys).
+    pub fn toggle_for(stick: &Stick) -> Press {
+        Press::Toggle { input: stick.click().unwrap_or(Input::Key(String::new())) }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -283,7 +326,31 @@ pub enum Action {
     /// Drag a finger from one spot to another when pressed (Temple Run's turns, a menu's page flip).
     Swipe { input: Input, from: Point, to: Point, ms: u32 },
     /// An on-screen joystick: a finger held on its centre and pushed toward the stick's direction, up to `radius`.
-    Joystick { stick: Stick, center: Point, radius: f32 },
+    Joystick {
+        stick: Stick,
+        center: Point,
+        radius: f32,
+        /// Presets from before this was asked: while pushed.
+        #[serde(default)]
+        press: Press,
+    },
+    /// Looking around (a game's camera): the stick drags a finger across an area at a speed set by how far it's
+    /// pushed, lifting and landing again before it runs off the area's edge.
+    Look {
+        stick: Stick,
+        center: Point,
+        /// Half the area's width and height, as fractions of the screen's (as shown).
+        half: [f32; 2],
+        /// Screen widths (of the shorter side) a second at full tilt.
+        speed: f32,
+        #[serde(default)]
+        invert_y: bool,
+        #[serde(default)]
+        press: Press,
+        /// A button that taps where the finger is (games that fire with a tap on the look area).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tap: Option<Input>,
+    },
     /// A pointer over an area of the screen, and an input that touches where it is. The bubble is always drawn.
     Pointer {
         stick: Stick,
@@ -291,6 +358,9 @@ pub enum Action {
         /// Half the area's width and height, as fractions of the screen's (as shown).
         half: [f32; 2],
         touch: Input,
+        /// `touch` presses to touch and again to lift, rather than touching while held.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        toggle: bool,
         #[serde(default)]
         style: PointerStyle,
         /// Cursor style: screen widths a second at full tilt.
@@ -328,6 +398,7 @@ impl Action {
             Action::Tap { .. } => "Tap",
             Action::Swipe { .. } => "Swipe",
             Action::Joystick { .. } => "Joystick",
+            Action::Look { .. } => "Look around",
             Action::Pointer { .. } => "Pointer",
             Action::Flick { .. } => "Flick to swipe",
             Action::Tilt { .. } => "Tilt",
@@ -394,6 +465,7 @@ impl Preset {
                     center: Point::CENTER,
                     half: [0.5, 0.5],
                     touch: Input::Pad(PadButton::RightTrigger),
+                    toggle: false,
                     style: PointerStyle::Centered,
                     speed: default_speed(),
                 },

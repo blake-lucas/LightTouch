@@ -4,7 +4,7 @@
 //! radius is round, then goes to the guest: places are kept in its portrait coordinates and touches go out in its
 //! panel's scan ([`Rotation::to_scan`]). Each binding owns one contact id, so the engine sees every finger the bindings
 //! hold as its own; the engine takes five fingers at once, so a sixth waits.
-use super::preset::{Action, Binding, Input, Point, PointerStyle, Preset, Stick, TapMode};
+use super::preset::{Action, Binding, Input, Point, PointerStyle, Preset, Press, Stick, TapMode};
 use super::sdl::Pad;
 use crate::rotation::Rotation;
 use crate::tilt::Tilt;
@@ -20,6 +20,16 @@ const FIRST_CONTACT: u32 = 20;
 const MAX_FINGERS: usize = 5;
 const REPEAT: Duration = Duration::from_millis(70);
 const FLICK_MS: u64 = 140;
+/// A stick pushed this far puts its finger down at once; less, once it has stayed pushed for `ENGAGE` (a nudge or a
+/// drifting stick then doesn't tap the screen).
+const ENGAGE_AT: f32 = 0.5;
+const ENGAGE: Duration = Duration::from_millis(50);
+/// Looking: how long the finger rests where it is once the stick lets go, before lifting (lifting mid-drag could
+/// fling the camera), and how long it stays up before landing again at an edge.
+const LOOK_REST: Duration = Duration::from_millis(300);
+const REGRIP: Duration = Duration::from_millis(20);
+/// A look binding's tap: how long the finger stays down.
+const LOOK_TAP: Duration = Duration::from_millis(60);
 const GRAVITY: f64 = 9.80665;
 
 /// How the screen is shown.
@@ -143,6 +153,35 @@ struct State {
     pointer: Option<(f32, f32)>,
     /// A flick's stick was back near the middle (armed for the next flick).
     flick_armed: bool,
+    /// A stick binding's press input was held last step (for toggling).
+    press_held: bool,
+    /// Since when the stick has been pushed (for engaging).
+    pushed_since: Option<Instant>,
+    /// Looking: when the stick let go with the finger down, and when the finger may land again after an edge.
+    rest_since: Option<Instant>,
+    regrip_at: Option<Instant>,
+}
+
+impl State {
+    /// Whether a stick binding's finger belongs on the screen, from its press setting; `m` is the stick's push.
+    fn pressing(&mut self, press: &Press, inputs: &Inputs, enabled: bool, m: f32, now: Instant) -> bool {
+        self.pushed_since = if m > 0.0 { self.pushed_since.or(Some(now)) } else { None };
+        match press {
+            Press::Pushed => {
+                let pushed_for = self.pushed_since.map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
+                m > 0.0 && (self.finger.is_some() || m >= ENGAGE_AT || pushed_for >= ENGAGE)
+            }
+            Press::Hold { input } => enabled && inputs.held(input),
+            Press::Toggle { input } => {
+                let held = enabled && inputs.held(input);
+                if held && !self.press_held {
+                    self.toggled = !self.toggled;
+                }
+                self.press_held = held;
+                self.toggled && enabled
+            }
+        }
+    }
 }
 
 /// What a step asks of the device.
@@ -263,7 +302,10 @@ impl Mapper {
             out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
             out.busy = true;
         }
-        out.busy |= self.states.iter().any(|s| s.stroke.is_some() || s.repeat_at.is_some());
+        out.busy |= self
+            .states
+            .iter()
+            .any(|s| s.stroke.is_some() || s.repeat_at.is_some() || s.rest_since.is_some() || s.regrip_at.is_some());
         out
     }
 
@@ -382,10 +424,10 @@ fn step_binding(
             }
             stroke(s, now, &mut put, out);
         }
-        Action::Joystick { stick, center, radius } => {
+        Action::Joystick { stick, center, radius, press } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             let c = view.shown(*center);
-            if (x, y) == (0.0, 0.0) {
+            if !s.pressing(press, inputs, enabled, x.hypot(y), now) {
                 put(s, None, out);
             } else if s.finger.is_none() {
                 // Down on the centre first, then pushed: an on-screen stick starts where the finger lands.
@@ -395,7 +437,69 @@ fn step_binding(
                 put(s, Some((c.0 + x * w, c.1 + y * h)), out);
             }
         }
-        Action::Pointer { stick, center, half, touch, style, speed } => {
+        Action::Look { stick, center, half, speed, invert_y, press, tap } => {
+            let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
+            let (x, y) = (x, if *invert_y { -y } else { y });
+            let m = x.hypot(y);
+            let c = view.shown(*center);
+            let (hw, hh) = (half[0].max(0.01), half[1].max(0.01));
+            let inside = |(u, v): (f32, f32)| {
+                (u - c.0).abs() <= hw && (v - c.1).abs() <= hh && (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v)
+            };
+            // The tap: lift the look finger, tap where it was (a second finger on a look area would confuse it), then
+            // carry on looking.
+            let tap_held = enabled && tap.as_ref().is_some_and(|t| inputs.held(t));
+            if tap_held && !s.pressed && s.stroke.is_none() {
+                let at = s.finger.unwrap_or(c);
+                put(s, None, out);
+                s.stroke = Some((at, at, now + REGRIP, LOOK_TAP));
+            }
+            s.pressed = tap_held;
+            if let Some((_, _, start, _)) = s.stroke {
+                if now >= start {
+                    stroke(s, now, &mut put, out);
+                }
+                s.regrip_at = None;
+                return;
+            }
+            let mut down = s.pressing(press, inputs, enabled, m, now);
+            if *press == Press::Pushed && s.finger.is_some() {
+                // Resting where it is for a moment once the stick lets go.
+                s.rest_since = if m > 0.0 { None } else { s.rest_since.or(Some(now)) };
+                down = s.rest_since.is_none_or(|t| now.saturating_duration_since(t) < LOOK_REST);
+            }
+            if !down {
+                put(s, None, out);
+                (s.rest_since, s.regrip_at) = (None, None);
+                return;
+            }
+            match s.finger {
+                None => {
+                    if s.regrip_at.is_some_and(|t| now < t) {
+                        return;
+                    }
+                    s.regrip_at = None;
+                    s.rest_since = None;
+                    // Set back from the way it's heading, so the drag has room before the edge.
+                    let back = if m > 0.0 { (-x / m * hw * 0.5, -y / m * hh * 0.5) } else { (0.0, 0.0) };
+                    put(s, Some((c.0 + back.0, c.1 + back.1)), out);
+                }
+                Some(f) if m > 0.0 => {
+                    // Faster the further it's pushed, gently near the middle for aiming.
+                    let pace = m.powf(1.5) / m;
+                    let (w, h) = view.span(*speed * dt);
+                    let next = (f.0 + x * pace * w, f.1 + y * pace * h);
+                    if inside(next) {
+                        put(s, Some(next), out);
+                    } else {
+                        put(s, None, out);
+                        s.regrip_at = Some(now + REGRIP);
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        Action::Pointer { stick, center, half, touch, toggle, style, speed } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             let c = view.shown(*center);
             let (hw, hh) = (half[0].max(0.01), half[1].max(0.01));
@@ -408,7 +512,9 @@ fn step_binding(
                 }
             };
             s.pointer = Some(at);
-            let touching = enabled && inputs.held(touch);
+            let press =
+                if *toggle { Press::Toggle { input: touch.clone() } } else { Press::Hold { input: touch.clone() } };
+            let touching = s.pressing(&press, inputs, enabled, x.hypot(y), now);
             put(s, touching.then_some(at), out);
         }
         Action::Tilt { stick, strength } => {
@@ -529,6 +635,7 @@ mod tests {
             center: Point::CENTER,
             half: [0.5, 0.5],
             touch: Input::Pad(PadButton::RightTrigger),
+            toggle: false,
             style: PointerStyle::Centered,
             speed: 1.0,
         }]);
@@ -548,7 +655,12 @@ mod tests {
 
     #[test]
     fn joystick_lands_on_its_centre_then_pushes_round() {
-        let p = preset(vec![Action::Joystick { stick: Stick::Dpad, center: Point::new(0.2, 0.8), radius: 0.1 }]);
+        let p = preset(vec![Action::Joystick {
+            stick: Stick::Dpad,
+            center: Point::new(0.2, 0.8),
+            radius: 0.1,
+            press: Press::Pushed,
+        }]);
         let mut m = Mapper::default();
         let keys = HashSet::new();
         let now = Instant::now();
@@ -627,5 +739,138 @@ mod tests {
             assert_eq!(a, [0.0, 0.0, GRAVITY]);
         }
         assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(200)).motion.is_none());
+    }
+
+    fn stick_at(x: f32, y: f32, buttons: u32) -> Merged {
+        Merged { axes: [0.0, 0.0, x, y, 0.0, 0.0], buttons, ..Default::default() }
+    }
+
+    fn phases(out: &Output) -> Vec<u32> {
+        out.contacts.iter().map(|c| c.phase).collect()
+    }
+
+    #[test]
+    fn a_pushed_joystick_ignores_a_nudge_but_not_a_push() {
+        let p = preset(vec![Action::Joystick {
+            stick: Stick::Right,
+            center: Point::new(0.8, 0.8),
+            radius: 0.1,
+            press: Press::Pushed,
+        }]);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let nudge = stick_at(0.3, 0.0, 0);
+        assert!(m.step(&p, &Inputs { pad: &nudge, keys: &keys }, &v, at(0)).contacts.is_empty());
+        assert!(m.step(&p, &Inputs { pad: &Merged::default(), keys: &keys }, &v, at(20)).contacts.is_empty());
+        // Held a little longer, it lands; pushed hard, at once.
+        m.step(&p, &Inputs { pad: &nudge, keys: &keys }, &v, at(40));
+        assert_eq!(phases(&m.step(&p, &Inputs { pad: &nudge, keys: &keys }, &v, at(100))), [DOWN]);
+        let mut m = Mapper::default();
+        assert_eq!(phases(&m.step(&p, &Inputs { pad: &stick_at(0.9, 0.0, 0), keys: &keys }, &v, at(0))), [DOWN]);
+    }
+
+    #[test]
+    fn a_toggled_joystick_stays_down_at_rest_until_clicked_again() {
+        let p = preset(vec![Action::Joystick {
+            stick: Stick::Right,
+            center: Point::new(0.8, 0.8),
+            radius: 0.1,
+            press: Press::toggle_for(&Stick::Right),
+        }]);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let r3 = PadButton::RightStick.bit();
+        let mut step = |pad: Merged| phases(&m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0));
+        // Pushing alone does nothing; R3 lands it on the centre, the stick pushes it, and it stays at rest.
+        assert!(step(stick_at(1.0, 0.0, 0)).is_empty());
+        assert_eq!(step(stick_at(0.0, 0.0, r3)), [DOWN]);
+        assert_eq!(step(stick_at(1.0, 0.0, 0)), [MOVE]);
+        assert_eq!(step(stick_at(0.0, 0.0, 0)), [MOVE]);
+        assert!(step(stick_at(0.0, 0.0, 0)).is_empty());
+        assert_eq!(step(stick_at(0.0, 0.0, r3)), [UP]);
+    }
+
+    fn look(press: Press, tap: Option<Input>) -> Preset {
+        preset(vec![Action::Look {
+            stick: Stick::Right,
+            center: Point::new(0.5, 0.5),
+            half: [0.2, 0.2],
+            speed: 1.0,
+            invert_y: false,
+            press,
+            tap,
+        }])
+    }
+
+    #[test]
+    fn looking_drags_at_the_sticks_pace_and_lands_again_before_the_edge() {
+        let p = look(Press::Pushed, None);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let right = stick_at(1.0, 0.0, 0);
+        let mut log = Vec::new();
+        let mut x = Vec::new();
+        for i in 0..60 {
+            let out = m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, t0 + Duration::from_millis(16 * i));
+            for c in &out.contacts {
+                log.push(c.phase);
+                x.push(c.x);
+            }
+            // Never lifted and landed in the same step.
+            assert!(out.contacts.len() <= 1, "{:?}", phases(&out));
+        }
+        // Lands set back from the way it's heading (left of centre), moves right, lifts before 0.7 and lands again.
+        assert_eq!(log[0], DOWN);
+        assert!((x[0] - 0.4).abs() < 1e-6, "{}", x[0]);
+        assert!(x.iter().all(|&u| u <= 0.7 + 1e-6));
+        assert!(log.iter().filter(|&&ph| ph == UP).count() >= 2, "{log:?}");
+        assert!(log.windows(2).all(|w| w != [UP, MOVE]));
+        // 16 ms at full tilt moves 1.0 × 16 ms of the shorter side (the width here).
+        let i = log.iter().position(|&ph| ph == MOVE).unwrap();
+        assert!((x[i] - x[i - 1] - 0.016).abs() < 1e-3, "{}", x[i] - x[i - 1]);
+    }
+
+    #[test]
+    fn looking_rests_a_moment_when_the_stick_lets_go_then_lifts() {
+        let p = look(Press::Pushed, None);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let right = stick_at(1.0, 0.0, 0);
+        m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, at(0));
+        m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, at(16));
+        let rest = Merged::default();
+        let out = m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(32));
+        assert!(out.contacts.is_empty() && out.busy);
+        assert!(m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(200)).contacts.is_empty());
+        assert_eq!(phases(&m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(400))), [UP]);
+    }
+
+    #[test]
+    fn a_look_tap_lifts_the_finger_taps_where_it_was_and_looks_on() {
+        let p = look(Press::Pushed, Some(Input::Pad(PadButton::RightShoulder)));
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let r1 = PadButton::RightShoulder.bit();
+        let mut all = Vec::new();
+        for i in 0..20u64 {
+            let pad = stick_at(1.0, 0.0, if (3..5).contains(&i) { r1 } else { 0 });
+            let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(16 * i));
+            all.push(phases(&out));
+        }
+        // Looking (down, moves), the tap's lift, its down and up, then the look lands again.
+        let flat: Vec<u32> = all.concat();
+        let ups = flat.iter().filter(|&&ph| ph == UP).count();
+        let downs = flat.iter().filter(|&&ph| ph == DOWN).count();
+        assert!(ups >= 2 && downs >= 3, "{all:?}");
+        assert_eq!(all[3], [UP]);
+    }
+
+    #[test]
+    fn presets_from_before_press_settings_load_as_they_were() {
+        let old = r#"{"name":"Old","bindings":[
+            {"action":{"kind":"pointer","stick":"left","center":{"x":0.5,"y":0.5},"half":[0.5,0.5],
+              "touch":{"pad":"right_trigger"},"style":"centered","speed":0.9}},
+            {"action":{"kind":"joystick","stick":"left","center":{"x":0.2,"y":0.8},"radius":0.15}}],
+            "show_spots":true,"deadzone":0.15,"apps":[]}"#;
+        let p: Preset = serde_json::from_str(old).unwrap();
+        assert!(matches!(&p.bindings[0].action, Action::Pointer { toggle: false, .. }));
+        assert!(matches!(&p.bindings[1].action, Action::Joystick { press: Press::Pushed, .. }));
     }
 }

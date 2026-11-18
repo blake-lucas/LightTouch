@@ -8,7 +8,7 @@ use eframe::egui::{
 use lighttouch_model::Model;
 use lighttouch_model::gamepad::mapper::View;
 use lighttouch_model::gamepad::preset::{
-    Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Stick, TapMode,
+    Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Press, Stick, TapMode,
 };
 use lighttouch_model::gamepad::sdl::{Backend, Pad, PadKind, Sensors};
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ pub const GAME_CONTROLLER: &str = "\u{E26E}";
 const HAND_TAP: &str = "\u{EC90}";
 const SWIPE: &str = "\u{EC92}";
 const JOYSTICK: &str = "\u{EA5E}";
+const CROSSHAIR: &str = "\u{E1D6}";
 const CURSOR: &str = "\u{E1DC}";
 const FLICK: &str = "\u{E0A4}";
 const TILT: &str = "\u{E1E0}";
@@ -59,6 +60,10 @@ enum Slot {
     With,
     Touch,
     Stick,
+    /// A stick binding's press button.
+    Press,
+    /// A look binding's tap button.
+    Tap,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -91,9 +96,19 @@ pub fn bound_keys(model: &Model) -> HashSet<String> {
                 add(touch, &mut keys);
                 stick_keys(stick, &mut keys);
             }
-            Action::Joystick { stick, .. } | Action::Flick { stick, .. } | Action::Tilt { stick, .. } => {
-                stick_keys(stick, &mut keys)
+            Action::Joystick { stick, press, .. } => {
+                if let Some(i) = press.input() {
+                    add(i, &mut keys);
+                }
+                stick_keys(stick, &mut keys);
             }
+            Action::Look { stick, press, tap, .. } => {
+                for i in press.input().into_iter().chain(tap.as_ref()) {
+                    add(i, &mut keys);
+                }
+                stick_keys(stick, &mut keys);
+            }
+            Action::Flick { stick, .. } | Action::Tilt { stick, .. } => stick_keys(stick, &mut keys),
             Action::Motion { .. } => {}
         }
     }
@@ -198,7 +213,7 @@ pub fn overlay(app: &mut App, ui: &mut Ui, screen: Rect) {
                 }
                 handles.extend([(Handle::Main, a), (Handle::End, b)]);
             }
-            Action::Joystick { stick, center, radius } => {
+            Action::Joystick { stick, center, radius, .. } => {
                 let c = px(view.shown(*center));
                 let ring = radius * short;
                 if show {
@@ -209,11 +224,35 @@ pub fn overlay(app: &mut App, ui: &mut Ui, screen: Rect) {
                         Stroke::new(1.5, Color32::from_white_alpha(150)),
                     );
                     spot(&painter, c, r * 0.8, &stick.short(), lit, editing);
-                    if let Some(f) = finger {
-                        painter.circle_filled(px(f), r * 0.55, theme::ACCENT.gamma_multiply(0.8));
-                    }
+                }
+                // Always drawn while down: a finger toggled down shouldn't be a secret.
+                if let Some(f) = finger {
+                    painter.circle_filled(px(f), r * 0.55, theme::ACCENT.gamma_multiply(0.8));
                 }
                 handles.extend([(Handle::Main, c), (Handle::Size, c + vec2(ring, 0.0))]);
+            }
+            Action::Look { stick, center, half, .. } => {
+                let c = px(view.shown(*center));
+                let corner = c + vec2(half[0] * screen.width(), half[1] * screen.height());
+                if show {
+                    let area = Rect::from_two_pos(c - (corner - c), corner);
+                    painter.rect_stroke(
+                        area,
+                        CornerRadius::same(8),
+                        Stroke::new(1.0, Color32::from_white_alpha(if editing { 170 } else { 70 })),
+                        egui::StrokeKind::Inside,
+                    );
+                    spot(&painter, c, r * 0.8, &stick.short(), lit, editing);
+                    // Crosshair ticks round it: a look area, not a joystick.
+                    let tick = Stroke::new(1.5, if lit { theme::ACCENT } else { Color32::from_white_alpha(200) });
+                    for d in [vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)] {
+                        painter.line_segment([c + d * r * 1.0, c + d * r * 1.45], tick);
+                    }
+                }
+                if let Some(f) = finger {
+                    painter.circle_filled(px(f), r * 0.55, theme::ACCENT.gamma_multiply(0.8));
+                }
+                handles.extend([(Handle::Main, c), (Handle::Size, corner)]);
             }
             Action::Flick { stick, center, length } => {
                 let c = px(view.shown(*center));
@@ -322,7 +361,10 @@ fn drag_to(action: &mut Action, handle: Handle, u: f32, v: f32, view: &View, scr
         (Action::Swipe { from, .. }, Handle::Main) => *from = to,
         (Action::Swipe { to: end, .. }, Handle::End) => *end = to,
         (
-            Action::Joystick { center, .. } | Action::Flick { center, .. } | Action::Pointer { center, .. },
+            Action::Joystick { center, .. }
+            | Action::Flick { center, .. }
+            | Action::Pointer { center, .. }
+            | Action::Look { center, .. },
             Handle::Main,
         ) => *center = to,
         (Action::Joystick { center, radius, .. }, Handle::Size) => {
@@ -331,7 +373,7 @@ fn drag_to(action: &mut Action, handle: Handle, u: f32, v: f32, view: &View, scr
         (Action::Flick { center, length, .. }, Handle::Size) => {
             *length = (here.distance(shown_px(*center)) / short).clamp(0.05, 0.8)
         }
-        (Action::Pointer { center, half, .. }, Handle::Size) => {
+        (Action::Pointer { center, half, .. } | Action::Look { center, half, .. }, Handle::Size) => {
             let c = shown_px(*center);
             *half = [
                 ((here.x - c.x).abs() / screen.width()).clamp(0.03, 1.0),
@@ -1031,6 +1073,11 @@ fn bindings(app: &mut App, ui: &mut Ui) {
         let slot = match &preset.bindings[i].action {
             Action::Tap { .. } | Action::Swipe { .. } | Action::Device { .. } => Some(Slot::Main),
             Action::Pointer { .. } => Some(Slot::Touch),
+            Action::Joystick { press, .. } | Action::Look { press, .. }
+                if press.input().is_some_and(|i| matches!(i, Input::Key(k) if k.is_empty())) =>
+            {
+                Some(Slot::Press)
+            }
             _ => None,
         };
         capture = slot.map(|s| (i, s));
@@ -1106,6 +1153,7 @@ fn action_icon(action: &Action) -> &'static str {
         Action::Tap { .. } => HAND_TAP,
         Action::Swipe { .. } => SWIPE,
         Action::Joystick { .. } => JOYSTICK,
+        Action::Look { .. } => CROSSHAIR,
         Action::Pointer { .. } => CURSOR,
         Action::Flick { .. } => FLICK,
         Action::Tilt { .. } => TILT,
@@ -1127,12 +1175,23 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             stick: Stick::Left,
             center: Point::new(0.22, 0.78),
             radius: 0.15,
+            press: Press::toggle_for(&Stick::Left),
+        }),
+        (CROSSHAIR, "Look around (camera)", || Action::Look {
+            stick: Stick::Right,
+            center: Point::new(0.7, 0.45),
+            half: [0.25, 0.3],
+            speed: 0.6,
+            invert_y: false,
+            press: Press::Pushed,
+            tap: None,
         }),
         (CURSOR, "Pointer (stick + touch)", || Action::Pointer {
             stick: Stick::Left,
             center: Point::CENTER,
             half: [0.5, 0.5],
             touch: unset(),
+            toggle: false,
             style: PointerStyle::Centered,
             speed: 0.9,
         }),
@@ -1154,6 +1213,15 @@ fn input_text(input: &Input, kind: PadKind) -> String {
     }
 }
 
+/// When a stick binding's finger is down, for its summary.
+fn press_text(press: &Press, kind: PadKind) -> String {
+    match press {
+        Press::Pushed => "touching while pushed".into(),
+        Press::Hold { input } => format!("touching while {} is held", input_text(input, kind)),
+        Press::Toggle { input } => format!("{} toggles the finger", input_text(input, kind)),
+    }
+}
+
 fn summary(binding: &Binding, kind: PadKind) -> String {
     let with = binding.with.as_ref().map(|w| format!("Hold {} · ", w.label(kind))).unwrap_or_default();
     let s = match &binding.action {
@@ -1163,10 +1231,18 @@ fn summary(binding: &Binding, kind: PadKind) -> String {
             TapMode::Repeat => "Taps over and over while held".into(),
         },
         Action::Swipe { ms, .. } => format!("Swipes in {ms} ms"),
-        Action::Joystick { stick, .. } => format!("{} drags an on-screen stick", stick.label()),
-        Action::Pointer { stick, touch, style, .. } => {
+        Action::Joystick { stick, press, .. } => {
+            format!("{} drags an on-screen stick, {}", stick.label(), press_text(press, kind))
+        }
+        Action::Look { stick, press, tap, .. } => {
+            let tap = tap.as_ref().map(|t| format!(", {} taps", input_text(t, kind))).unwrap_or_default();
+            let press = if *press == Press::Pushed { String::new() } else { format!(", {}", press_text(press, kind)) };
+            format!("{} looks around{press}{tap}", stick.label())
+        }
+        Action::Pointer { stick, touch, toggle, style, .. } => {
             let how = if *style == PointerStyle::Centered { "returns to centre" } else { "stays where it's left" };
-            format!("{} points ({how}), {} touches", stick.label(), input_text(touch, kind))
+            let touches = if *toggle { "toggles the touch" } else { "touches" };
+            format!("{} points ({how}), {} {touches}", stick.label(), input_text(touch, kind))
         }
         Action::Flick { stick, .. } => format!("{} flicks swipe", stick.label()),
         Action::Tilt { stick, .. } => format!("{} leans the device", stick.label()),
@@ -1225,7 +1301,10 @@ fn binding_row(
                         *capture = Some((i, Slot::Touch));
                     }
                 }
-                Action::Joystick { stick, .. } | Action::Flick { stick, .. } | Action::Tilt { stick, .. } => {
+                Action::Joystick { stick, .. }
+                | Action::Look { stick, .. }
+                | Action::Flick { stick, .. }
+                | Action::Tilt { stick, .. } => {
                     if input_cap(ui, p, &stick.label()).clicked() {
                         *capture = Some((i, Slot::Stick));
                     }
@@ -1307,10 +1386,47 @@ fn binding_settings(
                 ui.add(egui::Slider::new(ms, 40..=800).suffix(" ms"));
             });
         }
-        Action::Joystick { stick, radius, .. } => {
+        Action::Joystick { stick, radius, press, .. } => {
+            let was = stick.clone();
             stick_row(ui, p, row, stick);
+            follow_stick(&was, stick, press);
             row(ui, "Reach", &mut |ui| {
                 ui.add(egui::Slider::new(radius, 0.04..=0.5).show_value(false));
+            });
+            press_rows(ui, p, row, press, stick, kind, i, capture);
+        }
+        Action::Look { stick, half, center, speed, invert_y, press, tap } => {
+            let was = stick.clone();
+            stick_row(ui, p, row, stick);
+            follow_stick(&was, stick, press);
+            row(ui, "Speed", &mut |ui| {
+                ui.add(egui::Slider::new(speed, 0.1..=2.5).show_value(false))
+                    .on_hover_text("How fast the finger drags at full tilt (pushed a little, it goes gently)");
+            });
+            row(ui, "Invert up and down", &mut |ui| {
+                widgets::switch(ui, p, invert_y);
+            });
+            press_rows(ui, p, row, press, stick, kind, i, capture);
+            row(ui, "Tap with", &mut |ui| {
+                let text = tap.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
+                if input_cap(ui, p, &text)
+                    .on_hover_text("For games that fire with a tap on the look area: lifts the look finger and taps")
+                    .clicked()
+                {
+                    *capture = Some((i, Slot::Tap));
+                }
+                if tap.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
+                    *tap = None;
+                }
+            });
+            row(ui, "Area", &mut |ui| {
+                if widgets::text_button(ui, p, "Right half")
+                    .on_hover_text("Or drag the area's corner in Edit layout")
+                    .clicked()
+                {
+                    *half = [0.25, 0.5];
+                    *center = Point::new(0.75, 0.5);
+                }
             });
         }
         Action::Flick { stick, length, .. } => {
@@ -1319,12 +1435,13 @@ fn binding_settings(
                 ui.add(egui::Slider::new(length, 0.05..=0.8).show_value(false));
             });
         }
-        Action::Pointer { stick, style, speed, half, center, touch } => {
+        Action::Pointer { stick, style, speed, half, center, touch, toggle } => {
             stick_row(ui, p, row, stick);
             row(ui, "Touch with", &mut |ui| {
                 if input_cap(ui, p, &input_text(touch, kind)).clicked() {
                     *capture = Some((i, Slot::Touch));
                 }
+                widgets::segmented(ui, p, toggle, &[(false, "While held"), (true, "Toggle")]);
             });
             row(ui, "Pointer", &mut |ui| {
                 widgets::segmented(
@@ -1395,6 +1512,76 @@ fn binding_settings(
             binding.with = None;
         }
     });
+}
+
+/// A stick binding's press setting: while pushed, while a button is held, or toggled by one (the stick's click unless
+/// it has none, when the player is asked for one).
+#[allow(clippy::too_many_arguments)]
+fn press_rows(
+    ui: &mut Ui,
+    p: &theme::Palette,
+    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
+    press: &mut Press,
+    stick: &Stick,
+    kind: PadKind,
+    i: usize,
+    capture: &mut Option<(usize, Slot)>,
+) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        Pushed,
+        Hold,
+        Toggle,
+    }
+    let was = match press {
+        Press::Pushed => Mode::Pushed,
+        Press::Hold { .. } => Mode::Hold,
+        Press::Toggle { .. } => Mode::Toggle,
+    };
+    let mut mode = was;
+    row(ui, "Finger down", &mut |ui| {
+        widgets::segmented(
+            ui,
+            p,
+            &mut mode,
+            &[(Mode::Toggle, "Toggle"), (Mode::Hold, "While held"), (Mode::Pushed, "While pushed")],
+        );
+    });
+    if mode != was {
+        let input = press.input().cloned().filter(|i| !matches!(i, Input::Key(k) if k.is_empty()));
+        let input = input.or_else(|| stick.click());
+        let asked = input.is_none();
+        let input = input.unwrap_or_else(unset);
+        *press = match mode {
+            Mode::Pushed => Press::Pushed,
+            Mode::Hold => Press::Hold { input },
+            Mode::Toggle => Press::Toggle { input },
+        };
+        if asked && mode != Mode::Pushed {
+            *capture = Some((i, Slot::Press));
+        }
+    }
+    if let Some(input) = press.input() {
+        let text = input_text(input, kind);
+        row(ui, "Button", &mut |ui| {
+            if input_cap(ui, p, &text).on_hover_text("Click, then press the button to use").clicked() {
+                *capture = Some((i, Slot::Press));
+            }
+        });
+    }
+}
+
+/// The stick changed: a press button that was the old stick's click becomes the new one's (or unset: the D-pad and
+/// keys have none).
+fn follow_stick(was: &Stick, now: &Stick, press: &mut Press) {
+    if was == now {
+        return;
+    }
+    if let Some(input) = press.input_mut() {
+        if was.click().as_ref() == Some(input) {
+            *input = now.click().unwrap_or_else(unset);
+        }
+    }
 }
 
 fn stick_row(ui: &mut Ui, p: &theme::Palette, row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)), stick: &mut Stick) {
@@ -1498,15 +1685,28 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
     let Some(binding) = preset.bindings.get_mut(capture.binding) else { return };
     match (capture.slot, &mut binding.action) {
         (Slot::With, _) => binding.with = got,
+        (Slot::Stick, Action::Joystick { stick: s, press, .. } | Action::Look { stick: s, press, .. }) => {
+            if let Some(new) = stick {
+                let was = std::mem::replace(s, new);
+                follow_stick(&was, s, press);
+            }
+        }
         (
             Slot::Stick,
-            Action::Joystick { stick: s, .. }
-            | Action::Flick { stick: s, .. }
-            | Action::Tilt { stick: s, .. }
-            | Action::Pointer { stick: s, .. },
+            Action::Flick { stick: s, .. } | Action::Tilt { stick: s, .. } | Action::Pointer { stick: s, .. },
         ) => {
             if let Some(new) = stick {
                 *s = new;
+            }
+        }
+        (Slot::Press, Action::Joystick { press, .. } | Action::Look { press, .. }) => {
+            if let (Some(g), Some(input)) = (got, press.input_mut()) {
+                *input = g;
+            }
+        }
+        (Slot::Tap, Action::Look { tap, .. }) => {
+            if got.is_some() {
+                *tap = got;
             }
         }
         (Slot::Touch, Action::Pointer { touch, .. }) => {
