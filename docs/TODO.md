@@ -20,7 +20,9 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 Also Tested: the iPhone 4 on 4.2.1/4.3.5, the 3GS on 5.1.1 and the iPod touch 3G on 4.2.1. Not starting: the iPod
 touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 skipped for now.
 
-- [ ] iPhone 4 6.1.3 and iPad 5.1.1 on a phone (prepared and checked on Linux only so far).
+- [ ] iPhone 4 6.1.3 and iPad 5.1.1 on a phone. The iPhone 4 ran the game benchmark on the Poco (docs/GAME-BENCHMARKS.md).
+  The iPad on the Poco: Infinity Blade and Epic Citadel launched after Temple Run kept showing Temple Run's last frame
+  (the desktop draws them), and Epic Citadel's intro movie judders as if frames came out of order (gameplay ~35-40 fps).
 - [ ] iPod touch 1G / original iPhone white screen: iBoot never boots the kernel after preparation.
 - [ ] iPhone 3GS microphone records silence (the setting attaches the mic only to the A4 devices).
 - [ ] A validation run per target that a person doesn't have to watch, extending LT Bench and the
@@ -184,6 +186,12 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   it to SpringBoard. Users need a new release to get it.
 - [x] Prepared-device (`.itbase`) import removed from every app, with `get-assets.py`: each app prepares from an
   IPSW it downloads (or the user chooses), with the boot ROM downloaded too, so nothing needs rehosting.
+- [x] Jailbroken iPod touch 3G and iPhone 3GS ran slowly (BTServer killed at every start by the sandbox patch's missing
+  profile-switch flag): fixed for new preparations in `5627e538`, and devices prepared by v0.0.13 are repaired when they
+  open (`0af30246`, Portable/src/KernelRepair.hpp). Checked: 3G 4.2.1 14 kills / 19.7 fps -> 0 / 27.8, 3GS 5.1.1 15 /
+  20.7 -> 0 / 30.0 (Home-page swipes, Linux).
+- [ ] Preparing failed once with "firmwarekit's emulator library has no machine for n18ap" while the machine was
+  compiling (the `machines` listing exited non-zero); the retry passed. Not reproduced.
 - [ ] Jailbreak on the iPod touch 2G. A jailbroken 2G (3.1.3 checked, on main's firmwarekit too) starts once and then
   never again: Cydia's Startup job installs Substrate from its AutoInstall folder on the first boot, Substrate's install
   script writes `/etc/launchd.conf` (`bsexec .. /usr/bin/cynject 1 …/SubstrateLauncher.dylib`), and on every later
@@ -241,7 +249,15 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
   reproduced on the 4G or 2G desktop runs of 2026-10-22.
 
-- [ ] Doodle Jump on the iPod touch 3G (5.1.1) plays at double speed: physics run twice as fast as they should.
+- [ ] Doodle Jump plays at double speed on the iPod touch 3G and iPhone 3GS (4.2.1 and 5.1.1): its loop runs at exactly
+  120 Hz against the panel's 60 Hz vblank (120 presents a second, 60 published; the menu doodler bounces every 0.5 s,
+  every 1.0 s on the iPod touch 2G 4.2.1 and 4G 6.1.6 with the same IPA). Display-linked games on the 3G (Jetpack, Tiny
+  Wings) present once per vblank. Ruled out: the guest clock (the lock screen keeps time), the PMGR event timer, the
+  CLCD's interrupt rate and clock slot, TV-out (never raises), the accelerometer poll rate (~90 Hz on both). Cause: the
+  2.x-5.x GL front end's present (`fe_present`, qemu-ios contrib/gles-public) never waits: with no free CA buffer it
+  drops the frame and returns, where a device blocks until one frees at the next vblank. A loop that relies on that
+  wait runs free. Fix: pace presents to one per vblank in the front end (a new guest package serial), then check
+  other games' frame rates.
   An accuracy bug (timer, display-link or vsync rate), not a performance one.
 
 - [x] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"

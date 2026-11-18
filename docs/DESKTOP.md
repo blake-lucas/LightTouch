@@ -60,7 +60,10 @@ python3 scripts/release/package-desktop.py out/LightTouch-windows-x86_64 --os wi
 unpacks it to `%LOCALAPPDATA%\LightTouch\Runtime\<hash>\` with a progress screen (`crates/lighttouch-core/src/bundle.rs`);
 later starts and the workers use that folder as it is. A new version unpacks to a folder of its own and removes the
 old ones; a folder missing a file, or holding one of another size, is unpacked again. A `resources\` folder beside the
-executable still wins (dev builds).
+executable still wins (dev builds). Checked in a Windows 10 VM with v0.0.13's engine: the first command unpacks 741 files (~5 s), an iPod
+touch 2G prepares and starts from them, the next start reuses them, a second build unpacks to its own folder and
+removes the first's, and a deleted engine DLL is unpacked again. The progress screen was checked on Linux under Xvfb
+(the VM can't open the app's window, v0.0.13's included). Open: stripping symbols would save ~10 MB of the 75 MB.
 
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
 `~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
