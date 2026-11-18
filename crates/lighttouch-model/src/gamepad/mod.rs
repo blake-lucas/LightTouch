@@ -228,10 +228,8 @@ impl Gamepads {
 }
 
 fn send(session: &mut Session, out: mapper::Output) {
-    // The engine takes eight contacts a batch.
-    for chunk in out.contacts.chunks(8) {
-        session.touch(chunk.to_vec());
-    }
+    // Session::touch splits them into batches the engine takes.
+    session.touch(out.contacts);
     for (button, down) in out.buttons {
         session.button(button, down);
     }

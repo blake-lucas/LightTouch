@@ -269,7 +269,6 @@ impl GuestView {
             }
         }
         if !batch.is_empty() {
-            batch.truncate(8);
             session.touch(batch);
         }
         // Losing focus releases everything (only on the change: some setups never report focus at all).
