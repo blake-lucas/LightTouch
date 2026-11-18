@@ -253,15 +253,12 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
   reproduced on the 4G or 2G desktop runs of 2026-10-22.
 
-- [ ] Doodle Jump plays at double speed on the iPod touch 3G and iPhone 3GS (4.2.1 and 5.1.1): its loop runs at exactly
-  120 Hz against the panel's 60 Hz vblank (120 presents a second, 60 published; the menu doodler bounces every 0.5 s,
-  every 1.0 s on the iPod touch 2G 4.2.1 and 4G 6.1.6 with the same IPA). Display-linked games on the 3G (Jetpack, Tiny
-  Wings) present once per vblank. Ruled out: the guest clock (the lock screen keeps time), the PMGR event timer, the
-  CLCD's interrupt rate and clock slot, TV-out (never raises), the accelerometer poll rate (~90 Hz on both). Cause: the
-  2.x-5.x GL front end's present (`fe_present`, qemu-ios contrib/gles-public) never waits: with no free CA buffer it
-  drops the frame and returns, where a device blocks until one frees at the next vblank. A loop that relies on that
-  wait runs free. Fix: pace presents to one per vblank in the front end (a new guest package serial), then check
-  other games' frame rates.
+- [x] Doodle Jump played at double speed on the iPod touch 3G and iPhone 3GS (4.2.1 and 5.1.1): its loop ran at exactly
+  120 Hz against the panel's 60 Hz vblank, because the 2.x-5.x GL front end's present (`fe_present`, qemu-ios
+  contrib/gles-public) never waited where a device blocks until a buffer frees at vblank. Each view now presents at
+  most once per 60 Hz slot (engine `2cc48708a1`, `a79be0befc`; guest tools serial 45, built by the Guest packages
+  workflow). 3G 5.1.1, Doodle Jump 3.10.1: menu bounce 0.5 -> 0.99 s (the 4G's 1.0), loop 120 -> ~60/s, 58-60 fps
+  published; 3G 4.2.1: Doodle Jump 3.6.1 loop 120 -> 56/s, Jetpack 58 -> 57-59 fps, Tiny Wings 54 -> 58-59 fps.
   An accuracy bug (timer, display-link or vsync rate), not a performance one.
 
 - [x] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"
