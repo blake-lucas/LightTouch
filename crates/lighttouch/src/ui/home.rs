@@ -7,13 +7,15 @@ use lighttouch_model::session::Phase;
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
+    // A soft glow behind the device, under the header and the dock too: its place is held before they're drawn and
+    // filled once the device's room is known.
+    let glow_slot = ui.painter().add(egui::Shape::Noop);
     top_bar(app, ui);
     let active = app.model.session_active();
     // The dock's room stays while a device is selected, so starting, stopping or failing never resizes the device.
     let dock_height = if app.model.current().is_some() { 92.0 } else { 0.0 };
     let space = Rect::from_min_max(ui.cursor().min, ui.max_rect().max - vec2(0.0, dock_height));
-    // A soft glow behind the device.
-    glow(ui, space, p.primary.gamma_multiply(if p.dark { 0.07 } else { 0.10 }));
+    ui.painter().set(glow_slot, glow(space, p.primary.gamma_multiply(if p.dark { 0.07 } else { 0.10 })));
 
     let board = app.model.current().map(|d| d.board.clone());
     let skin = Skin::for_board(board.as_deref());
@@ -126,7 +128,8 @@ fn error_chip(app: &mut App, ui: &mut Ui) {
     }
 }
 
-fn glow(ui: &Ui, rect: Rect, color: Color32) {
+/// A soft oval glow centred on `rect`, fading out past it (the page clips it).
+fn glow(rect: Rect, color: Color32) -> egui::Shape {
     let center = rect.center();
     let radius = rect.width().max(rect.height()) * 0.55;
     let mut mesh = egui::Mesh::default();
@@ -139,7 +142,7 @@ fn glow(ui: &Ui, rect: Rect, color: Color32) {
     for i in 0..steps as u32 {
         mesh.add_triangle(0, 1 + i, 1 + (i + 1) % steps as u32);
     }
-    ui.painter().with_clip_rect(rect).add(egui::Shape::mesh(mesh));
+    egui::Shape::mesh(mesh)
 }
 
 /// Home and the side buttons on the drawn device: press and hold, like hardware.
