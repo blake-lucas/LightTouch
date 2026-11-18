@@ -94,8 +94,30 @@ impl GuestView {
 
     /// The guest laid its portrait UI a quarter clockwise into a landscape scan (the iPad's panel), so the scan
     /// stands a quarter-turn from upright: the frame is wider than tall while the cutout it fills is portrait.
-    fn scan_turned(&self) -> bool {
+    pub fn scan_turned(&self) -> bool {
         self.size[0] > self.size[1]
+    }
+
+    /// The frame's average colour around a point of its scan (0..1), for drawing over it in its inverse.
+    pub fn sample(&self, x: f64, y: f64) -> Option<Color32> {
+        let [w, h] = self.size;
+        if w == 0 || h == 0 || self.rgba.len() < w * h * 4 {
+            return None;
+        }
+        let (cx, cy) = ((x.clamp(0.0, 1.0) * (w - 1) as f64) as i64, (y.clamp(0.0, 1.0) * (h - 1) as f64) as i64);
+        let reach = (w.min(h) as i64 / 40).max(2);
+        let (mut sum, mut n) = ([0u64; 3], 0u64);
+        for dy in (-reach..=reach).step_by(2) {
+            for dx in (-reach..=reach).step_by(2) {
+                let (px, py) = ((cx + dx).clamp(0, w as i64 - 1) as usize, (cy + dy).clamp(0, h as i64 - 1) as usize);
+                let i = (py * w + px) * 4;
+                for c in 0..3 {
+                    sum[c] += self.rgba[i + c] as u64;
+                }
+                n += 1;
+            }
+        }
+        Some(Color32::from_rgb((sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8))
     }
 
     /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
@@ -233,9 +255,14 @@ impl GuestView {
                     let (x, y) = pair.partner(n.x, n.y);
                     let (u, v) = rotation.from_scan(x, y, turned);
                     let other = rect.min + egui::vec2(u as f32 * rect.width(), v as f32 * rect.height());
-                    let stroke = egui::Stroke::new(1.5, Color32::from_white_alpha(200));
                     for at in [p, other] {
-                        ui.painter().circle(at, 11.0, Color32::from_white_alpha(50), stroke);
+                        let (u, v) = (
+                            ((at.x - rect.left()) / rect.width()) as f64,
+                            ((at.y - rect.top()) / rect.height()) as f64,
+                        );
+                        let (sx, sy) = rotation.to_scan(u, v, turned);
+                        let under = self.sample(sx, sy).unwrap_or(Color32::GRAY);
+                        bubble(&ui.painter().with_clip_rect(rect), at, 11.0, under, self.pair.is_some());
                     }
                     ui.ctx().request_repaint();
                 }
@@ -255,8 +282,12 @@ impl GuestView {
 
     fn keyboard_input(&mut self, ui: &Ui, model: &mut Model) {
         let typing = ui.ctx().egui_wants_keyboard_input();
-        let key = |key| !typing && ui.input(|i| i.key_down(key) && i.modifiers.is_none());
-        if model.settings.tilt {
+        // Keys a controller preset binds act only through it.
+        let bound = super::controller::bound_keys(model);
+        let key = |key: egui::Key| {
+            !typing && !bound.contains(key.name()) && ui.input(|i| i.key_down(key) && i.modifiers.is_none())
+        };
+        if model.settings.tilt && !model.gamepads.motion_active {
             let keys = TiltKeys {
                 left: key(egui::Key::ArrowLeft),
                 right: key(egui::Key::ArrowRight),
@@ -280,7 +311,9 @@ impl GuestView {
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let key = |key| ui.input(|i| i.key_down(key) && i.modifiers.is_none());
+        let bound = super::controller::bound_keys(model);
+        let key =
+            |key: egui::Key| !bound.contains(key.name()) && ui.input(|i| i.key_down(key) && i.modifiers.is_none());
         let keys = [
             (egui::Key::H, device_frame::HOME),
             (egui::Key::P, device_frame::POWER),
@@ -348,6 +381,19 @@ impl GuestView {
             session.cancel_input();
         }
     }
+}
+
+/// A finger's place drawn over the guest (the Alt-drag pinch, a controller's pointer): a ring and a light fill in the
+/// inverse of the colour under it, so it shows on any game, with a thin dark and light edge for flat mid-greys.
+/// `pressed` draws it smaller and fuller, as a finger down.
+pub fn bubble(painter: &egui::Painter, at: Pos2, radius: f32, under: Color32, pressed: bool) {
+    let inverse = Color32::from_rgb(255 - under.r(), 255 - under.g(), 255 - under.b());
+    let r = if pressed { radius * 0.82 } else { radius };
+    painter.circle_filled(at, r, inverse.gamma_multiply(if pressed { 0.55 } else { 0.28 }));
+    painter.circle_stroke(at, r + 1.5, egui::Stroke::new(1.0, Color32::from_black_alpha(140)));
+    painter.circle_stroke(at, r, egui::Stroke::new(2.0, inverse));
+    painter.circle_stroke(at, r - 1.5, egui::Stroke::new(1.0, Color32::from_white_alpha(110)));
+    painter.circle_filled(at, 2.0, inverse);
 }
 
 fn options(scaling: Scaling) -> TextureOptions {

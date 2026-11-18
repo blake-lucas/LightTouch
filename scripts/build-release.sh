@@ -162,7 +162,8 @@ step_desktop() {
     python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Linux-x86_64" --os linux \
         --app "$R/app/target/bullseye/release/lighttouch" --firmwarekit "$R/app/target/bullseye/release/firmwarekit" \
         --engine "$a/libqemu-arm.so" --usbmuxd "$a/usbmuxd-qemu" --guest-tools "$tools" \
-        --lib "$a/lib" --notices "engine=$n/linux/engine" --notices "usb=$n/linux/usb" --group-source "engine=$GH_ENGINE" \
+        --lib "$a/lib" --lib "$R/app/target/bullseye/sdl" --notices "engine=$n/linux/engine" --notices "usb=$n/linux/usb" \
+        --notices "sdl=$R/app/target/bullseye/sdl-notices" --group-source "engine=$GH_ENGINE" \
         --appimage "$LT_APPIMAGE_TOOLS" > "$R/desktop-linux-package.log" 2>&1 ||
         { tail -30 "$R/desktop-linux-package.log" >&2; exit 1; }
     # Windows: the windows step's engine build relinked as a DLL, its DLL closure, and the app cross-built.
@@ -207,11 +208,13 @@ step_macos() {
     ssh "$LT_MAC" "export PATH=\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
         caffeinate -s $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
             --openssl-prefix $LT_MAC_OPENSSL --ffmpeg-archive \$PWD/$ff > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
+        brew list sdl2 > /dev/null 2>&1 || brew install sdl2 > /dev/null
         (cd app && caffeinate -s cargo build --release --locked -p lighttouch -p lighttouch-firmware \
             --features lighttouch-services/vendored-openssl) > app.log 2>&1 || { tail -30 app.log; exit 1; }
         $LT_MAC_PYTHON -B app/scripts/release/package-desktop.py \$PWD/LightTouch.app --os macos --app app/target/release/lighttouch \
             --firmwarekit app/target/release/firmwarekit --engine engine/libqemu-arm.dylib --usbmuxd '$LT_MAC_VENDOR/MacOS/usbmuxd' \
-            --guest-tools guest-tools --notices engine=\$PWD/notices/engine --notices usb=\$PWD/notices/usb \
+            --guest-tools guest-tools --lib \$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib \
+            --notices engine=\$PWD/notices/engine --notices usb=\$PWD/notices/usb \
             --group-source engine=$GH_ENGINE > package.log 2>&1 || { tail -30 package.log; exit 1; }
         codesign --verify --deep --strict LightTouch.app
         ditto -c -k --keepParent LightTouch.app $out.zip"

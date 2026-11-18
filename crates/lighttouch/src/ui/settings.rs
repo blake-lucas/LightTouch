@@ -78,6 +78,22 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 #[cfg(not(target_os = "macos"))]
                 const MOUSE: &str = "Click to tap; Alt-drag pinches or rotates, Alt+Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume";
                 widgets::setting_row(ui, &p, icons::INFO, "Mouse and keyboard", MOUSE, |_| {});
+                let mut open_controller = false;
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    super::controller::GAME_CONTROLLER,
+                    "Controllers and key bindings",
+                    "Play with a game controller or keys: taps, on-screen sticks, a pointer, tilt and the controller's motion",
+                    |ui| {
+                        if widgets::tonal(ui, &p, "Open").clicked() {
+                            open_controller = true;
+                        }
+                    },
+                );
+                if open_controller {
+                    app.controller.open = true;
+                }
                 widgets::setting_row(
                     ui,
                     &p,

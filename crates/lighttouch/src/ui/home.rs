@@ -28,10 +28,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     };
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
-    app.guest.show(ui, screen, &mut app.model, running && !asleep);
+    let editing = app.model.gamepads.editing;
+    app.guest.show(ui, screen, &mut app.model, running && !asleep && !editing);
     if running && app.model.settings.overlay_in_device_view {
         overlay::show(ui, &app.model, screen, 0.85);
     }
+    if running {
+        super::controller::overlay(app, ui, screen);
+    }
+    super::controller::step(app, ui, screen);
     state_card(app, ui, screen);
 
     if active {
@@ -300,7 +305,7 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     // While a shutdown is under way the same button forces it.
     let stop_label = if matches!(phase, Phase::Stopping) { "Force stop" } else { "Stop" };
     let show_inspect = app.model.settings.inspect_button;
-    let count = if show_inspect { 7.0 } else { 6.0 };
+    let count = if show_inspect { 8.0 } else { 7.0 };
     let width = count * 72.0 + 32.0;
     let dock = Rect::from_center_size(area.center() - vec2(0.0, 6.0), vec2(width, 70.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(dock), |ui| {
@@ -331,6 +336,7 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                         app.model.settings.rotation = rotation.next();
                         app.model.save_settings();
                     }
+                    super::controller::dock_button(app, ui);
                     if widgets::dock_button(ui, &p, icons::CAMERA, "Screenshot", running || paused, None).clicked() {
                         app.model.screenshot();
                     }

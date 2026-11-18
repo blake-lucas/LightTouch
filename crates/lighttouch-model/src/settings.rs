@@ -100,6 +100,10 @@ pub struct Settings {
     pub network: crate::network::NetworkSettings,
     /// How the device is turned on the home view and in full screen.
     pub rotation: crate::rotation::Rotation,
+    /// The controller preset in use, by name; none turns controller and key bindings off.
+    pub controller_preset: Option<String>,
+    /// Controllers keep acting while another window is in front.
+    pub controller_background: bool,
 }
 
 impl Default for Settings {
@@ -123,6 +127,8 @@ impl Default for Settings {
             detailed_timing: false,
             network: Default::default(),
             rotation: crate::rotation::Rotation::Portrait,
+            controller_preset: None,
+            controller_background: false,
         }
     }
 }

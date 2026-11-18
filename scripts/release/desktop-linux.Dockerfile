@@ -5,7 +5,7 @@ FROM debian:bullseye-slim
 RUN printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian-security bullseye-security main\n' \
         > /etc/apt/sources.list && rm -f /etc/apt/sources.list.d/* \
     && apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl build-essential pkg-config perl make libasound2-dev \
+        ca-certificates curl build-essential pkg-config perl make libasound2-dev libsdl2-2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 ARG RUST_VERSION=1.99.1

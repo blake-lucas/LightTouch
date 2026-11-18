@@ -2,6 +2,7 @@
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
 pub mod crash;
+pub mod gamepad;
 pub mod inspector;
 pub mod network;
 pub mod notices;
@@ -102,6 +103,8 @@ pub struct Model {
     pub error: Option<String>,
     /// Legacy Store and app installs for the current device.
     pub store: store::Store,
+    /// Game controllers and keyboard bindings (gamepad.rs).
+    pub gamepads: gamepad::Gamepads,
     library: Option<Library>,
     task: Option<(Activity, Task<Finished>)>,
     finished: Option<Finished>,
@@ -116,8 +119,15 @@ impl Model {
     pub fn new(dirs: DataDirs, resources: Resources, waker: Waker) -> Self {
         let settings = Settings::load(&dirs.settings());
         let store = store::Store::new(dirs.cache().join("store"), waker.clone());
+        let gamepads = gamepad::Gamepads::new(
+            dirs.root.join("controllers"),
+            resources.dir.clone(),
+            waker.clone(),
+            settings.controller_preset.as_deref(),
+        );
         let mut model = Self {
             store,
+            gamepads,
             dirs,
             resources,
             settings,

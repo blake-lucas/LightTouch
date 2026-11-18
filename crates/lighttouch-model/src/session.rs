@@ -85,6 +85,8 @@ pub struct Session {
     frontmost_asked: Option<Instant>,
     /// The app in front as the guest tools last named it (bundle id, name).
     pub frontmost: Option<(String, String)>,
+    /// A frontmost-app question asked for controller presets (`watch_frontmost`), which doesn't pause.
+    frontmost_watched: Option<Instant>,
     /// The overlay's detailed rows from the running capture, refreshed about once a second.
     pub live_timing: Option<crate::inspector::LiveTiming>,
     live_read: Option<Instant>,
@@ -203,6 +205,7 @@ impl Session {
             live_read: None,
             frontmost_asked: None,
             frontmost: None,
+            frontmost_watched: None,
             last_motion: None,
             stop_requested: None,
             forced: false,
@@ -291,6 +294,13 @@ impl Session {
                 }
                 self.pause_after_frontmost();
             }
+            Event::GuestResult { state, status, output, .. } if self.frontmost_watched.is_some() => {
+                self.frontmost_watched = None;
+                let lines: Vec<&str> = output.trim_end().lines().collect();
+                if state == 2 && status == 0 && lines.len() >= 2 && !lines[1].trim().is_empty() {
+                    self.frontmost = Some((lines[0].trim().to_string(), lines[1].trim().to_string()));
+                }
+            }
             Event::Network(status) => self.network = Some(status),
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
             Event::Exit { clean, dirty, message } => {
@@ -347,6 +357,36 @@ impl Session {
         self.last_motion = Some(now);
         let (acceleration, angular_velocity) = self.tilt.step(keys, now);
         self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
+    }
+
+    /// A motion sample from elsewhere (a controller): acceleration in m/s², and the gyroscope's turn in rad/s for
+    /// boards that have one. At most 100 a second, while the guest runs, on boards with an accelerometer.
+    pub fn motion(&mut self, acceleration: [f64; 3], angular_velocity: [f64; 3]) {
+        let Some(board) = &self.board else { return };
+        if !matches!(self.phase, Phase::Running) || !board.has(BoardInfo::ACCELEROMETER) {
+            return;
+        }
+        let gyro = board.has(BoardInfo::GYRO);
+        let now = Instant::now();
+        if self.last_motion.is_some_and(|t| now.duration_since(t) < Duration::from_millis(10)) {
+            return;
+        }
+        self.last_motion = Some(now);
+        self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
+    }
+
+    /// Ask which app is in front, without pausing (`frontmost` holds the answer). Skipped while a question is out.
+    pub fn watch_frontmost(&mut self) {
+        let waiting = |t: Option<Instant>| t.is_some_and(|at| at.elapsed() < Duration::from_secs(5));
+        if !matches!(self.phase, Phase::Running) || waiting(self.frontmost_watched) || self.frontmost_asked.is_some() {
+            return;
+        }
+        self.frontmost_watched = Some(Instant::now());
+        self.send(&Command::Guest {
+            operation: lighttouch_core::sys::LT_GUEST_FRONTMOST,
+            argument: String::new(),
+            timeout_ms: 2000,
+        });
     }
 
     /// Still leaning from the keyboard, or settling back.

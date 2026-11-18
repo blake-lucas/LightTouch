@@ -10,6 +10,13 @@ mkdir -p "$HOME/.cargo/registry"
 docker run --rm --user "$(id -u):$(id -g)" -v "$REPO:/src" -v "$HOME/.cargo/registry:/opt/cargo/registry" -w /src \
     -e CARGO_TARGET_DIR=/src/target/bullseye "$IMAGE" \
     cargo build --release --locked -p lighttouch -p lighttouch-firmware --features lighttouch-services/vendored-openssl
+# SDL2 for game controllers, loaded at run time (lighttouch_model::gamepad::sdl): Debian 11's, with its copyright file
+# for the licence page. The AppImage carries it in usr/lib.
+rm -rf "$REPO/target/bullseye/sdl" "$REPO/target/bullseye/sdl-notices"
+mkdir -p "$REPO/target/bullseye/sdl" "$REPO/target/bullseye/sdl-notices"
+docker run --rm --user "$(id -u):$(id -g)" -v "$REPO:/src" "$IMAGE" sh -c \
+    'cp -L /usr/lib/x86_64-linux-gnu/libSDL2-2.0.so.0 /src/target/bullseye/sdl/ &&
+     cp /usr/share/doc/libsdl2-2.0-0/copyright /src/target/bullseye/sdl-notices/SDL2-copyright.txt'
 for f in lighttouch firmwarekit; do
     need=$(objdump -T "$REPO/target/bullseye/release/$f" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
     echo "$f needs $need"

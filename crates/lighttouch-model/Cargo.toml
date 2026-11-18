@@ -12,6 +12,7 @@ lighttouch-services = { path = "../lighttouch-services" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.18"
+libloading = "0.8"
 sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]

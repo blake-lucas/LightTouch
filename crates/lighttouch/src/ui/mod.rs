@@ -1,5 +1,6 @@
 //! The egui frontend. It only draws `lighttouch_model::Model` and calls its methods; behaviour lives in the model so
 //! another toolkit could replace this module.
+mod controller;
 mod device_frame;
 mod devshot;
 mod fullscreen;
@@ -78,6 +79,7 @@ pub struct App {
     pub prepare: prepare::PrepareState,
     pub licenses: licenses::LicenseState,
     pub inspector: Option<inspector::InspectorState>,
+    pub controller: controller::ControllerUi,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -242,6 +244,7 @@ impl App {
             prepare,
             licenses: licenses::LicenseState::default(),
             inspector: None,
+            controller: controller::ControllerUi::default(),
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
@@ -670,6 +673,7 @@ impl eframe::App for App {
         }
         self.dialogs(&ctx);
         self.notices(&ctx);
+        controller::window(self, &ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

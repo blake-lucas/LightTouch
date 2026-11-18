@@ -31,11 +31,19 @@ impl Tilt {
     /// Ease toward what `keys` ask for and return (acceleration, angular velocity). The arrow says which edge
     /// goes down, so something rolling on the screen rolls that way.
     pub fn step(&mut self, keys: TiltKeys, now: Instant) -> ([f64; 3], [f64; 3]) {
+        let roll = (keys.right as i8 - keys.left as i8) as f64;
+        let pitch = (keys.down as i8 - keys.up as i8) as f64;
+        self.step_toward(roll, pitch, now)
+    }
+
+    /// The same toward a lean in between (a controller's stick): `roll` and `pitch` from -1 to 1 of the full lean,
+    /// in the guest's axes (positive `roll` lowers the right edge, positive `pitch` the bottom edge).
+    pub fn step_toward(&mut self, roll: f64, pitch: f64, now: Instant) -> ([f64; 3], [f64; 3]) {
         let dt = self.at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64().min(0.1));
         self.at = Some(now);
         let max = MAX_DEGREES.to_radians();
-        let roll_to = (keys.right as i8 - keys.left as i8) as f64 * max;
-        let pitch_to = (keys.down as i8 - keys.up as i8) as f64 * max;
+        let roll_to = roll.clamp(-1.0, 1.0) * max;
+        let pitch_to = pitch.clamp(-1.0, 1.0) * max;
         let reach = DEGREES_PER_SECOND.to_radians() * dt;
         let (roll, pitch) = (approach(self.roll, roll_to, reach), approach(self.pitch, pitch_to, reach));
         let (droll, dpitch) = if dt > 0.0 { ((roll - self.roll) / dt, (pitch - self.pitch) / dt) } else { (0.0, 0.0) };

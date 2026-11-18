@@ -23,10 +23,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let screen = if docked { home::fit_aspect(full.shrink2(vec2(0.0, BAR)), aspect) } else { fit };
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
-    app.guest.show(ui, screen, &mut app.model, running && !asleep);
+    let editing = app.model.gamepads.editing;
+    app.guest.show(ui, screen, &mut app.model, running && !asleep && !editing);
     if running {
         overlay::show(ui, &app.model, screen, 1.0);
+        super::controller::overlay(app, ui, screen);
     }
+    super::controller::step(app, ui, screen);
     if asleep {
         let response = ui.interact(screen, ui.scope_id().with("wake"), Sense::click());
         ui.painter().text(

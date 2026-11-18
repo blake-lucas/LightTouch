@@ -228,16 +228,19 @@ fn device_row(
     }
     let left = rect.left() + 54.0;
     let width = rect.right() - left - 8.0;
-    let name_galley = painter.layout(name.to_string(), FontId::new(14.5, theme::medium()), p.on_surface, width);
-    let sub_galley = painter.layout(
-        subtitle.to_string(),
-        FontId::new(12.0, egui::FontFamily::Proportional),
-        p.on_surface_variant,
-        width,
-    );
+    // One line each, cut with an ellipsis: a long name wrapped onto the subtitle.
+    let line = |text: &str, font: FontId, color: Color32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        painter.layout_job(job)
+    };
+    let name_galley = line(name, FontId::new(14.5, theme::medium()), p.on_surface);
+    let cut = name_galley.elided;
+    let sub_galley = line(subtitle, FontId::new(12.0, egui::FontFamily::Proportional), p.on_surface_variant);
     painter.galley(egui::pos2(left, rect.center().y - 17.0), name_galley, p.on_surface);
     painter.galley(egui::pos2(left, rect.center().y + 2.0), sub_galley, p.on_surface_variant);
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if cut { response.on_hover_text(name) } else { response }
 }
 
 trait MaxAlpha {

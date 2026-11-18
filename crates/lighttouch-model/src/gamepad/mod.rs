@@ -1,0 +1,241 @@
+//! Game controllers and keyboard bindings: presets of what each input does (`preset`), the step that turns inputs
+//! into touches, buttons and motion (`mapper`), and the controllers themselves (`sdl`). The UI shows and edits the
+//! presets; this runs the active one every frame.
+pub mod mapper;
+pub mod preset;
+pub mod sdl;
+
+use crate::session::Session;
+use mapper::{Inputs, Mapper, Merged, View};
+use preset::Preset;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+pub struct Gamepads {
+    shared: Arc<Mutex<sdl::Pads>>,
+    started: bool,
+    resources: std::path::PathBuf,
+    waker: crate::Waker,
+    store: preset::Store,
+    pub presets: Vec<Preset>,
+    /// The preset in use (an index into `presets`); `None` turns bindings off.
+    pub active: Option<usize>,
+    pub mapper: Mapper,
+    /// Moving spots around on the screen: bindings don't act meanwhile.
+    pub editing: bool,
+    /// The step sent motion this frame, so the arrow-key tilt stays out of its way.
+    pub motion_active: bool,
+    view: Option<View>,
+    /// The last front app a preset was picked for, and when the guest was last asked.
+    app: Option<String>,
+    asked: Option<Instant>,
+    pub error: Option<String>,
+}
+
+impl Gamepads {
+    pub fn new(
+        dir: std::path::PathBuf,
+        resources: std::path::PathBuf,
+        waker: crate::Waker,
+        active: Option<&str>,
+    ) -> Self {
+        let store = preset::Store::new(dir);
+        let mut presets = store.load_all();
+        if presets.is_empty() {
+            let starter = Preset::starter();
+            let _ = store.save(&starter);
+            presets.push(starter);
+        }
+        let active = active.and_then(|name| presets.iter().position(|p| p.name == name));
+        let mut gamepads = Self {
+            shared: Arc::default(),
+            started: false,
+            resources,
+            waker,
+            store,
+            presets,
+            active,
+            mapper: Mapper::default(),
+            editing: false,
+            motion_active: false,
+            view: None,
+            app: None,
+            asked: None,
+            error: None,
+        };
+        if gamepads.active.is_some() {
+            gamepads.start();
+        }
+        gamepads
+    }
+
+    /// Load SDL and start reading controllers (once; the controller window and an active preset call it).
+    pub fn start(&mut self) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+        let waker = self.waker.clone();
+        sdl::start(self.resources.clone(), self.shared.clone(), Arc::new(move || waker()));
+    }
+
+    pub fn pads(&self) -> sdl::Pads {
+        self.shared.lock().unwrap().clone()
+    }
+
+    pub fn active_preset(&self) -> Option<&Preset> {
+        self.active.and_then(|i| self.presets.get(i))
+    }
+
+    /// The name of the preset in use, for settings.
+    pub fn active_name(&self) -> Option<String> {
+        self.active_preset().map(|p| p.name.clone())
+    }
+
+    /// Switch presets (or turn bindings off), lifting whatever the old one held.
+    pub fn set_active(&mut self, index: Option<usize>, session: Option<&mut Session>) {
+        self.release(session);
+        self.active = index.filter(|&i| i < self.presets.len());
+        if self.active.is_some() {
+            self.start();
+        }
+    }
+
+    /// Save preset `index` after an edit.
+    pub fn save(&mut self, index: usize) {
+        if let Some(p) = self.presets.get(index) {
+            if let Err(e) = self.store.save(p) {
+                self.error = Some(format!("Couldn't save the preset: {e}"));
+            }
+        }
+    }
+
+    /// A new preset (a copy of `from` if given), saved and made active. Names are kept unique.
+    pub fn add(&mut self, from: Option<Preset>, session: Option<&mut Session>) -> usize {
+        let mut p = from.unwrap_or_else(|| Preset::new("New preset"));
+        p.name = self.unique_name(&p.name);
+        self.presets.push(p);
+        let index = self.presets.len() - 1;
+        self.save(index);
+        self.set_active(Some(index), session);
+        index
+    }
+
+    pub fn unique_name(&self, base: &str) -> String {
+        let base = base.trim();
+        let base = if base.is_empty() { "Preset" } else { base };
+        let taken = |n: &str| self.presets.iter().any(|p| p.name.eq_ignore_ascii_case(n));
+        if !taken(base) {
+            return base.to_string();
+        }
+        (2..).map(|i| format!("{base} {i}")).find(|n| !taken(n)).unwrap()
+    }
+
+    pub fn rename(&mut self, index: usize, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || self.presets.get(index).is_none_or(|p| p.name == name) {
+            return;
+        }
+        let name = self.unique_name(name);
+        let old = std::mem::replace(&mut self.presets[index].name, name);
+        self.store.remove(&old);
+        self.save(index);
+    }
+
+    pub fn remove(&mut self, index: usize, session: Option<&mut Session>) {
+        if index >= self.presets.len() {
+            return;
+        }
+        if self.active == Some(index) {
+            self.set_active(None, session);
+        }
+        let p = self.presets.remove(index);
+        self.store.remove(&p.name);
+        self.active = self.active.map(|a| if a > index { a - 1 } else { a });
+    }
+
+    /// The preset in use was edited: its fingers may no longer belong to anything.
+    pub fn changed(&mut self, session: Option<&mut Session>) {
+        self.release(session);
+        if let Some(i) = self.active {
+            self.save(i);
+        }
+    }
+
+    /// Lift every finger and button the bindings hold.
+    pub fn release(&mut self, session: Option<&mut Session>) {
+        let view = self.view.unwrap_or(View { rotation: Default::default(), turned: false, aspect: 1.0 });
+        let out = self.mapper.release(self.active.and_then(|i| self.presets.get(i)), &view);
+        if let Some(session) = session {
+            send(session, out);
+        }
+        self.motion_active = false;
+    }
+
+    /// One frame: read the controllers and `keys`, and act on the device. `listening` is false while the window is
+    /// in the background (or the device's screen isn't showing). Returns true when another step is due soon.
+    pub fn step(&mut self, keys: &HashSet<String>, view: View, listening: bool, session: Option<&mut Session>) -> bool {
+        let Some(session) = session else {
+            self.mapper = Mapper::default();
+            return false;
+        };
+        let running = matches!(session.phase, crate::session::Phase::Running);
+        if self.view.is_some_and(|v| v != view) {
+            // Turned or resized: fingers held at the old place would jump.
+            self.release(Some(&mut *session));
+        }
+        self.view = Some(view);
+        self.follow_app(session);
+        let Some(index) = self.active.filter(|_| listening && running && !self.editing) else {
+            self.release(Some(session));
+            return false;
+        };
+        let merged = Merged::from(&self.shared.lock().unwrap().pads);
+        let out = self.mapper.step(&self.presets[index], &Inputs { pad: &merged, keys }, &view, Instant::now());
+        self.motion_active = out.motion.is_some();
+        let held = merged.buttons != 0 || merged.axes.iter().any(|a| a.abs() > 0.05) || !keys.is_empty();
+        let busy = out.busy || held;
+        send(session, out);
+        busy
+    }
+
+    /// Switch to the preset linked to the app in front, every few seconds, when any preset names apps.
+    fn follow_app(&mut self, session: &mut Session) {
+        if !self.presets.iter().any(|p| !p.apps.is_empty()) {
+            return;
+        }
+        if self.asked.is_none_or(|t| t.elapsed() > Duration::from_secs(3)) {
+            self.asked = Some(Instant::now());
+            session.watch_frontmost();
+        }
+        let Some((bundle, _)) = session.frontmost.clone() else { return };
+        if self.app.as_deref() == Some(bundle.as_str()) {
+            return;
+        }
+        self.app = Some(bundle.clone());
+        if let Some(i) = self.presets.iter().position(|p| p.apps.iter().any(|a| a == &bundle)) {
+            if self.active != Some(i) {
+                self.set_active(Some(i), Some(session));
+            }
+        }
+    }
+
+    /// The app in front, if the guest said (for linking a preset to it).
+    pub fn front_app(&self, session: Option<&Session>) -> Option<(String, String)> {
+        session.and_then(|s| s.frontmost.clone())
+    }
+}
+
+fn send(session: &mut Session, out: mapper::Output) {
+    // The engine takes eight contacts a batch.
+    for chunk in out.contacts.chunks(8) {
+        session.touch(chunk.to_vec());
+    }
+    for (button, down) in out.buttons {
+        session.button(button, down);
+    }
+    if let Some((acceleration, gyro)) = out.motion {
+        session.motion(acceleration, gyro);
+    }
+}

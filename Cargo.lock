@@ -1727,6 +1727,7 @@ name = "lighttouch-model"
 version = "0.0.13"
 dependencies = [
  "libc",
+ "libloading",
  "lighttouch-catalog",
  "lighttouch-core",
  "lighttouch-services",

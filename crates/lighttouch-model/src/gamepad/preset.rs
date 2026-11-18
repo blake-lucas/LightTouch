@@ -1,0 +1,492 @@
+//! Controller presets: what each controller or keyboard input does to the device. Saved one per file as JSON in the
+//! data folder's `controllers/`. Places on the screen are in the guest's portrait coordinates (0..1, x right, y down:
+//! the device held upright), so a spot stays on the same part of the game however the window turns the device; sizes
+//! are fractions of the screen's shorter side.
+use serde::{Deserialize, Serialize};
+
+/// A controller button, a trigger pulled past halfway, or a keyboard key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Input {
+    Pad(PadButton),
+    /// egui's key name ("Space", "A", "ArrowLeft").
+    Key(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PadButton {
+    South,
+    East,
+    West,
+    North,
+    Back,
+    Guide,
+    Start,
+    LeftStick,
+    RightStick,
+    LeftShoulder,
+    RightShoulder,
+    DpadUp,
+    DpadDown,
+    DpadLeft,
+    DpadRight,
+    Misc,
+    Paddle1,
+    Paddle2,
+    Paddle3,
+    Paddle4,
+    Touchpad,
+    LeftTrigger,
+    RightTrigger,
+}
+
+impl PadButton {
+    pub const ALL: [PadButton; 23] = [
+        Self::South,
+        Self::East,
+        Self::West,
+        Self::North,
+        Self::Back,
+        Self::Guide,
+        Self::Start,
+        Self::LeftStick,
+        Self::RightStick,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::DpadUp,
+        Self::DpadDown,
+        Self::DpadLeft,
+        Self::DpadRight,
+        Self::Misc,
+        Self::Paddle1,
+        Self::Paddle2,
+        Self::Paddle3,
+        Self::Paddle4,
+        Self::Touchpad,
+        Self::LeftTrigger,
+        Self::RightTrigger,
+    ];
+
+    /// Its bit in [`super::sdl::Pad::buttons`].
+    pub fn bit(self) -> u32 {
+        match self {
+            Self::LeftTrigger => super::sdl::TRIGGER_LEFT_BIT,
+            Self::RightTrigger => super::sdl::TRIGGER_RIGHT_BIT,
+            b => 1 << (b as u32),
+        }
+    }
+
+    /// What the controller prints on it.
+    pub fn label(self, kind: super::sdl::PadKind) -> &'static str {
+        use super::sdl::PadKind::*;
+        match (self, kind) {
+            (Self::South, PlayStation) => "Cross",
+            (Self::East, PlayStation) => "Circle",
+            (Self::West, PlayStation) => "Square",
+            (Self::North, PlayStation) => "Triangle",
+            (Self::South, Nintendo) => "B",
+            (Self::East, Nintendo) => "A",
+            (Self::West, Nintendo) => "Y",
+            (Self::North, Nintendo) => "X",
+            (Self::South, Xbox) => "A",
+            (Self::East, Xbox) => "B",
+            (Self::West, Xbox) => "X",
+            (Self::North, Xbox) => "Y",
+            (Self::Back, PlayStation) => "Share",
+            (Self::Back, Nintendo) => "−",
+            (Self::Back, Xbox) => "View",
+            (Self::Start, PlayStation) => "Options",
+            (Self::Start, Nintendo) => "+",
+            (Self::Start, Xbox) => "Menu",
+            (Self::Guide, PlayStation) => "PS",
+            (Self::Guide, Nintendo) => "Home",
+            (Self::Guide, Xbox) => "Guide",
+            (Self::LeftStick, PlayStation) => "L3",
+            (Self::RightStick, PlayStation) => "R3",
+            (Self::LeftStick, _) => "LS",
+            (Self::RightStick, _) => "RS",
+            (Self::LeftShoulder, PlayStation) => "L1",
+            (Self::RightShoulder, PlayStation) => "R1",
+            (Self::LeftShoulder, Nintendo) => "L",
+            (Self::RightShoulder, Nintendo) => "R",
+            (Self::LeftShoulder, Xbox) => "LB",
+            (Self::RightShoulder, Xbox) => "RB",
+            (Self::LeftTrigger, PlayStation) => "L2",
+            (Self::RightTrigger, PlayStation) => "R2",
+            (Self::LeftTrigger, Nintendo) => "ZL",
+            (Self::RightTrigger, Nintendo) => "ZR",
+            (Self::LeftTrigger, Xbox) => "LT",
+            (Self::RightTrigger, Xbox) => "RT",
+            (Self::DpadUp, _) => "D-pad up",
+            (Self::DpadDown, _) => "D-pad down",
+            (Self::DpadLeft, _) => "D-pad left",
+            (Self::DpadRight, _) => "D-pad right",
+            (Self::Misc, PlayStation) => "Mic",
+            (Self::Misc, Nintendo) => "Capture",
+            (Self::Misc, Xbox) => "Share",
+            (Self::Paddle1, _) => "P1",
+            (Self::Paddle2, _) => "P2",
+            (Self::Paddle3, _) => "P3",
+            (Self::Paddle4, _) => "P4",
+            (Self::Touchpad, _) => "Touchpad",
+        }
+    }
+}
+
+impl Input {
+    pub fn label(&self, kind: super::sdl::PadKind) -> String {
+        match self {
+            Input::Pad(b) => b.label(kind).to_string(),
+            Input::Key(k) => key_label(k),
+        }
+    }
+}
+
+/// A key's name as people say it.
+pub fn key_label(key: &str) -> String {
+    match key {
+        "ArrowUp" => "↑".into(),
+        "ArrowDown" => "↓".into(),
+        "ArrowLeft" => "←".into(),
+        "ArrowRight" => "→".into(),
+        "Space" => "Space".into(),
+        "Enter" => "Enter".into(),
+        k => k.to_string(),
+    }
+}
+
+/// Something that gives a direction: a stick, the D-pad, or four keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stick {
+    Left,
+    Right,
+    Dpad,
+    Keys { up: String, down: String, left: String, right: String },
+}
+
+impl Stick {
+    pub fn wasd() -> Stick {
+        Stick::Keys { up: "W".into(), down: "S".into(), left: "A".into(), right: "D".into() }
+    }
+
+    pub fn arrows() -> Stick {
+        Stick::Keys {
+            up: "ArrowUp".into(),
+            down: "ArrowDown".into(),
+            left: "ArrowLeft".into(),
+            right: "ArrowRight".into(),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Stick::Left => "Left stick".into(),
+            Stick::Right => "Right stick".into(),
+            Stick::Dpad => "D-pad".into(),
+            Stick::Keys { up, left, down, right } => {
+                if [up, left, down, right] == [&"W".to_string(), &"A".into(), &"S".into(), &"D".into()] {
+                    "W A S D".into()
+                } else if up == "ArrowUp" && down == "ArrowDown" && left == "ArrowLeft" && right == "ArrowRight" {
+                    "Arrow keys".into()
+                } else {
+                    format!("{} {} {} {}", key_label(up), key_label(left), key_label(down), key_label(right))
+                }
+            }
+        }
+    }
+
+    /// The short form drawn on the screen.
+    pub fn short(&self) -> String {
+        match self {
+            Stick::Left => "L".into(),
+            Stick::Right => "R".into(),
+            Stick::Dpad => "+".into(),
+            Stick::Keys { .. } => "⌨".into(),
+        }
+    }
+}
+
+/// A point in the guest's portrait coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Point {
+    pub const CENTER: Point = Point { x: 0.5, y: 0.5 };
+    pub fn new(x: f32, y: f32) -> Point {
+        Point { x, y }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TapMode {
+    /// The finger stays down while the input is held.
+    #[default]
+    Hold,
+    /// A press puts the finger down, the next lifts it.
+    Toggle,
+    /// Taps over and over while held.
+    Repeat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerStyle {
+    /// Dolphin's pointer: the stick's position is the offset from the area's centre, and letting go returns there.
+    #[default]
+    Centered,
+    /// Like a mouse: the stick moves the pointer, and it stays where it was left.
+    Cursor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceButton {
+    Home,
+    SleepWake,
+    VolumeUp,
+    VolumeDown,
+}
+
+impl DeviceButton {
+    pub const ALL: [DeviceButton; 4] = [Self::Home, Self::SleepWake, Self::VolumeUp, Self::VolumeDown];
+    /// The session's button number (0 Home, 1 Power, 2 Volume up, 3 Volume down).
+    pub fn number(self) -> u32 {
+        self as u32
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Home => "Home",
+            Self::SleepWake => "Sleep/Wake",
+            Self::VolumeUp => "Volume up",
+            Self::VolumeDown => "Volume down",
+        }
+    }
+}
+
+/// What a binding does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Action {
+    /// Touch a spot.
+    Tap {
+        input: Input,
+        at: Point,
+        #[serde(default)]
+        mode: TapMode,
+    },
+    /// Drag a finger from one spot to another when pressed (Temple Run's turns, a menu's page flip).
+    Swipe { input: Input, from: Point, to: Point, ms: u32 },
+    /// An on-screen joystick: a finger held on its centre and pushed toward the stick's direction, up to `radius`.
+    Joystick { stick: Stick, center: Point, radius: f32 },
+    /// A pointer over an area of the screen, and an input that touches where it is. The bubble is always drawn.
+    Pointer {
+        stick: Stick,
+        center: Point,
+        /// Half the area's width and height, as fractions of the screen's (as shown).
+        half: [f32; 2],
+        touch: Input,
+        #[serde(default)]
+        style: PointerStyle,
+        /// Cursor style: screen widths a second at full tilt.
+        #[serde(default = "default_speed")]
+        speed: f32,
+    },
+    /// Flicking the stick swipes from `center` toward it (four directions), `length` long.
+    Flick { stick: Stick, center: Point, length: f32 },
+    /// Lean the device toward the stick (games steered by tilting).
+    Tilt {
+        stick: Stick,
+        #[serde(default = "one")]
+        strength: f32,
+    },
+    /// The controller's own motion sensors move the device.
+    Motion {
+        #[serde(default = "one")]
+        sensitivity: f32,
+    },
+    /// The device's Home, Sleep/Wake or volume buttons.
+    Device { input: Input, button: DeviceButton },
+}
+
+fn default_speed() -> f32 {
+    0.9
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+impl Action {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Action::Tap { .. } => "Tap",
+            Action::Swipe { .. } => "Swipe",
+            Action::Joystick { .. } => "Joystick",
+            Action::Pointer { .. } => "Pointer",
+            Action::Flick { .. } => "Flick to swipe",
+            Action::Tilt { .. } => "Tilt",
+            Action::Motion { .. } => "Motion",
+            Action::Device { .. } => "Device button",
+        }
+    }
+
+    /// Whether it puts a spot on the screen.
+    pub fn placed(&self) -> bool {
+        !matches!(self, Action::Tilt { .. } | Action::Motion { .. } | Action::Device { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Binding {
+    pub action: Action,
+    /// Only while this is held too (a shoulder button as a shift).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<Input>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Preset {
+    pub name: String,
+    #[serde(default)]
+    pub bindings: Vec<Binding>,
+    /// Draw the spots on the screen while playing (a pointer's bubble is always drawn).
+    #[serde(default = "yes")]
+    pub show_spots: bool,
+    /// How far a stick moves before it counts, 0..1.
+    #[serde(default = "default_deadzone")]
+    pub deadzone: f32,
+    /// Apps (bundle IDs) this preset switches on for when they come to the front.
+    #[serde(default)]
+    pub apps: Vec<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn default_deadzone() -> f32 {
+    0.15
+}
+
+impl Preset {
+    pub fn new(name: &str) -> Preset {
+        Preset {
+            name: name.into(),
+            bindings: Vec::new(),
+            show_spots: true,
+            deadzone: default_deadzone(),
+            apps: Vec::new(),
+        }
+    }
+
+    /// The preset a first start offers: a pointer on the left stick with the right trigger as the finger, the
+    /// right stick as a joystick in the lower right, tilt off, and Home on the guide button.
+    pub fn starter() -> Preset {
+        let mut p = Preset::new("Default");
+        p.bindings = vec![
+            Binding {
+                action: Action::Pointer {
+                    stick: Stick::Left,
+                    center: Point::CENTER,
+                    half: [0.5, 0.5],
+                    touch: Input::Pad(PadButton::RightTrigger),
+                    style: PointerStyle::Centered,
+                    speed: default_speed(),
+                },
+                with: None,
+            },
+            Binding {
+                action: Action::Tap {
+                    input: Input::Pad(PadButton::South),
+                    at: Point::new(0.5, 0.8),
+                    mode: TapMode::Hold,
+                },
+                with: None,
+            },
+            Binding {
+                action: Action::Device { input: Input::Pad(PadButton::Guide), button: DeviceButton::Home },
+                with: None,
+            },
+        ];
+        p
+    }
+}
+
+/// The presets on disk.
+pub struct Store {
+    dir: std::path::PathBuf,
+}
+
+impl Store {
+    pub fn new(dir: std::path::PathBuf) -> Store {
+        Store { dir }
+    }
+
+    pub fn load_all(&self) -> Vec<Preset> {
+        let mut out: Vec<Preset> = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok())
+            .collect();
+        out.sort_by_key(|p: &Preset| p.name.to_lowercase());
+        out
+    }
+
+    fn path(&self, name: &str) -> std::path::PathBuf {
+        let slug: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_lowercase();
+        self.dir.join(format!("{}.json", if slug.is_empty() { "preset" } else { &slug }))
+    }
+
+    pub fn save(&self, preset: &Preset) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let path = self.path(&preset.name);
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(preset).map_err(|e| e.to_string())?)
+            .and_then(|_| std::fs::rename(&tmp, &path))
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    pub fn remove(&self, name: &str) {
+        let _ = std::fs::remove_file(self.path(name));
+    }
+
+    /// Write a preset somewhere else (export) or read one in (import).
+    pub fn export(preset: &Preset, to: &std::path::Path) -> Result<(), String> {
+        std::fs::write(to, serde_json::to_vec_pretty(preset).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    }
+
+    pub fn import(from: &std::path::Path) -> Result<Preset, String> {
+        let bytes = std::fs::read(from).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("not a controller preset: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips() {
+        let p = Preset::starter();
+        let text = serde_json::to_string(&p).unwrap();
+        assert_eq!(serde_json::from_str::<Preset>(&text).unwrap(), p);
+        // Older files without the optional fields still load.
+        let bare: Preset =
+            serde_json::from_str(r#"{"name":"x","bindings":[{"action":{"kind":"tilt","stick":"left"}}]}"#).unwrap();
+        assert!(bare.show_spots && bare.deadzone > 0.0);
+        assert_eq!(bare.bindings[0].action, Action::Tilt { stick: Stick::Left, strength: 1.0 });
+    }
+}
