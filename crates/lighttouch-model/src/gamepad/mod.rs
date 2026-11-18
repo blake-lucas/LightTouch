@@ -16,6 +16,7 @@ pub struct Gamepads {
     shared: Arc<Mutex<sdl::Pads>>,
     started: bool,
     resources: std::path::PathBuf,
+    log: Option<std::path::PathBuf>,
     waker: crate::Waker,
     store: preset::Store,
     pub presets: Vec<Preset>,
@@ -34,24 +35,23 @@ pub struct Gamepads {
 }
 
 impl Gamepads {
+    /// `log`: where the controller thread notes what SDL and each controller report.
     pub fn new(
         dir: std::path::PathBuf,
         resources: std::path::PathBuf,
+        log: Option<std::path::PathBuf>,
         waker: crate::Waker,
         active: Option<&str>,
     ) -> Self {
+        // Nothing is set up until the player makes a preset: no spots or pointer on the screen out of the box.
         let store = preset::Store::new(dir);
-        let mut presets = store.load_all();
-        if presets.is_empty() {
-            let starter = Preset::starter();
-            let _ = store.save(&starter);
-            presets.push(starter);
-        }
+        let presets = store.load_all();
         let active = active.and_then(|name| presets.iter().position(|p| p.name == name));
         let mut gamepads = Self {
             shared: Arc::default(),
             started: false,
             resources,
+            log,
             waker,
             store,
             presets,
@@ -77,7 +77,7 @@ impl Gamepads {
         }
         self.started = true;
         let waker = self.waker.clone();
-        sdl::start(self.resources.clone(), self.shared.clone(), Arc::new(move || waker()));
+        sdl::start(self.resources.clone(), self.log.clone(), self.shared.clone(), Arc::new(move || waker()));
     }
 
     pub fn pads(&self) -> sdl::Pads {

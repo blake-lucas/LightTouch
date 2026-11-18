@@ -10,7 +10,7 @@ use lighttouch_model::gamepad::mapper::View;
 use lighttouch_model::gamepad::preset::{
     Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Stick, TapMode,
 };
-use lighttouch_model::gamepad::sdl::{Backend, Pad, PadKind};
+use lighttouch_model::gamepad::sdl::{Backend, Pad, PadKind, Sensors};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -388,8 +388,8 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
     let builder = egui::ViewportBuilder::default()
         .with_title("Controller")
         .with_app_id("org.lighttouch.LightTouch")
-        .with_inner_size([1000.0, 700.0])
-        .with_min_inner_size([860.0, 560.0]);
+        .with_inner_size([1240.0, 780.0])
+        .with_min_inner_size([900.0, 600.0]);
     ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("controller-window"), builder, |ui, _class| {
         let ctx = ui.ctx().clone();
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -412,48 +412,59 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
     });
 }
 
+/// The controllers and what they're doing on the left, the bindings in the middle, and the preset's options on the
+/// right; a narrower window moves the options under the live view. Each column scrolls on its own.
 fn body(app: &mut App, ui: &mut Ui) {
-    let p = app.palette;
     header(app, ui);
     let gap = 20.0;
-    let left_width = 340.0;
-    let rest = ui.available_rect_before_wrap();
-    let left = Rect::from_min_size(rest.min + vec2(24.0, 0.0), vec2(left_width, rest.height()));
-    let right = Rect::from_min_max(pos2(left.right() + gap, rest.top()), rest.max - vec2(24.0, 0.0));
-    ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
-        egui::ScrollArea::vertical().id_salt("ctl-left").auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_width(left_width);
-            controllers_card(app, ui);
-            live_card(app, ui);
+    let side = 300.0;
+    let rest = ui.available_rect_before_wrap().shrink2(vec2(24.0, 0.0));
+    let wide = rest.width() >= side * 2.0 + 20.0 + gap * 2.0 + 500.0;
+    let left = Rect::from_min_size(rest.min, vec2(side + 20.0, rest.height()));
+    // The options column is the preset's: without one the bindings take its room.
+    let right = (wide && app.model.gamepads.active.is_some())
+        .then(|| Rect::from_min_max(pos2(rest.right() - side, rest.top()), rest.max));
+    let middle = Rect::from_min_max(
+        pos2(left.right() + gap, rest.top()),
+        pos2(right.map_or(rest.right(), |r| r.left() - gap), rest.bottom()),
+    );
+    let column = |ui: &mut Ui, salt: &str, rect: Rect, app: &mut App, add: &dyn Fn(&mut App, &mut Ui)| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]).show(ui, |ui| {
+                ui.set_width(rect.width());
+                add(app, ui);
+                ui.add_space(20.0);
+            });
+        });
+    };
+    column(ui, "ctl-left", left, app, &|app, ui| {
+        controllers_card(app, ui);
+        live_card(app, ui);
+        if !wide {
             options_card(app, ui);
-            ui.add_space(20.0);
-        });
+        }
     });
-    ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
-        egui::ScrollArea::vertical().id_salt("ctl-right").auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_width(right.width());
-            bindings(app, ui);
-            ui.add_space(20.0);
-        });
-    });
+    column(ui, "ctl-middle", middle, app, &|app, ui| bindings(app, ui));
+    if let Some(right) = right {
+        column(ui, "ctl-right", right, app, &|app, ui| options_card(app, ui));
+    }
     if app.controller.capture.is_some() {
         capture_prompt(app, ui);
     }
-    let _ = p;
 }
 
 fn header(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
-    Frame::new().inner_margin(Margin { left: 24, right: 20, top: 16, bottom: 10 }).show(ui, |ui| {
+    Frame::new().inner_margin(Margin { left: 24, right: 20, top: 16, bottom: 6 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.set_min_height(40.0);
             ui.label(widgets::icon_text(GAME_CONTROLLER, 26.0).color(p.primary));
-            ui.add_space(2.0);
-            ui.label(RichText::new("Controller").font(theme::headline()));
-            ui.add_space(12.0);
+            ui.add_space(8.0);
             if let Some(name) = app.controller.rename.as_mut() {
                 let edit = ui.add(
-                    egui::TextEdit::singleline(name).desired_width(180.0).font(FontId::new(14.0, theme::medium())),
+                    egui::TextEdit::singleline(name)
+                        .desired_width(PICKER_WIDTH - 16.0)
+                        .font(FontId::new(14.0, theme::medium())),
                 );
                 edit.request_focus();
                 let done = edit.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -468,12 +479,10 @@ fn header(app: &mut App, ui: &mut Ui) {
             } else {
                 preset_menu(app, ui);
             }
+            ui.add_space(4.0);
             let has = app.model.gamepads.active.is_some();
             if widgets::icon_button_sized(ui, &p, icons::PLUS, "New preset", 34.0, true).clicked() {
-                let i = app.model.gamepads.add(None, app.model.session.as_mut());
-                app.controller.expanded = None;
-                let _ = i;
-                remember_active(app);
+                new_preset(app);
             }
             if widgets::icon_button_sized(ui, &p, COPY, "Duplicate", 34.0, has).clicked() {
                 let copy = app.model.gamepads.active_preset().cloned();
@@ -484,24 +493,39 @@ fn header(app: &mut App, ui: &mut Ui) {
                 app.controller.rename = app.model.gamepads.active_name();
             }
             more_menu(app, ui);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let editing = app.model.gamepads.editing;
-                let running = app.model.session.as_ref().is_some_and(|s| s.phase.active());
-                let label = if editing { "Done placing" } else { "Place on screen" };
-                let enabled = has && running;
-                let r = if editing {
-                    widgets::primary_enabled(ui, &p, label, enabled)
-                } else {
-                    widgets::tonal_enabled(ui, &p, label, enabled)
-                };
-                let r = r.on_disabled_hover_text("Start the device to place spots on its screen");
-                if r.clicked() {
-                    app.model.gamepads.editing = !editing;
-                    app.model.gamepads.release(app.model.session.as_mut());
-                }
-            });
         });
     });
+}
+
+fn new_preset(app: &mut App) {
+    app.model.gamepads.add(None, app.model.session.as_mut());
+    app.controller.expanded = None;
+    remember_active(app);
+}
+
+const PICKER_WIDTH: f32 = 300.0;
+
+/// The preset picker: a wide field with the preset's name and a caret, opening the list.
+fn picker(ui: &mut Ui, p: &theme::Palette, text: &str, placeholder: bool) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(PICKER_WIDTH, 36.0), Sense::click());
+    let painter = ui.painter();
+    let fill = if r.hovered() { p.container_high } else { p.container };
+    painter.rect(rect, CornerRadius::same(10), fill, Stroke::new(1.0, p.outline), egui::StrokeKind::Inside);
+    let color = if placeholder { p.on_surface_variant } else { p.on_surface };
+    let caret = painter.text(
+        rect.right_center() - vec2(12.0, 0.0),
+        Align2::RIGHT_CENTER,
+        icons::CARET_DOWN,
+        FontId::new(14.0, theme::icons()),
+        p.on_surface_variant,
+    );
+    let room = rect.width() - 14.0 - caret.width() - 22.0;
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), FontId::new(14.5, theme::medium()), color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let galley = painter.layout_job(job);
+    let at = pos2(rect.left() + 14.0, rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(at, galley, color);
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn remember_active(app: &mut App) {
@@ -510,19 +534,28 @@ fn remember_active(app: &mut App) {
 }
 
 fn preset_menu(app: &mut App, ui: &mut Ui) {
-    let name = app.model.gamepads.active_name().unwrap_or_else(|| "Off".into());
-    let r = widgets::chip_menu(ui, &app.palette, &name);
-    egui::Popup::menu(&r).show(|ui| {
-        ui.set_min_width(200.0);
+    let p = app.palette;
+    let none = app.model.gamepads.presets.is_empty();
+    let name = app.model.gamepads.active_name();
+    let label = name.clone().unwrap_or_else(|| if none { "No presets yet".into() } else { "Off".into() });
+    let r = picker(ui, &p, &label, name.is_none()).on_hover_text("The preset in use");
+    egui::Popup::menu(&r).width(PICKER_WIDTH).show(|ui| {
+        ui.set_min_width(PICKER_WIDTH - 12.0);
         let mut pick = None;
         if ui.selectable_label(app.model.gamepads.active.is_none(), "Off").clicked() {
             pick = Some(None);
         }
-        ui.separator();
+        if !none {
+            ui.separator();
+        }
         for (i, preset) in app.model.gamepads.presets.iter().enumerate() {
             if ui.selectable_label(app.model.gamepads.active == Some(i), &preset.name).clicked() {
                 pick = Some(Some(i));
             }
+        }
+        ui.separator();
+        if ui.button(widgets::icon_label(icons::PLUS, "New preset", None)).clicked() {
+            new_preset(app);
         }
         if let Some(index) = pick {
             app.model.gamepads.set_active(index, app.model.session.as_mut());
@@ -608,8 +641,13 @@ fn controllers_card(app: &mut App, ui: &mut Ui) {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.add(egui::Label::new(RichText::new(&pad.name).size(14.0)).truncate());
-                        let motion = if pad.gyro.is_some() { "Motion sensors" } else { "No motion sensors" };
-                        ui.label(widgets::muted(&p, motion).size(12.0));
+                        let motion = match pad.sensors {
+                            Sensors::Live => "Motion sensors",
+                            Sensors::Quiet => "Motion sensors aren't reporting; trying again",
+                            Sensors::None => "No motion sensors",
+                        };
+                        let color = if pad.sensors == Sensors::Quiet { theme::WARNING } else { p.on_surface_variant };
+                        ui.label(RichText::new(motion).size(12.0).color(color));
                     });
                 });
             }
@@ -760,37 +798,63 @@ fn draw_pad(painter: &egui::Painter, p: &theme::Palette, rect: Rect, pad: Option
     }
 }
 
-/// The gyro's turn and the accelerometer's pull, one bar each per axis.
+/// How the controller is held and turning: its lean from level (lying flat, or held flat in the hands), which is
+/// what a motion binding gives the device, and the gyroscope's turn about each axis.
 fn motion_bars(ui: &mut Ui, p: &theme::Palette, pad: &Pad) {
-    let Some(gyro) = pad.gyro else {
-        ui.label(widgets::muted(p, "This controller has no motion sensors").size(12.0));
+    let (Some(accel), Some(gyro)) = (pad.accel, pad.gyro.or(Some([0.0; 3]))) else {
+        let text = match pad.sensors {
+            Sensors::None => "This controller has no motion sensors",
+            _ => "Waiting for the motion sensors",
+        };
+        ui.label(widgets::muted(p, text).size(12.0));
         return;
     };
-    let accel = pad.accel.unwrap_or_default();
-    egui::Grid::new("motion-bars").num_columns(4).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
-        for (title, values, scale) in [("Gyro", gyro, 6.0f32), ("Accel", accel, 12.0)] {
-            ui.label(widgets::muted(p, title).size(12.0));
-            for (axis, v) in ["x", "y", "z"].iter().zip(values) {
-                let (rect, _) = ui.allocate_exact_size(vec2(72.0, 14.0), Sense::hover());
-                let painter = ui.painter();
-                painter.rect_filled(rect, CornerRadius::same(4), p.container_highest);
-                let half = rect.width() / 2.0;
-                let len = (v / scale).clamp(-1.0, 1.0) * half;
-                let bar = Rect::from_min_max(
-                    pos2(rect.center().x + len.min(0.0), rect.top()),
-                    pos2(rect.center().x + len.max(0.0), rect.bottom()),
-                );
-                painter.rect_filled(bar, CornerRadius::same(4), p.primary);
-                painter.text(
-                    rect.left_center() + vec2(5.0, 0.0),
-                    Align2::LEFT_CENTER,
-                    *axis,
-                    FontId::new(9.5, theme::medium()),
-                    p.on_surface,
-                );
+    let (roll, pitch) = lighttouch_model::gamepad::mapper::lean_of(accel);
+    let bar = |ui: &mut Ui, label: &str, value: f32, scale: f32, width: f32| {
+        let (rect, _) = ui.allocate_exact_size(vec2(width, 16.0), Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(rect, CornerRadius::same(4), p.container_highest);
+        painter.line_segment(
+            [pos2(rect.center().x, rect.top() + 3.0), pos2(rect.center().x, rect.bottom() - 3.0)],
+            Stroke::new(1.0, p.outline_variant),
+        );
+        let half = rect.width() / 2.0;
+        let len = (value / scale).clamp(-1.0, 1.0) * half;
+        let fill = Rect::from_min_max(
+            pos2(rect.center().x + len.min(0.0), rect.top()),
+            pos2(rect.center().x + len.max(0.0), rect.bottom()),
+        );
+        painter.rect_filled(fill, CornerRadius::same(4), p.primary);
+        painter.text(
+            rect.left_center() + vec2(5.0, 0.0),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::new(9.5, theme::medium()),
+            p.on_surface,
+        );
+    };
+    egui::Grid::new("motion-bars").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+        let width = ui.available_width() - 50.0;
+        ui.label(widgets::muted(p, "Lean").size(12.0)).on_hover_text(
+            "How far the controller leans from level: left or right, and its far edge up or down. Level reads in the \
+             middle.",
+        );
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let w = (width - 6.0) / 2.0;
+            bar(ui, &format!("side {:+.0}°", roll.to_degrees()), roll.to_degrees() as f32, 90.0, w);
+            bar(ui, &format!("tip {:+.0}°", pitch.to_degrees()), pitch.to_degrees() as f32, 90.0, w);
+        });
+        ui.end_row();
+        ui.label(widgets::muted(p, "Turn").size(12.0)).on_hover_text("The gyroscope: how fast it turns about each axis");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let w = (width - 12.0) / 3.0;
+            for (axis, v) in ["x", "y", "z"].iter().zip(gyro) {
+                bar(ui, axis, v, 6.0, w);
             }
-            ui.end_row();
-        }
+        });
+        ui.end_row();
     });
 }
 
@@ -865,13 +929,28 @@ fn front_app_row(app: &mut App, ui: &mut Ui, preset: &mut Preset) {
 
 fn bindings(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
-    ui.horizontal(|ui| {
-        widgets::section(ui, &p, "Bindings");
-    });
+    let added = bindings_header(app, ui);
     let Some(index) = app.model.gamepads.active else {
+        let none = app.model.gamepads.presets.is_empty();
         widgets::card(ui, &p, |ui| {
-            ui.label(RichText::new("Bindings are off").size(14.5));
-            ui.label(widgets::muted(&p, "Pick a preset above, or make a new one.").size(12.5));
+            if none {
+                ui.label(RichText::new("No presets yet").size(14.5));
+                ui.label(
+                    widgets::muted(
+                        &p,
+                        "A preset says what each button, stick and key does on the device: tap a spot, steer a \
+                         pointer, tilt and more. Make one for each game.",
+                    )
+                    .size(12.5),
+                );
+                ui.add_space(8.0);
+                if widgets::tonal(ui, &p, "New preset").clicked() {
+                    new_preset(app);
+                }
+            } else {
+                ui.label(RichText::new("Bindings are off").size(14.5));
+                ui.label(widgets::muted(&p, "Pick a preset above to use it, or make a new one.").size(12.5));
+            }
         });
         return;
     };
@@ -887,7 +966,7 @@ fn bindings(app: &mut App, ui: &mut Ui) {
             ui.label(
                 widgets::muted(
                     &p,
-                    "Add one below: a tap, a joystick, a pointer you steer with a stick, tilt and more.",
+                    "Use Add binding: a tap, a joystick, a pointer you steer with a stick, tilt and more.",
                 )
                 .size(12.5),
             );
@@ -915,17 +994,6 @@ fn bindings(app: &mut App, ui: &mut Ui) {
             }
             if i + 1 < count {
                 ui.add(egui::Separator::default().spacing(4.0));
-            }
-        }
-    });
-    ui.add_space(10.0);
-    let add = widgets::chip_menu(ui, &p, "Add binding");
-    let mut added = None;
-    egui::Popup::menu(&add).show(|ui| {
-        ui.set_min_width(230.0);
-        for (icon, title, make) in templates() {
-            if ui.button(widgets::icon_label(icon, title, None)).clicked() {
-                added = Some(make());
             }
         }
     });
@@ -965,6 +1033,46 @@ fn bindings(app: &mut App, ui: &mut Ui) {
             sticks: [merged.axes[0], merged.axes[1], merged.axes[2], merged.axes[3]],
         });
     }
+}
+
+/// "Bindings", with placing the spots and adding a binding beside it. Returns the binding picked to add.
+fn bindings_header(app: &mut App, ui: &mut Ui) -> Option<Action> {
+    let p = app.palette;
+    let has = app.model.gamepads.active.is_some();
+    let mut added = None;
+    // Lined up with the other columns' section titles, which have no buttons beside them.
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.set_min_height(30.0);
+        ui.label(RichText::new("Bindings").font(theme::label()).color(p.primary));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !has {
+                return;
+            }
+            let add = widgets::chip_menu(ui, &p, "Add binding");
+            egui::Popup::menu(&add).show(|ui| {
+                ui.set_min_width(230.0);
+                for (icon, title, make) in templates() {
+                    if ui.button(widgets::icon_label(icon, title, None)).clicked() {
+                        added = Some(make());
+                    }
+                }
+            });
+            let editing = app.model.gamepads.editing;
+            let running = app.model.session.as_ref().is_some_and(|s| s.phase.active());
+            let label = if editing { "Done placing" } else { "Place on screen" };
+            let r = ui
+                .add_enabled_ui(running || editing, |ui| pill_button(ui, &p, label, editing))
+                .inner
+                .on_hover_text("Drag the spots on the device's screen to where each input touches")
+                .on_disabled_hover_text("Start the device to place spots on its screen");
+            if r.clicked() {
+                app.model.gamepads.editing = !editing;
+                app.model.gamepads.release(app.model.session.as_mut());
+            }
+        });
+    });
+    added
 }
 
 fn action_icon(action: &Action) -> &'static str {
@@ -1057,7 +1165,9 @@ fn binding_row(
 ) {
     let id = ui.scope_id().with(("binding-row", i));
     let reserved = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(190.0);
-    let row = ui.horizontal(|ui| {
+    // The whole row opens and closes its settings; its buttons still take their own clicks.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let row = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| ui.horizontal(|ui| {
         ui.set_min_height(52.0);
         let icon_color = if lit { p.primary } else { p.on_surface_variant };
         ui.label(widgets::icon_text(action_icon(&binding.action), 22.0).color(icon_color));
@@ -1098,7 +1208,17 @@ fn binding_row(
             }
         });
         trailing.response.rect.width()
-    });
+    }).inner);
+    let clicked = row.response.clicked();
+    let hovered = row.response.hovered();
+    let row_rect = row.response.rect.expand2(vec2(8.0, 2.0));
+    if hovered {
+        ui.painter().set(background, egui::Shape::rect_filled(row_rect, CornerRadius::same(10), p.container_high));
+    }
+    row.response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if clicked {
+        *open = if expanded { None } else { Some(i) };
+    }
     let width = row.inner;
     if (width - reserved).abs() > 0.5 {
         ui.data_mut(|d| d.insert_temp(id, width));
@@ -1228,8 +1348,15 @@ fn binding_settings(
         }
         Action::Device { button, .. } => {
             row(ui, "Button", &mut |ui| {
-                let options: Vec<(DeviceButton, &str)> = DeviceButton::ALL.iter().map(|b| (*b, b.label())).collect();
-                widgets::segmented(ui, p, button, &options);
+                let r = widgets::chip_menu(ui, p, button.label());
+                egui::Popup::menu(&r).show(|ui| {
+                    ui.set_min_width(160.0);
+                    for b in DeviceButton::ALL {
+                        if ui.selectable_label(*button == b, b.label()).clicked() {
+                            *button = b;
+                        }
+                    }
+                });
             });
         }
     }

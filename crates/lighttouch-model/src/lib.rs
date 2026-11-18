@@ -122,6 +122,7 @@ impl Model {
         let gamepads = gamepad::Gamepads::new(
             dirs.root.join("controllers"),
             resources.dir.clone(),
+            Some(dirs.logs().join("controllers.log")),
             waker.clone(),
             settings.controller_preset.as_deref(),
         );

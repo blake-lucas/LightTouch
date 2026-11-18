@@ -385,8 +385,9 @@ impl Preset {
         }
     }
 
-    /// The preset a first start offers: a pointer on the left stick with the right trigger as the finger, the
-    /// right stick as a joystick in the lower right, tilt off, and Home on the guide button.
+    /// A typical preset, for tests: a pointer on the left stick with the right trigger as the finger, a tap on the
+    /// south button and Home on the guide button. (Nothing is set up out of the box.)
+    #[cfg(test)]
     pub fn starter() -> Preset {
         let mut p = Preset::new("Default");
         p.bindings = vec![

@@ -5,6 +5,11 @@
 //! One thread owns SDL: it initializes the game controller and sensor subsystems, opens every controller SDL knows,
 //! and polls them about 250 times a second (SDL's event queue is turned off, so `SDL_GameControllerUpdate` is what
 //! advances them). Each poll publishes a [`Pads`] snapshot and wakes the UI when anything moved.
+//!
+//! Motion sensors can go quiet after they're turned on: something else (Steam Input, another program) puts the
+//! controller back into a mode without them, and SDL keeps handing back the last sample. A sensor whose readings
+//! stop changing for a moment counts as quiet (the snapshot leaves it out, so bindings don't act on a stale lean)
+//! and is turned off and on again. `logs/controllers.log` records what each controller reports.
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,9 +24,21 @@ pub struct Pad {
     pub buttons: u32,
     /// Left x, left y, right x, right y, left trigger, right trigger.
     pub axes: [f32; 6],
-    /// rad/s and m/s² in the controller's axes (x right, y up, z toward the player), when it has the sensors.
+    /// rad/s and m/s² in the controller's axes (x right, y up, z toward the player), while the sensors report.
     pub gyro: Option<[f32; 3]>,
     pub accel: Option<[f32; 3]>,
+    pub sensors: Sensors,
+}
+
+/// The controller's motion sensors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sensors {
+    #[default]
+    None,
+    /// Reporting.
+    Live,
+    /// Turned on but not reporting (being turned on again).
+    Quiet,
 }
 
 pub const TRIGGER_LEFT_BIT: u32 = 1 << 30;
@@ -78,6 +95,11 @@ struct Sdl {
     SDL_GameControllerHasSensor: Option<unsafe extern "C" fn(*mut c_void, c_int) -> c_int>,
     SDL_GameControllerSetSensorEnabled: Option<unsafe extern "C" fn(*mut c_void, c_int, c_int) -> c_int>,
     SDL_GameControllerGetSensorData: Option<unsafe extern "C" fn(*mut c_void, c_int, *mut f32, c_int) -> c_int>,
+    // 2.26: when each sample was taken, which shows whether the sensor still reports.
+    SDL_GameControllerGetSensorDataWithTimestamp:
+        Option<unsafe extern "C" fn(*mut c_void, c_int, *mut u64, *mut f32, c_int) -> c_int>,
+    SDL_GameControllerGetSensorDataRate: Option<unsafe extern "C" fn(*mut c_void, c_int) -> f32>,
+    SDL_GetVersion: Option<unsafe extern "C" fn(*mut [u8; 3])>,
     // 2.0.14: the development hook's virtual controller (LIGHTTOUCH_VIRTUAL_PAD).
     SDL_JoystickAttachVirtual: Option<unsafe extern "C" fn(c_int, c_int, c_int, c_int) -> c_int>,
     SDL_JoystickOpen: Option<unsafe extern "C" fn(c_int) -> *mut c_void>,
@@ -170,6 +192,9 @@ impl Sdl {
             SDL_GameControllerHasSensor: want!("SDL_GameControllerHasSensor"),
             SDL_GameControllerSetSensorEnabled: want!("SDL_GameControllerSetSensorEnabled"),
             SDL_GameControllerGetSensorData: want!("SDL_GameControllerGetSensorData"),
+            SDL_GameControllerGetSensorDataWithTimestamp: want!("SDL_GameControllerGetSensorDataWithTimestamp"),
+            SDL_GameControllerGetSensorDataRate: want!("SDL_GameControllerGetSensorDataRate"),
+            SDL_GetVersion: want!("SDL_GetVersion"),
             SDL_JoystickAttachVirtual: want!("SDL_JoystickAttachVirtual"),
             SDL_JoystickOpen: want!("SDL_JoystickOpen"),
             SDL_JoystickSetVirtualAxis: want!("SDL_JoystickSetVirtualAxis"),
@@ -191,14 +216,52 @@ struct Open {
     kind: PadKind,
     gyro: bool,
     accel: bool,
+    /// The last accelerometer sample (its timestamp, or its values on SDLs without timestamps) and when it changed.
+    last_sample: Option<(u64, [f32; 3])>,
+    sampled_at: Instant,
+    /// When the sensors were last turned on, and how often that has been done.
+    enabled_at: Instant,
+    restarts: u32,
+    live: bool,
+}
+
+/// A sensor quiet this long is turned off and on again, at most this often.
+const QUIET: Duration = Duration::from_millis(600);
+const RESTART_EVERY: Duration = Duration::from_secs(2);
+
+/// `logs/controllers.log`: what SDL and each controller report, for when a controller misbehaves on someone's
+/// computer. Kept short: started afresh each run.
+struct Log(Option<std::fs::File>);
+
+impl Log {
+    fn open(path: Option<std::path::PathBuf>) -> Log {
+        Log(path.and_then(|p| {
+            let _ = std::fs::create_dir_all(p.parent()?);
+            std::fs::File::create(p).ok()
+        }))
+    }
+
+    fn line(&mut self, text: &str) {
+        use std::io::Write;
+        if let Some(f) = self.0.as_mut() {
+            let _ = writeln!(f, "{text}");
+        }
+    }
 }
 
 /// Start the polling thread. `woke` is called when the snapshot changes.
-pub fn start(resources: std::path::PathBuf, shared: Arc<Mutex<Pads>>, woke: Arc<dyn Fn() + Send + Sync>) {
+pub fn start(
+    resources: std::path::PathBuf,
+    log: Option<std::path::PathBuf>,
+    shared: Arc<Mutex<Pads>>,
+    woke: Arc<dyn Fn() + Send + Sync>,
+) {
     let spawned = std::thread::Builder::new().name("gamepad".into()).spawn(move || {
+        let mut log = Log::open(log);
         let sdl = match Sdl::load(&resources) {
             Ok(sdl) => sdl,
             Err(e) => {
+                log.line(&format!("SDL2 unavailable: {e}"));
                 shared.lock().unwrap().backend = Backend::Unavailable(e);
                 woke();
                 return;
@@ -217,7 +280,21 @@ pub fn start(resources: std::path::PathBuf, shared: Arc<Mutex<Pads>>, woke: Arc<
         let ok = unsafe { (sdl.SDL_Init)(SDL_INIT_GAMECONTROLLER | SDL_INIT_SENSOR) } == 0
             // SAFETY: as above.
             || unsafe { (sdl.SDL_Init)(SDL_INIT_GAMECONTROLLER) } == 0;
+        let mut version = [0u8; 3];
+        if let Some(get) = sdl.SDL_GetVersion {
+            // SAFETY: SDL_version is three bytes.
+            unsafe { get(&mut version) };
+        }
+        log.line(&format!(
+            "SDL {}.{}.{}, sensors {}, sensor timestamps {}",
+            version[0],
+            version[1],
+            version[2],
+            if sdl.SDL_GameControllerGetSensorData.is_some() { "yes" } else { "no" },
+            if sdl.SDL_GameControllerGetSensorDataWithTimestamp.is_some() { "yes" } else { "no" },
+        ));
         if !ok {
+            log.line(&format!("SDL_Init failed: {}", sdl.error()));
             shared.lock().unwrap().backend = Backend::Unavailable(format!("SDL2 didn't start: {}", sdl.error()));
             woke();
             return;
@@ -229,7 +306,7 @@ pub fn start(resources: std::path::PathBuf, shared: Arc<Mutex<Pads>>, woke: Arc<
         }
         shared.lock().unwrap().backend = Backend::Ready;
         woke();
-        poll(&sdl, &shared, &*woke);
+        poll(&sdl, &shared, &*woke, &mut log);
     });
     if let Err(e) = spawned {
         eprintln!("gamepad thread: {e}");
@@ -279,7 +356,7 @@ impl Virtual {
                 set_button(self.joystick, b, held.contains(&(b as i64)) as u8);
             }
             for a in 0..6 {
-                let v = axes.get(a).copied().unwrap_or(if a >= 4 { 0.0 } else { 0.0 });
+                let v = axes.get(a).copied().unwrap_or(0.0);
                 let raw = if a >= 4 {
                     (v.clamp(0.0, 1.0) * 65535.0 - 32768.0) as i16
                 } else {
@@ -291,7 +368,7 @@ impl Virtual {
     }
 }
 
-fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn()) {
+fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn(), log: &mut Log) {
     let mut open: Vec<Open> = Vec::new();
     let mut virtual_pad = Virtual::attach(sdl);
     let mut scanned = Instant::now() - Duration::from_secs(5);
@@ -304,9 +381,9 @@ fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn()) {
         unsafe { (sdl.SDL_GameControllerUpdate)() };
         if scanned.elapsed() > Duration::from_millis(750) {
             scanned = Instant::now();
-            rescan(sdl, &mut open);
+            rescan(sdl, &mut open, log);
         }
-        let pads: Vec<Pad> = open.iter().map(|o| read(sdl, o)).collect();
+        let pads: Vec<Pad> = open.iter_mut().map(|o| read(sdl, o, log)).collect();
         if pads != last {
             shared.lock().unwrap().pads = pads.clone();
             last = pads;
@@ -316,12 +393,13 @@ fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn()) {
     }
 }
 
-fn rescan(sdl: &Sdl, open: &mut Vec<Open>) {
+fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
     // SAFETY: as in poll.
     unsafe {
         open.retain(|o| {
             let attached = (sdl.SDL_GameControllerGetAttached)(o.handle) != 0;
             if !attached {
+                log.line(&format!("{}: disconnected", o.name));
                 (sdl.SDL_GameControllerClose)(o.handle);
             }
             attached
@@ -341,7 +419,8 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>) {
             } else {
                 CStr::from_ptr(name).to_string_lossy().into_owned()
             };
-            let kind = match sdl.SDL_GameControllerGetType.map(|f| f(handle)) {
+            let pad_type = sdl.SDL_GameControllerGetType.map(|f| f(handle));
+            let kind = match pad_type {
                 Some(3 | 4 | 7) => PadKind::PlayStation,
                 Some(5 | 11 | 12 | 13) => PadKind::Nintendo,
                 _ => PadKind::Xbox,
@@ -351,12 +430,34 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>) {
                 has && sdl.SDL_GameControllerSetSensorEnabled.is_some_and(|f| f(handle, kind, 1) == 0)
             };
             let (gyro, accel) = (sensor(SDL_SENSOR_GYRO), sensor(SDL_SENSOR_ACCEL));
-            open.push(Open { id, handle, name, kind, gyro, accel });
+            let rate = |kind: c_int| sdl.SDL_GameControllerGetSensorDataRate.map_or(0.0, |f| f(handle, kind));
+            log.line(&format!(
+                "{name}: type {}, gyro {} ({} Hz), accelerometer {} ({} Hz)",
+                pad_type.map_or("unknown".to_string(), |t| t.to_string()),
+                if gyro { "on" } else { "none" },
+                rate(SDL_SENSOR_GYRO),
+                if accel { "on" } else { "none" },
+                rate(SDL_SENSOR_ACCEL),
+            ));
+            let now = Instant::now();
+            open.push(Open {
+                id,
+                handle,
+                name,
+                kind,
+                gyro,
+                accel,
+                last_sample: None,
+                sampled_at: now,
+                enabled_at: now,
+                restarts: 0,
+                live: false,
+            });
         }
     }
 }
 
-fn read(sdl: &Sdl, o: &Open) -> Pad {
+fn read(sdl: &Sdl, o: &mut Open, log: &mut Log) -> Pad {
     let mut buttons = 0u32;
     let mut axes = [0f32; 6];
     // SAFETY: as in poll; the sensor buffers hold the three floats asked for.
@@ -370,27 +471,90 @@ fn read(sdl: &Sdl, o: &Open) -> Pad {
             let v = (sdl.SDL_GameControllerGetAxis)(o.handle, i as c_int) as f32;
             *a = if i < 4 { (v / 32767.0).clamp(-1.0, 1.0) } else { (v / 32767.0).clamp(0.0, 1.0) };
         }
-        let sensor = |on: bool, kind: c_int| {
-            let f = sdl.SDL_GameControllerGetSensorData.filter(|_| on)?;
-            let mut v = [0f32; 3];
-            (f(o.handle, kind, v.as_mut_ptr(), 3) == 0).then_some(v)
-        };
         if axes[4] > TRIGGER_THRESHOLD {
             buttons |= TRIGGER_LEFT_BIT;
         }
         if axes[5] > TRIGGER_THRESHOLD {
             buttons |= TRIGGER_RIGHT_BIT;
         }
-        // Sensor noise would wake the UI every poll: round to what matters.
-        let round = |v: [f32; 3], step: f32| v.map(|x| (x / step).round() * step);
-        Pad {
-            id: o.id,
-            name: o.name.clone(),
-            kind: o.kind,
-            buttons,
-            axes: axes.map(|a| (a * 1000.0).round() / 1000.0),
-            gyro: sensor(o.gyro, SDL_SENSOR_GYRO).map(|v| round(v, 0.01)),
-            accel: sensor(o.accel, SDL_SENSOR_ACCEL).map(|v| round(v, 0.05)),
+    }
+    let (gyro, accel, sensors) = read_sensors(sdl, o, log);
+    // Sensor noise would wake the UI every poll: round to what matters.
+    let round = |v: [f32; 3], step: f32| v.map(|x| (x / step).round() * step);
+    Pad {
+        id: o.id,
+        name: o.name.clone(),
+        kind: o.kind,
+        buttons,
+        axes: axes.map(|a| (a * 1000.0).round() / 1000.0),
+        gyro: gyro.map(|v| round(v, 0.01)),
+        accel: accel.map(|v| round(v, 0.05)),
+        sensors,
+    }
+}
+
+/// The motion sensors' readings while they report; turns quiet ones off and on again.
+fn read_sensors(sdl: &Sdl, o: &mut Open, log: &mut Log) -> (Option<[f32; 3]>, Option<[f32; 3]>, Sensors) {
+    if !o.accel {
+        return (None, None, Sensors::None);
+    }
+    let sample = |kind: c_int| -> Option<(u64, [f32; 3])> {
+        let mut v = [0f32; 3];
+        let mut stamp = 0u64;
+        // SAFETY: as in poll; three floats and a u64 to write into.
+        let ok = unsafe {
+            match (sdl.SDL_GameControllerGetSensorDataWithTimestamp, sdl.SDL_GameControllerGetSensorData) {
+                (Some(f), _) => f(o.handle, kind, &mut stamp, v.as_mut_ptr(), 3) == 0,
+                (None, Some(f)) => f(o.handle, kind, v.as_mut_ptr(), 3) == 0,
+                _ => false,
+            }
+        };
+        ok.then_some((stamp, v))
+    };
+    let now = Instant::now();
+    let accel = sample(SDL_SENSOR_ACCEL);
+    let gyro = if o.gyro { sample(SDL_SENSOR_GYRO).map(|(_, v)| v) } else { None };
+    // A new sample: a newer timestamp, or (without timestamps) readings that moved at all, as a real sensor's do.
+    let fresh = match (accel, o.last_sample) {
+        (Some((stamp, v)), Some((last_stamp, last_v))) => {
+            if stamp != 0 || last_stamp != 0 { stamp != last_stamp } else { v != last_v }
+        }
+        (Some((stamp, v)), None) => stamp != 0 || v != [0.0; 3],
+        (None, _) => false,
+    };
+    if fresh {
+        o.last_sample = accel;
+        o.sampled_at = now;
+    }
+    let live = now.duration_since(o.sampled_at) < QUIET && o.last_sample.is_some();
+    if live != o.live {
+        o.live = live;
+        log.line(&format!("{}: motion sensors {}", o.name, if live { "reporting" } else { "quiet" }));
+    }
+    if live {
+        o.restarts = 0;
+    }
+    // Turning them on again talks to the controller (and can wait on it): after ten tries, only now and then.
+    let every = if o.restarts < 10 { RESTART_EVERY } else { RESTART_EVERY * 15 };
+    if !live && now.duration_since(o.enabled_at) > every {
+        o.enabled_at = now;
+        o.restarts += 1;
+        if o.restarts <= 12 {
+            log.line(&format!("{}: turning the motion sensors on again ({})", o.name, o.restarts));
+        }
+        if let Some(set) = sdl.SDL_GameControllerSetSensorEnabled {
+            // SAFETY: as in poll.
+            unsafe {
+                for kind in [SDL_SENSOR_GYRO, SDL_SENSOR_ACCEL] {
+                    set(o.handle, kind, 0);
+                }
+                for (kind, on) in [(SDL_SENSOR_GYRO, o.gyro), (SDL_SENSOR_ACCEL, o.accel)] {
+                    if on {
+                        set(o.handle, kind, 1);
+                    }
+                }
+            }
         }
     }
+    if live { (gyro, accel.map(|(_, v)| v), Sensors::Live) } else { (None, None, Sensors::Quiet) }
 }

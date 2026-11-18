@@ -262,16 +262,24 @@ impl Mapper {
         gyro: Option<[f32; 3]>,
         sensitivity: f64,
     ) -> ([f64; 3], [f64; 3]) {
-        let a = [accel[0] as f64, -accel[2] as f64, accel[1] as f64];
         let g = gyro.map(|g| [g[0] as f64, -g[2] as f64, g[1] as f64]).unwrap_or([0.0; 3]);
-        let norm = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-3);
-        let roll = (-a[0] / norm).clamp(-1.0, 1.0).asin();
-        let pitch = a[1].atan2(a[2]);
+        let (roll, pitch) = lean_of(accel);
         self.lean = Some((roll, pitch));
         let (r, p) = ((roll - self.level.0) * sensitivity, (pitch - self.level.1) * sensitivity);
         let acceleration = [-GRAVITY * r.sin(), GRAVITY * r.cos() * p.sin(), GRAVITY * r.cos() * p.cos()];
         (acceleration, g.map(|w| w * sensitivity))
     }
+}
+
+/// A controller's lean from its accelerometer (SDL's axes: x right, y up, z toward the player), as the device's
+/// (roll, pitch) in radians: level when it lies flat or is held flat; positive roll lowers its right side, positive
+/// pitch raises its far edge.
+pub fn lean_of(accel: [f32; 3]) -> (f64, f64) {
+    let a = [accel[0] as f64, -accel[2] as f64, accel[1] as f64];
+    let norm = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-3);
+    let roll = (-a[0] / norm).clamp(-1.0, 1.0).asin();
+    let pitch = a[1].atan2(a[2]);
+    (roll, pitch)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -445,6 +453,40 @@ mod tests {
         let mut p = Preset::new("t");
         p.bindings = actions.into_iter().map(|action| Binding { action, with: None }).collect();
         p
+    }
+
+    #[test]
+    fn lean_is_level_when_the_controller_lies_flat() {
+        // SDL: lying flat, gravity's reaction is along the controller's y (up).
+        let (roll, pitch) = lean_of([0.0, GRAVITY as f32, 0.0]);
+        assert!(roll.abs() < 1e-6 && pitch.abs() < 1e-6);
+        // Right side down: the reaction leans toward -x.
+        let (roll, _) = lean_of([-(GRAVITY as f32) * 0.5, GRAVITY as f32 * 0.866, 0.0]);
+        assert!((roll.to_degrees() - 30.0).abs() < 0.5);
+        // Far edge raised: the reaction tips toward -z, away from the player.
+        let (_, pitch) = lean_of([0.0, GRAVITY as f32 * 0.866, -(GRAVITY as f32) * 0.5]);
+        assert!((pitch.to_degrees() - 30.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn motion_without_sensor_readings_leaves_the_stick_tilt_working() {
+        // Sensors quiet (the snapshot leaves them out): the stick's tilt still leans the device.
+        let p = preset(vec![Action::Motion { sensitivity: 1.0 }, Action::Tilt { stick: Stick::Left, strength: 1.0 }]);
+        let mut m = Mapper::default();
+        let keys = HashSet::new();
+        let start = Instant::now();
+        let right = Merged { axes: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], ..Default::default() };
+        let mut a = [0.0; 3];
+        for i in 0..20 {
+            let out = m.step(&p, &Inputs { pad: &right, keys: &keys }, &view(), start + Duration::from_millis(50 * i));
+            a = out.motion.expect("motion each step").0;
+        }
+        assert!(a[0] < -5.0, "leans right: {a:?}");
+        // With readings, the controller's own lean wins: lying flat is flat.
+        let flat = Merged { accel: Some([0.0, GRAVITY as f32, 0.0]), gyro: Some([0.0; 3]), ..right };
+        let out = m.step(&p, &Inputs { pad: &flat, keys: &keys }, &view(), start + Duration::from_secs(2));
+        let a = out.motion.unwrap().0;
+        assert!(a[0].abs() < 1e-6 && a[1].abs() < 1e-6 && (a[2] - GRAVITY).abs() < 1e-6, "{a:?}");
     }
 
     #[test]
