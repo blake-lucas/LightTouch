@@ -908,21 +908,29 @@ fn front_app_row(app: &mut App, ui: &mut Ui, preset: &mut Preset) {
     } else {
         format!("On for {}", preset.apps.join(", "))
     };
-    widgets::setting_row(ui, &p, icons::PHONE, "Games", &subtitle, |ui| {
-        if let Some((bundle, name)) = front {
-            let linked = preset.apps.contains(&bundle);
-            let label = if linked { format!("Unlink {name}") } else { format!("Use for {name}") };
-            if widgets::tonal(ui, &p, &label).clicked() {
-                if linked {
-                    preset.apps.retain(|a| a != &bundle);
-                } else {
-                    preset.apps.push(bundle);
-                }
+    // The button goes under the text: a game's name is long for this column.
+    widgets::setting_row(ui, &p, icons::PHONE, "Games", &subtitle, |_| {});
+    let indent = 2.0 + 20.0 + 6.0 + ui.spacing().item_spacing.x;
+    let button = |ui: &mut Ui, label: &str| {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            widgets::tonal(ui, &p, label).clicked()
+        })
+        .inner
+    };
+    if let Some((bundle, name)) = front {
+        let linked = preset.apps.contains(&bundle);
+        let label = if linked { format!("Unlink {name}") } else { format!("Use for {name}") };
+        if button(ui, &label) {
+            if linked {
+                preset.apps.retain(|a| a != &bundle);
+            } else {
+                preset.apps.push(bundle);
             }
-        } else if !preset.apps.is_empty() && widgets::tonal(ui, &p, "Clear").clicked() {
-            preset.apps.clear();
         }
-    });
+    } else if !preset.apps.is_empty() && button(ui, "Clear") {
+        preset.apps.clear();
+    }
 }
 
 // ------------------------------------------------------------------------------------------------- bindings ----

@@ -326,6 +326,9 @@ fn run(
     let mut shutdown_asked: Option<Instant> = None;
     let mut last_status: Option<(StatusEvent, Instant)> = None;
     let mut reported_input = 0u64;
+    // Motion samples sent and turned away, noted in the log every 10 s while they flow (errors aren't events: the
+    // stream drops them), so a session log shows whether tilt reached the engine.
+    let mut motion = MotionStats::default();
     let mut pending_guest: Option<u64> = None;
     let mut microphone = Microphone { enabled: args.microphone, ..Default::default() };
     let mut ui_gone = false;
@@ -382,7 +385,10 @@ fn run(
                     }
                 }
                 Command::CancelInput => runtime.cancel_input(),
-                Command::Motion { acceleration, gyro } => runtime.motion(monotonic_ns(), acceleration, gyro),
+                Command::Motion { acceleration, gyro } => {
+                    motion.last = acceleration;
+                    runtime.motion(monotonic_ns(), acceleration, gyro)
+                }
                 Command::Screenshot { path } => runtime.screenshot_bmp(&path).map(|_| {
                     let _ = events.send(Event::Screenshot { path });
                 }),
@@ -409,12 +415,14 @@ fn run(
             };
             // Motion samples are a stream, as on Android: one the engine turns away (not ready yet, paused) is just
             // dropped.
-            if let Err(e) = result {
-                if name != "motion" {
-                    let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
-                }
+            if name == "motion" {
+                motion.count(result.as_ref().err().map(|e| e.to_string()));
+            } else if let Err(e) = result {
+                let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
             }
         }
+
+        motion.note();
 
         // Touch admission results: a rejected batch releases everything.
         if let Ok((id, state, result)) = runtime.input_status() {
@@ -815,5 +823,44 @@ impl Microphone {
                 }
             }
         }
+    }
+}
+
+/// Motion samples over the last few seconds, for the session log.
+#[derive(Default)]
+struct MotionStats {
+    sent: u32,
+    rejected: u32,
+    first_error: Option<String>,
+    last: Option<[f64; 3]>,
+    since: Option<Instant>,
+}
+
+impl MotionStats {
+    fn count(&mut self, error: Option<String>) {
+        self.since.get_or_insert_with(Instant::now);
+        self.sent += 1;
+        if let Some(e) = error {
+            self.rejected += 1;
+            self.first_error.get_or_insert(e);
+        }
+    }
+
+    /// Every 10 s while samples flow: how many went, how many the engine turned away (and why), and the latest.
+    fn note(&mut self) {
+        let Some(since) = self.since else { return };
+        if since.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+        let last = self.last.map(|a| a.map(|x| (x * 100.0).round() / 100.0));
+        eprintln!(
+            "motion: {} samples in {:.0} s, {} turned away{}; latest acceleration {:?}",
+            self.sent,
+            since.elapsed().as_secs_f32(),
+            self.rejected,
+            self.first_error.as_ref().map(|e| format!(" ({e})")).unwrap_or_default(),
+            last,
+        );
+        *self = MotionStats { last: self.last, ..Default::default() };
     }
 }

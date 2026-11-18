@@ -223,6 +223,10 @@ struct Open {
     enabled_at: Instant,
     restarts: u32,
     live: bool,
+    /// New samples since the last note in the log, when that was, and how many notes so far.
+    fresh: u32,
+    noted_at: Instant,
+    notes: u32,
 }
 
 /// A sensor quiet this long is turned off and on again, at most this often.
@@ -452,6 +456,9 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
                 enabled_at: now,
                 restarts: 0,
                 live: false,
+                fresh: 0,
+                noted_at: now,
+                notes: 0,
             });
         }
     }
@@ -525,6 +532,25 @@ fn read_sensors(sdl: &Sdl, o: &mut Open, log: &mut Log) -> (Option<[f32; 3]>, Op
     if fresh {
         o.last_sample = accel;
         o.sampled_at = now;
+        o.fresh += 1;
+    }
+    // Every 5 s for the first minute, then every minute: how many new samples came and what they read, which tells
+    // a controller at rest (new samples, steady readings) from one whose sensors stopped (no new samples).
+    let every = if o.notes < 12 { Duration::from_secs(5) } else { Duration::from_secs(60) };
+    if now.duration_since(o.noted_at) >= every {
+        let secs = now.duration_since(o.noted_at).as_secs_f32();
+        let accel_now = accel.map(|(_, v)| v.map(|x| (x * 100.0).round() / 100.0));
+        let gyro_now = gyro.map(|v| v.map(|x| (x * 1000.0).round() / 1000.0));
+        log.line(&format!(
+            "{}: {:.0} new samples/s, accelerometer {:?} m/s², gyro {:?} rad/s",
+            o.name,
+            o.fresh as f32 / secs,
+            accel_now.unwrap_or_default(),
+            gyro_now.unwrap_or_default(),
+        ));
+        o.fresh = 0;
+        o.noted_at = now;
+        o.notes += 1;
     }
     let live = now.duration_since(o.sampled_at) < QUIET && o.last_sample.is_some();
     if live != o.live {
@@ -535,8 +561,8 @@ fn read_sensors(sdl: &Sdl, o: &mut Open, log: &mut Log) -> (Option<[f32; 3]>, Op
         o.restarts = 0;
     }
     // Turning them on again talks to the controller (and can wait on it): after ten tries, only now and then.
-    let every = if o.restarts < 10 { RESTART_EVERY } else { RESTART_EVERY * 15 };
-    if !live && now.duration_since(o.enabled_at) > every {
+    let every_restart = if o.restarts < 10 { RESTART_EVERY } else { RESTART_EVERY * 15 };
+    if !live && now.duration_since(o.enabled_at) > every_restart {
         o.enabled_at = now;
         o.restarts += 1;
         if o.restarts <= 12 {
