@@ -77,7 +77,8 @@ impl Merged {
                     *a = b;
                 }
             }
-            if m.gyro.is_none() && p.gyro.is_some() {
+            // The first controller with an accelerometer moves the device (with its gyroscope, if it has one).
+            if m.accel.is_none() && p.accel.is_some() {
                 m.gyro = p.gyro;
                 m.accel = p.accel;
             }
@@ -164,6 +165,10 @@ pub struct Mapper {
     pub level: (f64, f64),
     /// The last motion sample's lean, for setting level.
     pub lean: Option<(f64, f64)>,
+    /// The controller's sensors moved the device last step (it goes back to level when they stop).
+    sensing: bool,
+    /// Until when level goes on being sent after the sensors stop (one sample could fall between the session's).
+    leveling: Option<Instant>,
     last: Option<Instant>,
 }
 
@@ -198,8 +203,9 @@ impl Mapper {
             }
         }
         self.states.clear();
-        if self.tilting {
+        if self.tilting || self.sensing {
             self.tilting = false;
+            self.sensing = false;
             self.tilt = Tilt::default();
             out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
         }
@@ -235,19 +241,27 @@ impl Mapper {
             );
         }
 
-        // Motion: the controller's sensors first, then a stick's tilt, settling back to level when it lets go.
+        // Motion: the controller's sensors first (while its hold button is, if it has one), then a stick's tilt,
+        // settling back to level when it lets go.
         let motion = preset.bindings.iter().find_map(|b| match b.action {
-            Action::Motion { sensitivity } => Some(sensitivity),
+            Action::Motion { sensitivity } if b.with.as_ref().is_none_or(|w| inputs.held(w)) => Some(sensitivity),
             _ => None,
         });
+        let was_sensing = std::mem::replace(&mut self.sensing, false);
         if let (Some(sensitivity), Some(accel)) = (motion, inputs.pad.accel) {
             out.motion = Some(self.motion_from_sensors(accel, inputs.pad.gyro, sensitivity as f64));
+            self.sensing = true;
+            self.leveling = None;
         } else if tilt.is_some() || self.tilting {
             let (roll, pitch) = tilt.unwrap_or((0.0, 0.0));
             let sample = self.tilt.step_toward(roll, pitch, now);
             self.tilting = !self.tilt.at_rest() || tilt.is_some_and(|t| t != (0.0, 0.0));
             out.motion = Some(sample);
             out.busy |= self.tilting;
+        } else if was_sensing || self.leveling.is_some_and(|t| now < t) {
+            self.leveling = self.leveling.filter(|_| !was_sensing).or(Some(now + Duration::from_millis(100)));
+            out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
+            out.busy = true;
         }
         out.busy |= self.states.iter().any(|s| s.stroke.is_some() || s.repeat_at.is_some());
         out
@@ -592,5 +606,26 @@ mod tests {
         let out = m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, t0 + Duration::from_millis(100));
         let (a, _) = out.motion.unwrap();
         assert!(a[1] > 0.0 && a[0].abs() < 1e-9, "{a:?}");
+    }
+
+    #[test]
+    fn motion_with_a_hold_button_acts_only_while_held_and_levels_after() {
+        let mut p = preset(vec![Action::Motion { sensitivity: 1.0 }]);
+        p.bindings[0].with = Some(Input::Pad(PadButton::LeftShoulder));
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        // Leaning right, about 30°.
+        let lean = [-(GRAVITY as f32) * 0.5, GRAVITY as f32 * 0.866, 0.0];
+        let free = Merged { accel: Some(lean), ..Default::default() };
+        let held = Merged { buttons: PadButton::LeftShoulder.bit(), ..free };
+        let at = |ms| t0 + Duration::from_millis(ms);
+        assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(0)).motion.is_none());
+        let (a, _) = m.step(&p, &Inputs { pad: &held, keys: &keys }, &v, at(10)).motion.unwrap();
+        assert!(a[0] < -4.0, "{a:?}");
+        // Let go: level, for a moment, then nothing more.
+        for ms in [20, 60, 100] {
+            let (a, _) = m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(ms)).motion.unwrap();
+            assert_eq!(a, [0.0, 0.0, GRAVITY]);
+        }
+        assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(200)).motion.is_none());
     }
 }

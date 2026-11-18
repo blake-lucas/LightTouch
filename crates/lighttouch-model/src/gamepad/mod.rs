@@ -28,6 +28,8 @@ pub struct Gamepads {
     /// The step sent motion this frame, so the arrow-key tilt stays out of its way.
     pub motion_active: bool,
     view: Option<View>,
+    /// What a Motion binding is doing, as last noted in the controllers log.
+    motion_note: Option<String>,
     /// The last front app a preset was picked for, and when the guest was last asked.
     app: Option<String>,
     asked: Option<Instant>,
@@ -60,6 +62,7 @@ impl Gamepads {
             editing: false,
             motion_active: false,
             view: None,
+            motion_note: None,
             app: None,
             asked: None,
             error: None,
@@ -187,17 +190,66 @@ impl Gamepads {
         }
         self.view = Some(view);
         self.follow_app(session);
+        let pads = self.shared.lock().unwrap().pads.clone();
+        self.note_motion(&pads, keys, listening, running, session);
         let Some(index) = self.active.filter(|_| listening && running && !self.editing) else {
             self.release(Some(session));
             return false;
         };
-        let merged = Merged::from(&self.shared.lock().unwrap().pads);
+        let merged = Merged::from(&pads);
         let out = self.mapper.step(&self.presets[index], &Inputs { pad: &merged, keys }, &view, Instant::now());
         self.motion_active = out.motion.is_some();
         let held = merged.buttons != 0 || merged.axes.iter().any(|a| a.abs() > 0.05) || !keys.is_empty();
         let busy = out.busy || held;
         send(session, out);
         busy
+    }
+
+    /// Note in the controllers log what the active preset's Motion binding is doing, when that changes: whether the
+    /// controller's motion reaches the device, and if not, why.
+    fn note_motion(
+        &mut self,
+        pads: &[sdl::Pad],
+        keys: &HashSet<String>,
+        listening: bool,
+        running: bool,
+        session: &Session,
+    ) {
+        let binding = self
+            .active
+            .and_then(|i| self.presets.get(i))
+            .and_then(|p| p.bindings.iter().find(|b| matches!(b.action, preset::Action::Motion { .. })));
+        let note = binding.filter(|_| running).map(|binding| {
+            let sensing = pads.iter().find(|p| p.accel.is_some());
+            let merged = Merged::from(pads);
+            if !session.board.as_ref().is_some_and(|b| b.has(lighttouch_core::runtime::BoardInfo::ACCELEROMETER)) {
+                "not sent: this device has no accelerometer".to_string()
+            } else if !listening {
+                "not sent: LightTouch isn't in front (\"In the background\" is off)".to_string()
+            } else if self.editing {
+                "not sent: editing the layout".to_string()
+            } else if let Some(pad) = sensing {
+                let held = binding.with.as_ref().is_none_or(|w| (Inputs { pad: &merged, keys }).held(w));
+                if held {
+                    let gyro = if pad.gyro.is_some() { "with" } else { "without" };
+                    format!("sent from {} ({gyro} its gyroscope)", pad.name)
+                } else {
+                    "not sent: waiting for its hold button".to_string()
+                }
+            } else {
+                let pads: Vec<String> = pads.iter().map(|p| format!("{} {:?}", p.name, p.sensors)).collect();
+                format!("not sent: no controller reports its accelerometer ({})", pads.join(", "))
+            }
+        });
+        if note != self.motion_note {
+            if let (Some(n), Some(path)) = (&note, &self.log) {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(path) {
+                    let _ = writeln!(f, "Motion binding: {n}");
+                }
+            }
+            self.motion_note = note;
+        }
     }
 
     /// Switch to the preset linked to the app in front, every few seconds, when any preset names apps.

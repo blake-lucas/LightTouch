@@ -241,7 +241,9 @@ impl Log {
     fn open(path: Option<std::path::PathBuf>) -> Log {
         Log(path.and_then(|p| {
             let _ = std::fs::create_dir_all(p.parent()?);
-            std::fs::File::create(p).ok()
+            // Appending, so the app's own notes (see Gamepads) land after what's here.
+            std::fs::File::create(&p).ok()?;
+            std::fs::OpenOptions::new().append(true).open(p).ok()
         }))
     }
 
@@ -319,11 +321,15 @@ pub fn start(
 
 /// Development hook: `LIGHTTOUCH_VIRTUAL_PAD=FILE` attaches an SDL virtual game controller whose state follows FILE,
 /// JSON `{"buttons": [SDL button numbers held], "axes": [six values, -1..1 sticks, 0..1 triggers]}`, re-read when it
-/// changes. For checking the controller UI and bindings without a controller.
+/// changes, with optional `"accel"` (m/s²) and `"gyro"` (rad/s) readings standing in for motion sensors. For checking
+/// the controller UI and bindings without a controller.
 struct Virtual {
     file: std::path::PathBuf,
     joystick: *mut c_void,
+    id: i32,
     seen: Option<std::time::SystemTime>,
+    accel: Option<[f32; 3]>,
+    gyro: Option<[f32; 3]>,
 }
 
 impl Virtual {
@@ -333,7 +339,8 @@ impl Virtual {
         // SAFETY: SDL's virtual joystick API, from the SDL thread; 1 = SDL_JOYSTICK_TYPE_GAMECONTROLLER.
         let index = unsafe { attach(1, 6, BUTTONS, 0) };
         let joystick = if index >= 0 { unsafe { open(index) } } else { std::ptr::null_mut() };
-        (!joystick.is_null()).then_some(Virtual { file, joystick, seen: None })
+        let id = unsafe { (sdl.SDL_JoystickGetDeviceInstanceID)(index) };
+        (!joystick.is_null()).then_some(Virtual { file, joystick, id, seen: None, accel: None, gyro: None })
     }
 
     fn update(&mut self, sdl: &Sdl) {
@@ -350,6 +357,11 @@ impl Virtual {
             state["buttons"].as_array().map(|a| a.iter().filter_map(|v| v.as_i64()).collect()).unwrap_or_default();
         let axes: Vec<f64> =
             state["axes"].as_array().map(|a| a.iter().filter_map(|v| v.as_f64()).collect()).unwrap_or_default();
+        let three = |key: &str| {
+            let v: Vec<f32> = state[key].as_array()?.iter().filter_map(|v| v.as_f64().map(|x| x as f32)).collect();
+            (v.len() == 3).then(|| [v[0], v[1], v[2]])
+        };
+        (self.accel, self.gyro) = (three("accel"), three("gyro"));
         let (Some(set_axis), Some(set_button)) = (sdl.SDL_JoystickSetVirtualAxis, sdl.SDL_JoystickSetVirtualButton)
         else {
             return;
@@ -387,7 +399,12 @@ fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn(), log: &mut Log) {
             scanned = Instant::now();
             rescan(sdl, &mut open, log);
         }
-        let pads: Vec<Pad> = open.iter_mut().map(|o| read(sdl, o, log)).collect();
+        let mut pads: Vec<Pad> = open.iter_mut().map(|o| read(sdl, o, log)).collect();
+        if let Some(v) = virtual_pad.as_ref().filter(|v| v.accel.is_some()) {
+            for pad in pads.iter_mut().filter(|p| p.id == v.id) {
+                (pad.accel, pad.gyro, pad.sensors) = (v.accel, v.gyro, Sensors::Live);
+            }
+        }
         if pads != last {
             shared.lock().unwrap().pads = pads.clone();
             last = pads;
@@ -524,7 +541,11 @@ fn read_sensors(sdl: &Sdl, o: &mut Open, log: &mut Log) -> (Option<[f32; 3]>, Op
     // A new sample: a newer timestamp, or (without timestamps) readings that moved at all, as a real sensor's do.
     let fresh = match (accel, o.last_sample) {
         (Some((stamp, v)), Some((last_stamp, last_v))) => {
-            if stamp != 0 || last_stamp != 0 { stamp != last_stamp } else { v != last_v }
+            if stamp != 0 || last_stamp != 0 {
+                stamp != last_stamp
+            } else {
+                v != last_v
+            }
         }
         (Some((stamp, v)), None) => stamp != 0 || v != [0.0; 3],
         (None, _) => false,

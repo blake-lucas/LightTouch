@@ -835,29 +835,45 @@ fn motion_bars(ui: &mut Ui, p: &theme::Palette, pad: &Pad) {
             p.on_surface,
         );
     };
-    egui::Grid::new("motion-bars").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-        let width = ui.available_width() - 50.0;
-        ui.label(widgets::muted(p, "Lean").size(12.0)).on_hover_text(
-            "How far the controller leans from level: left or right, and its far edge up or down. Level reads in the \
-             middle.",
-        );
+    // Rows of a fixed label column and bars sharing the rest: the bars' width comes from the card, not a grid cell.
+    let label_w = 40.0;
+    let width = (ui.available_width() - label_w - 10.0).max(60.0);
+    let row = |ui: &mut Ui, name: &str, hint: &str, bars: &[(String, f32, f32)]| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let w = (width - 6.0) / 2.0;
-            bar(ui, &format!("side {:+.0}°", roll.to_degrees()), roll.to_degrees() as f32, 90.0, w);
-            bar(ui, &format!("tip {:+.0}°", pitch.to_degrees()), pitch.to_degrees() as f32, 90.0, w);
-        });
-        ui.end_row();
-        ui.label(widgets::muted(p, "Turn").size(12.0)).on_hover_text("The gyroscope: how fast it turns about each axis");
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let w = (width - 12.0) / 3.0;
-            for (axis, v) in ["x", "y", "z"].iter().zip(gyro) {
-                bar(ui, axis, v, 6.0, w);
+            let (rect, _) = ui.allocate_exact_size(vec2(label_w, 16.0), Sense::hover());
+            ui.painter().text(
+                rect.left_center(),
+                Align2::LEFT_CENTER,
+                name,
+                FontId::proportional(12.0),
+                p.on_surface_variant,
+            );
+            ui.interact(rect, ui.scope_id().with(name), Sense::hover()).on_hover_text(hint);
+            ui.add_space(4.0);
+            let w = (width - 6.0 * (bars.len() as f32 - 1.0)) / bars.len() as f32;
+            for (label, value, scale) in bars {
+                bar(ui, label, *value, *scale, w);
             }
         });
-        ui.end_row();
-    });
+    };
+    row(
+        ui,
+        "Lean",
+        "How far the controller leans from level: left or right, and its far edge up or down. Level reads in the \
+         middle.",
+        &[
+            (format!("side {:+.0}°", roll.to_degrees()), roll.to_degrees() as f32, 90.0),
+            (format!("tip {:+.0}°", pitch.to_degrees()), pitch.to_degrees() as f32, 90.0),
+        ],
+    );
+    ui.add_space(6.0);
+    row(
+        ui,
+        "Turn",
+        "The gyroscope: how fast it turns about each axis",
+        &[("x".into(), gyro[0], 6.0), ("y".into(), gyro[1], 6.0), ("z".into(), gyro[2], 6.0)],
+    );
 }
 
 fn options_card(app: &mut App, ui: &mut Ui) {
