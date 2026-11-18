@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include "KernelRepair.hpp"
 #include <algorithm>
 #include <array>
 #include "Os.hpp"
@@ -331,6 +332,84 @@ static void remove_record(lt_library *l, const std::string &id) {
     }
     discard(trash);
 }
+// A jailbroken kboot device prepared by v0.0.13, whose sandbox patch left out the profile-switch flag
+// (KernelRepair.hpp), gets today's patch in base/kboot.bin, and the lock and record pinned to the result, before it is
+// admitted. A repair cut short finishes at the next open: kboot.bin.repair is written and synced before
+// device.lock.json.repair, and once the latter exists the kernel copy (if still there) replaces kboot.bin, the record
+// and the state are pinned to the new lock, and the new lock replaces the old. Files that fail their pins are left for
+// the admission to report.
+static void repair_kernel(const fs::path &directory, const std::string &id) {
+    const fs::path base = directory / "base", kboot = base / "kboot.bin", lock_path = base / "device.lock.json";
+    const fs::path kboot_new = base / "kboot.bin.repair", lock_new = base / "device.lock.json.repair";
+    const fs::path state_pin = directory / "state/.base-identity";
+    std::error_code ec;
+    if (!fs::exists(lock_new, ec)) {
+        // Until device.lock.json.repair exists nothing the device reads has changed: a failure leaves it as it was.
+        try {
+            if (!fs::is_regular_file(fs::symlink_status(kboot, ec)))
+                return;
+            auto metadata = parse(read_file(directory / "record.json", 65536));
+            auto lock = parse(read_file(lock_path));
+            auto *outputs = lock.find("outputs");
+            auto *output = outputs ? outputs->find("kboot") : nullptr;
+            const Json *pinned = output && output->kind == Json::Object ? output->find("sha256") : nullptr;
+            if (!pinned || output->at("path").string() != "kboot.bin")
+                return;
+            std::string bytes = read_file(kboot, 256u << 20);
+            if (bytes.find(std::string(reinterpret_cast<const char *>(kernel_repair::old_patch_bytes),
+                                       sizeof kernel_repair::old_patch_bytes)) == std::string::npos)
+                return;  // stock, or already repaired
+            auto fix = kernel_repair::needed_fix(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
+            const std::string base_digest = digest_file(lock_path);
+            if (!fix || digest_file(kboot) != pinned->string() || base_digest != metadata.at("base_sha256").string() ||
+                (fs::exists(state_pin, ec) && read_file(state_pin, 128) != base_digest))
+                return;
+            bytes.replace(fix->offset, sizeof fix->bytes, reinterpret_cast<const char *>(fix->bytes), sizeof fix->bytes);
+            fs::remove(kboot_new, ec);
+            // A record from before NAND containers froze its base read-only.
+            if (lt::os::read_only(base.c_str()))
+                io(lt::os::chmod(base.c_str(), 0700) == 0, "record base permissions");
+            atomic_write(kboot_new, bytes);
+            lock.object.at("outputs").object.at("kboot").object.at("sha256").text = digest_file(kboot_new);
+            atomic_write(lock_new, dump(lock) + "\n");
+            sync_dir(base);
+        } catch (...) {
+            if (!fs::exists(lock_new, ec))
+                fs::remove(kboot_new, ec);
+            return;
+        }
+    }
+    if (fs::exists(kboot_new, ec)) {
+        if (lt::os::read_only(kboot.c_str()))
+            io(lt::os::chmod(kboot.c_str(), 0600) == 0, "kernel permissions");
+        fs::rename(kboot_new, kboot);
+    }
+    const std::string repaired = digest_file(lock_new);
+    auto metadata = parse(read_file(directory / "record.json", 65536));
+    metadata.object.at("base_sha256").text = repaired;
+    atomic_write(directory / "record.json", record_json(metadata, id, metadata.at("name").string()));
+    if (fs::exists(state_pin, ec))
+        atomic_write(state_pin, repaired);
+    fs::rename(lock_new, lock_path);
+    sync_dir(base);
+}
+// repair_kernel under the device's lease; a device another process holds is left alone.
+static void repair_kernel_leased(lt_library *l, const std::string &id) {
+    record_id(id);
+    auto directory = l->root / "records" / id;
+    std::error_code ec;
+    if (!fs::exists(directory / "base/kboot.bin", ec) || !fs::is_directory(directory / "state", ec))
+        return;
+    int lease = lt::os::open((directory / "state/.lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (lease < 0)
+        return;
+    struct Closer {
+        int fd;
+        ~Closer() { lt::os::close(fd); }
+    } closer{lease};
+    if (lt::os::lock_exclusive(lease) == 0)
+        repair_kernel(directory, id);
+}
 static void set_guest_package(lt_library *l, const std::string &id, const char *path, lt_record_info *out) {
     abi(out);
     record_id(id);
@@ -497,6 +576,7 @@ lt_status lt_library_device_open_observed(lt_library *l, const char *id, uint32_
         lt::require(id && out, "device record ID/output missing");
         *out = nullptr;
         lt_record_info info{sizeof(info), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+        lt::repair_kernel_leased(l, id);
         lt::describe(l, id, &info);
         auto metadata = lt::parse(lt::read_file(l->root / "records" / id / "record.json", 65536));
         std::vector<lt::AdmissionAssetCheck> assets;
