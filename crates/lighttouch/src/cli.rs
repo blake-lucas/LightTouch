@@ -262,6 +262,13 @@ fn fetch(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         .filter(|a| bundle.as_ref().is_none_or(|b| &a.bundle_id == b))
         .find(|a| a.incompatibility().is_none())
         .ok_or_else(|| format!("store: nothing for {query:?} runs on {id}"))?;
+    // The search row can name a broken copy (Fruit Ninja 1.7.4's executable is cut short); take the one the store
+    // screens select first.
+    let good = store::preferred(app.ipa_id);
+    let app = match store::versions(&app, &target).map_err(|e| format!("store: {e}"))?.iter().find(|c| c.ipa_id == good) {
+        Some(copy) if good != app.ipa_id => app.with_copy(copy),
+        _ => app,
+    };
     let scratch = dirs.cache().join("fetch");
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let ipa = store::download(&app, &target, &scratch, &mut |_, _| true).map_err(|e| format!("store: {e}"))?;
