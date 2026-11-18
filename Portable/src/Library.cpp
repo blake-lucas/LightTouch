@@ -434,6 +434,23 @@ static void set_guest_package(lt_library *l, const std::string &id, const char *
         lt::os::close(fd);
         require(n == 8 && std::memcmp(magic, "ITPACK01", 8) == 0, "not a guest tools package (ITPACK01)");
     }
+    // The guest's loader installs only a family for its board and build, and never an older serial than it has: a
+    // package it would ignore is refused here instead of being swapped in to no effect.
+    const std::string board = metadata.at("board").string(), build = metadata.at("build").string();
+    const int64_t offered = guest_package_serial(path, board, build);
+    require(offered >= 0, "these guest tools have nothing for this device (" + board + ", " + build + ")",
+            LT_UNSUPPORTED);
+    if (fs::is_regular_file(directory / "assets/guest.itpack")) {
+        int64_t current = -1;
+        try {
+            current = guest_package_serial(directory / "assets/guest.itpack", board, build);
+        } catch (...) {  // unreadable: the new one replaces it
+        }
+        require(offered >= current,
+                "these guest tools (serial " + std::to_string(offered) + ") are older than the device's (serial " +
+                    std::to_string(current) + ")",
+                LT_UNSUPPORTED);
+    }
     auto assets = directory / "assets";
     fs::create_directories(assets);
     // A record made before NAND containers froze its assets read-only (0500); writing into them needs that undone.

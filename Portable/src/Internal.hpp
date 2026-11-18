@@ -61,6 +61,8 @@ void seed_admission(const fs::path &base, const fs::path &state);
 void sync_dir(const fs::path &);
 std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);
+// The serial of the family a guest package has for board-build, or -1 when it has none.
+int64_t guest_package_serial(const fs::path &, const std::string &board, const std::string &build);
 // A boot's verdict on the guest package it ran (GuestPackageJudge), for later offers.
 void record_guest_verdict(lt_device *, bool good, int64_t serial);
 // Whether a boot has called this device's guest package good, which takes its agent answering: its guest has one.

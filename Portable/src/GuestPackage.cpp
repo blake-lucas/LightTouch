@@ -42,7 +42,12 @@ bool guest_agent_expected(lt_device *d) {
     std::error_code missing;
     return fs::exists(path, missing) && GuestVerdicts::parse(read_file(path, 4096)).good >= 0;
 }
-std::string guest_offer(lt_device *d, const char *pack) {
+// A guest package's files, unpacked and checked against its index.
+struct UnpackedPackage {
+    std::string payload;
+    std::map<std::string, std::pair<size_t, size_t>> parts;  // name: offset, size in payload
+};
+static UnpackedPackage unpack_package(const fs::path &pack) {
     require(fs::is_regular_file(fs::symlink_status(pack)), "guest package must be a regular .itpack");
     auto blob = read_file(pack);
     require(blob.size() >= 12 && blob.compare(0, 8, "ITPACK01") == 0, "not a guest ITPACK01 archive");
@@ -62,32 +67,36 @@ std::string guest_offer(lt_device *d, const char *pack) {
         require(n <= 64u << 20 && total + n <= 64u << 20, "guest package exceeds memory limit");
         total += n;
     }
-    std::string payload(size_t(total), '\0');
+    UnpackedPackage out;
+    out.payload.assign(size_t(total), '\0');
     z_stream z{};
     require(inflateInit(&z) == Z_OK, "guest inflate initialization");
     z.next_in = reinterpret_cast<Bytef *>(blob.data() + 12 + length);
     z.avail_in = uInt(blob.size() - 12 - length);
-    z.next_out = reinterpret_cast<Bytef *>(payload.data());
-    z.avail_out = uInt(payload.size());
+    z.next_out = reinterpret_cast<Bytef *>(out.payload.data());
+    z.avail_out = uInt(out.payload.size());
     int result = inflate(&z, Z_FINISH);
     bool valid = result == Z_STREAM_END && z.total_out == total && z.avail_in == 0;
     inflateEnd(&z);
     require(valid, "guest compressed checksum/length invalid");
-    std::map<std::string, std::pair<size_t, size_t>> parts;
     size_t offset = 0;
     for (const auto &e : entries.array) {
         size_t n = size_t(e.at("size").integer());
-        parts.emplace(e.at("name").string(), std::make_pair(offset, n));
+        out.parts.emplace(e.at("name").string(), std::make_pair(offset, n));
         offset += n;
     }
-    std::string board = d->lock.at("board").string(), build = d->lock.at("build").string(), prefix;
-    Json manifest;
+    return out;
+}
+// The family (its manifest and the folder it sits in) a package installs on board-build: the one non-stub manifest
+// whose boards name the board and whose builds name the build or its major ("8*").
+static bool select_family(const UnpackedPackage &package, const std::string &board, const std::string &build,
+                          Json &manifest, std::string &prefix) {
     bool found = false;
-    for (const auto &entry : parts) {
+    for (const auto &entry : package.parts) {
         const auto &name = entry.first;
         if (name.size() < 14 || name.compare(name.size() - 14, 14, "/manifest.json"))
             continue;
-        auto m = parse(payload.substr(entry.second.first, entry.second.second));
+        auto m = parse(package.payload.substr(entry.second.first, entry.second.second));
         const auto &r = m.at("requires");
         if (!contains(r.at("boards"), board))
             continue;
@@ -107,6 +116,22 @@ std::string guest_offer(lt_device *d, const char *pack) {
         prefix = name.substr(0, name.size() - 13);
         found = true;
     }
+    return found;
+}
+int64_t guest_package_serial(const fs::path &pack, const std::string &board, const std::string &build) {
+    Json manifest;
+    std::string prefix;
+    if (!select_family(unpack_package(pack), board, build, manifest, prefix))
+        return -1;
+    return int64_t(manifest.at("serial").integer());
+}
+std::string guest_offer(lt_device *d, const char *pack) {
+    auto package = unpack_package(pack);
+    const auto &payload = package.payload;
+    const auto &parts = package.parts;
+    std::string board = d->lock.at("board").string(), build = d->lock.at("build").string(), prefix;
+    Json manifest;
+    bool found = select_family(package, board, build, manifest, prefix);
     require(found, "guest package has no supported family for " + board + "-" + build, LT_UNSUPPORTED);
     require(manifest.at("format").integer() == 1, "unsupported guest manifest", LT_UNSUPPORTED);
     const auto &host = manifest.at("requires").at("host");

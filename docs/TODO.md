@@ -137,9 +137,8 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   boot, keeping apps and data. Linux: `lighttouch-linux --library LIB --record ID --set-guest-package
   ITPACK`. Android: "Guest tools" on a stopped device applies the file to the selected device. Tested:
   desktop (serial 26 record → 27, two boots judged good) and the Pixel (26 ↔ 27 through the picker).
-- [ ] Guest tools update, follow-up: check that the package has a family for the record's board and
-  build before swapping (today an older or mismatched package is accepted; `it_boot` then keeps the
-  installed serial).
+- [x] Guest tools update, follow-up: a package is refused unless it has a family for the record's board and
+  build and its serial is at least the device's (`it_boot` ignored either, so the swap did nothing).
 - [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
   the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
 - [x] Fewer host GL calls per draw: the client-array cache (engine `6762325419`, on by default) skips
