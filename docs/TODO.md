@@ -191,10 +191,12 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   (Steam Input?), and a motion binding then overrode the stick tilt. `3110750a` re-enables quiet sensors and falls
   back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
   (`logs/session-*.log`). Read those from the user's next run before calling it fixed.
-- [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
-  The LDM/STM fault-midway checks (tcg-ldm f, g) failing was the harness: it couldn't build tcg-ldm.S (literal
-  addresses, a Thumb BL to ARM code). Fixed in engine `394116b7b4`; all 11 checks pass on the old and new engine, and
-  with either switch off.
+- [x] A/B on the phones: `LT_LDST_LIVE` and `LT_LDM_BLOCK` (both on by default). Poco, bench app (engine with the
+  upstream merge, current PGO profile), iPod touch 4G 6.1.6, 8 alternating runs with both on or both off: Epic
+  Citadel 42.8 fps on vs 40.1 off (on ahead in each of the 4 back-to-back pairs), Real Racing's menu 44.2 vs 43.8; no
+  crash or stall. Keep them on. The LDM/STM fault-midway checks (tcg-ldm f, g) failing was the harness: it couldn't
+  build tcg-ldm.S (literal addresses, a Thumb BL to ARM code). Fixed in engine `394116b7b4`; all 11 checks pass on
+  the old and new engine, and with either switch off.
 - [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
