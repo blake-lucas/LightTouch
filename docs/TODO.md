@@ -192,8 +192,9 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
   (`logs/session-*.log`). Read those from the user's next run before calling it fixed.
 - [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
-  The LDM/STM fault-midway checks (tcg-ldm f, g) fail on the old and new engine alike: find out whether it's the
-  harness.
+  The LDM/STM fault-midway checks (tcg-ldm f, g) failing was the harness: it couldn't build tcg-ldm.S (literal
+  addresses, a Thumb BL to ARM code). Fixed in engine `394116b7b4`; all 11 checks pass on the old and new engine, and
+  with either switch off.
 - [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
