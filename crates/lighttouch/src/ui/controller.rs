@@ -1194,11 +1194,13 @@ fn binding_settings(
                 });
             }
             row(ui, "Area", &mut |ui| {
-                if widgets::text_button(ui, p, "Whole screen").clicked() {
+                if widgets::text_button(ui, p, "Whole screen")
+                    .on_hover_text("Or drag the area's corner with Place on screen")
+                    .clicked()
+                {
                     *half = [0.5, 0.5];
                     *center = Point::CENTER;
                 }
-                ui.label(widgets::muted(p, "or drag its corner on the screen").size(12.0));
             });
         }
         Action::Tilt { stick, strength } => {
