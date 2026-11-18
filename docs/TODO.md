@@ -185,6 +185,12 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   4G 6.1.6 desktop: all 901 pictures identical to the old order, movie plays through.
 - [x] Infinity Blade "12 fps" on the Poco (iPad) was the game paused behind the push alert. With the alert
   dismissed its title flythrough runs 28.4 fps (27.6 with `LT_LDST_LIVE=off` and `LT_LDM_BLOCK=off`), as before.
+- [ ] Controller motion on Windows (Switch Pro, 2G 3.1.3 and 4G 6.1.6 Doodle Jump): the readout looked frozen and
+  neither a motion nor a stick tilt binding leaned the device. On Linux a stick tilt leans Doodle Jump (3G) and motion
+  reaches the 2G's accelerometer. Suspected: the controller stops sending sensor reports after SDL turns them on
+  (Steam Input?), and a motion binding then overrode the stick tilt. `3110750a` re-enables quiet sensors and falls
+  back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
+  (`logs/session-*.log`). Read those from the user's next run before calling it fixed.
 - [ ] A/B on the phones: `LT_LDST_LIVE` (never run on aarch64; regenerate the PGO profile first) and `LT_LDM_BLOCK`.
   The LDM/STM fault-midway checks (tcg-ldm f, g) fail on the old and new engine alike: find out whether it's the
   harness.
