@@ -419,6 +419,15 @@ pub struct Binding {
     /// Only while this is held too (a shoulder button as a shift).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub with: Option<Input>,
+    /// Nothing of it drawn on the screen while playing (its spot, area, finger or pointer), even with spots on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+}
+
+impl Binding {
+    pub fn new(action: Action) -> Binding {
+        Binding { action, with: None, hidden: false }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -459,30 +468,21 @@ impl Preset {
     pub fn starter() -> Preset {
         let mut p = Preset::new("Default");
         p.bindings = vec![
-            Binding {
-                action: Action::Pointer {
-                    stick: Stick::Left,
-                    center: Point::CENTER,
-                    half: [0.5, 0.5],
-                    touch: Input::Pad(PadButton::RightTrigger),
-                    toggle: false,
-                    style: PointerStyle::Centered,
-                    speed: default_speed(),
-                },
-                with: None,
-            },
-            Binding {
-                action: Action::Tap {
-                    input: Input::Pad(PadButton::South),
-                    at: Point::new(0.5, 0.8),
-                    mode: TapMode::Hold,
-                },
-                with: None,
-            },
-            Binding {
-                action: Action::Device { input: Input::Pad(PadButton::Guide), button: DeviceButton::Home },
-                with: None,
-            },
+            Binding::new(Action::Pointer {
+                stick: Stick::Left,
+                center: Point::CENTER,
+                half: [0.5, 0.5],
+                touch: Input::Pad(PadButton::RightTrigger),
+                toggle: false,
+                style: PointerStyle::Centered,
+                speed: default_speed(),
+            }),
+            Binding::new(Action::Tap {
+                input: Input::Pad(PadButton::South),
+                at: Point::new(0.5, 0.8),
+                mode: TapMode::Hold,
+            }),
+            Binding::new(Action::Device { input: Input::Pad(PadButton::Guide), button: DeviceButton::Home }),
         ];
         p
     }

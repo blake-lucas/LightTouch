@@ -193,6 +193,10 @@ pub fn overlay(app: &mut App, ui: &mut Ui, screen: Rect) {
     let mut released = false;
 
     for (i, binding) in preset.bindings.iter_mut().enumerate() {
+        // Hidden while playing; still shown (to be placed) in Edit layout.
+        if binding.hidden && !editing {
+            continue;
+        }
         let lit = app.model.gamepads.mapper.active(i);
         let finger = app.model.gamepads.mapper.finger(i);
         let with = binding.with.as_ref().map(|w| format!("{}+", w.label(kind))).unwrap_or_default();
@@ -1066,7 +1070,7 @@ fn bindings(app: &mut App, ui: &mut Ui) {
         }
     });
     if let Some(action) = added {
-        preset.bindings.push(Binding { action, with: None });
+        preset.bindings.push(Binding::new(action));
         let i = preset.bindings.len() - 1;
         app.controller.expanded = Some(i);
         // Ask for the input straight away when the binding needs one.
@@ -1502,6 +1506,17 @@ fn binding_settings(
                 });
             });
         }
+    }
+    if matches!(
+        binding.action,
+        Action::Joystick { .. } | Action::Look { .. } | Action::Pointer { .. } | Action::Flick { .. }
+    ) {
+        row(ui, "Show on screen", &mut |ui| {
+            let mut shown = !binding.hidden;
+            widgets::switch(ui, p, &mut shown)
+                .on_hover_text("Draw its spot, area and finger while playing (Edit layout always shows them)");
+            binding.hidden = !shown;
+        });
     }
     row(ui, "Only while holding", &mut |ui| {
         let text = binding.with.as_ref().map_or("Nothing".to_string(), |w| w.label(kind));

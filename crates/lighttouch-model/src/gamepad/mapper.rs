@@ -571,7 +571,7 @@ mod tests {
 
     fn preset(actions: Vec<Action>) -> Preset {
         let mut p = Preset::new("t");
-        p.bindings = actions.into_iter().map(|action| Binding { action, with: None }).collect();
+        p.bindings = actions.into_iter().map(Binding::new).collect();
         p
     }
 
