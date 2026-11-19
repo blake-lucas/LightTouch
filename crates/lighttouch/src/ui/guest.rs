@@ -60,6 +60,25 @@ pub struct GuestView {
     mouse_moved: (f32, f32),
     mouse_buttons: Vec<&'static str>,
     armed: bool,
+    /// The window had the focus last frame while locked (letting go when it's lost, not when a system never says).
+    lock_focused: bool,
+    /// Escape let go: the mouse is a finger again until Escape locks it again (a click doesn't), and since when
+    /// (for the hint).
+    released: Option<Instant>,
+}
+
+/// A note across the top of the screen for a couple of seconds after `since`.
+fn hint(ui: &Ui, rect: Rect, since: Instant, text: &str) {
+    if since.elapsed() >= Duration::from_millis(2500) {
+        return;
+    }
+    let at = egui::pos2(rect.center().x, rect.top() + 22.0);
+    let font = egui::FontId::proportional(13.0);
+    let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), Color32::WHITE);
+    let back = Rect::from_center_size(at, galley.size() + egui::vec2(20.0, 10.0));
+    ui.painter().rect_filled(back, 8.0, Color32::from_black_alpha(170));
+    ui.painter().text(at, egui::Align2::CENTER_CENTER, text, font, Color32::WHITE);
+    ui.ctx().request_repaint_after(Duration::from_millis(100));
 }
 
 /// What presses a hardware button.
@@ -178,14 +197,27 @@ impl GuestView {
         let mouse_look = interactive && model.gamepads.mouse_look();
         if !mouse_look {
             self.unlock(ui.ctx());
-        } else if self.locked.is_none()
-            && response.hovered()
-            && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
-        {
-            self.lock(ui.ctx(), model);
+            self.released = None;
+        }
+        // The Escape that locks the mouse again isn't also the one that lets it go.
+        let mut locked_now = false;
+        if mouse_look && self.locked.is_none() {
+            // A click on the screen locks the mouse; after Escape let it go, Escape locks it again instead (clicks
+            // are touches meanwhile, for the game's menus).
+            let (click, escape) = ui.input(|i| {
+                (i.pointer.button_pressed(egui::PointerButton::Primary), i.key_pressed(egui::Key::Escape))
+            });
+            let lock = if self.released.is_some() { escape } else { click && response.hovered() };
+            if lock {
+                self.released = None;
+                self.lock(ui.ctx(), model);
+                locked_now = true;
+            } else if let Some(since) = self.released {
+                hint(ui, rect, since, "The mouse is a finger · Esc to look with it again");
+            }
         }
         if self.locked.is_some() {
-            self.locked_input(ui, rect);
+            self.locked_input(ui, rect, locked_now);
             self.keyboard_input(ui, model);
         } else if interactive {
             self.pointer_input(ui, rect, &response, model);
@@ -321,8 +353,9 @@ impl GuestView {
         self.focused = focused;
     }
 
-    pub fn mouse_locked(&self) -> bool {
-        self.locked.is_some()
+    /// Escape switches the mouse between looking and touching (it's locked, or Escape let it go).
+    pub fn mouse_toggles(&self) -> bool {
+        self.locked.is_some() || self.released.is_some()
     }
 
     /// The locked mouse's movement since this was last asked, and its buttons held (as key names: MouseLeft...).
@@ -339,6 +372,7 @@ impl GuestView {
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
         (self.locked, self.mouse_moved, self.armed) = (Some(Instant::now()), (0.0, 0.0), false);
+        self.lock_focused = ctx.input(|i| i.focused);
         self.mouse_buttons.clear();
     }
 
@@ -353,11 +387,19 @@ impl GuestView {
     }
 
     /// While locked: the mouse's movement and buttons for the preset, Escape or another window lets go.
-    fn locked_input(&mut self, ui: &Ui, rect: Rect) {
+    fn locked_input(&mut self, ui: &Ui, rect: Rect, locked_now: bool) {
         let ctx = ui.ctx();
         let (escape, focused, events, pointer) =
             ui.input(|i| (i.key_pressed(egui::Key::Escape), i.focused, i.events.clone(), i.pointer.clone()));
-        if escape || !focused {
+        let escape = escape && !locked_now;
+        // Escape lets go and leaves the mouse a finger until Escape again; losing the focus lets go too (a click
+        // locks it again).
+        if escape {
+            self.released = Some(Instant::now());
+        }
+        let lost = self.lock_focused && !focused;
+        self.lock_focused = focused;
+        if escape || lost {
             self.unlock(ctx);
             return;
         }
@@ -381,17 +423,7 @@ impl GuestView {
             ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));
         }
         if let Some(since) = self.locked {
-            let shown = since.elapsed() < Duration::from_millis(2500);
-            if shown {
-                let at = egui::pos2(rect.center().x, rect.top() + 22.0);
-                let font = egui::FontId::proportional(13.0);
-                let text = "Mouse locked to the game · Esc lets go";
-                let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), Color32::WHITE);
-                let back = Rect::from_center_size(at, galley.size() + egui::vec2(20.0, 10.0));
-                ui.painter().rect_filled(back, 8.0, Color32::from_black_alpha(170));
-                ui.painter().text(at, egui::Align2::CENTER_CENTER, text, font, Color32::WHITE);
-                ctx.request_repaint_after(Duration::from_millis(100));
-            }
+            hint(ui, rect, since, "The mouse looks around · Esc to use it as a finger");
         }
     }
 
