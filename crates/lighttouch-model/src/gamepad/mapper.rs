@@ -33,6 +33,10 @@ const LOOK_TAP: Duration = Duration::from_millis(60);
 const GRAVITY: f64 = 9.80665;
 
 /// How the screen is shown.
+/// How far inside the screen's edge a finger stays, as a fraction of its side (about a pixel): a touch on the last
+/// pixel's far edge is off the panel.
+const EDGE: f32 = 0.002;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct View {
     pub rotation: Rotation,
@@ -61,8 +65,28 @@ impl View {
         (length * (1.0 / a).min(1.0), length * a.min(1.0))
     }
 
+    /// `to`, or where the line from `from` toward it leaves the screen (just inside its edge): a stick pushed
+    /// toward an edge its spot sits near keeps its direction and goes as far as the screen allows, rather than
+    /// sliding along the edge.
+    pub fn reach(&self, from: (f32, f32), to: (f32, f32)) -> (f32, f32) {
+        let from = (from.0.clamp(EDGE, 1.0 - EDGE), from.1.clamp(EDGE, 1.0 - EDGE));
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let room = |p: f32, d: f32| {
+            if d > 0.0 {
+                (1.0 - EDGE - p) / d
+            } else if d < 0.0 {
+                (EDGE - p) / d
+            } else {
+                f32::INFINITY
+            }
+        };
+        let t = room(from.0, dx).min(room(from.1, dy)).clamp(0.0, 1.0);
+        (from.0 + dx * t, from.1 + dy * t)
+    }
+
     fn contact(&self, id: u32, phase: u32, u: f32, v: f32) -> Contact {
-        let (x, y) = self.rotation.to_scan(u.clamp(0.0, 1.0) as f64, v.clamp(0.0, 1.0) as f64, self.turned);
+        let (u, v) = (u.clamp(EDGE, 1.0 - EDGE), v.clamp(EDGE, 1.0 - EDGE));
+        let (x, y) = self.rotation.to_scan(u as f64, v as f64, self.turned);
         Contact { id, phase, x, y }
     }
 }
@@ -459,7 +483,8 @@ fn step_binding(
                 let (dx, dy) = if x.abs() > y.abs() { (x.signum(), 0.0) } else { (0.0, y.signum()) };
                 let c = view.shown(*center);
                 let (w, h) = view.span(*length);
-                s.stroke = Some((c, (c.0 + dx * w, c.1 + dy * h), now, Duration::from_millis(FLICK_MS)));
+                let to = view.reach(c, (c.0 + dx * w, c.1 + dy * h));
+                s.stroke = Some((c, to, now, Duration::from_millis(FLICK_MS)));
             }
             stroke(s, now, &mut put, out);
         }
@@ -473,7 +498,7 @@ fn step_binding(
                 put(s, Some(c), out);
             } else {
                 let (w, h) = view.span(*radius);
-                put(s, Some((c.0 + x * w, c.1 + y * h)), out);
+                put(s, Some(view.reach(c, (c.0 + x * w, c.1 + y * h))), out);
             }
         }
         Action::Look { stick, center, half, speed, invert_y, press, tap } => {
@@ -645,6 +670,33 @@ mod tests {
     }
 
     #[test]
+    fn a_joystick_near_the_edge_pushed_off_screen_stops_inside_it_on_its_line() {
+        let p = preset(vec![Action::Joystick {
+            stick: Stick::Right,
+            center: Point::new(0.04, 0.5),
+            radius: 0.15,
+            press: Press::Pushed,
+        }]);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        // Pushed all the way at once, left and a little up: the finger lands on the spot, then goes as far as it can.
+        let (x, y) = (-0.9, -0.43);
+        let pushed = stick_at(x, y, 0);
+        m.step(&p, &Inputs { pad: &pushed, keys: &keys }, &v, t0);
+        let out = m.step(&p, &Inputs { pad: &pushed, keys: &keys }, &v, t0 + Duration::from_millis(60));
+        let c = &out.contacts[0];
+        assert!(c.x > 0.0 && c.x < 0.01, "{c:?}");
+        // Same direction as the stick: the finger moved left and up in the stick's proportion (in screen units).
+        let (u, vv) = m.states[0].finger.unwrap();
+        let (w, h) = v.span(0.15);
+        let (du, dv) = ((u - 0.04) / w, (vv - 0.5) / h);
+        assert!(du < 0.0 && dv < 0.0 && (dv / du - y / x).abs() < 1e-3, "{du} {dv}");
+        // Away from the edge it reaches the full push.
+        let right = stick_at(1.0, 0.0, 0);
+        m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, t0 + Duration::from_millis(120));
+        assert!((m.states[0].finger.unwrap().0 - (0.04 + w)).abs() < 1e-5);
+    }
+
+    #[test]
     fn a_centered_pointer_with_a_speed_glides_to_the_stick_and_back() {
         let p = preset(vec![Action::Pointer {
             stick: Stick::Right,
@@ -799,7 +851,7 @@ mod tests {
         assert_eq!(m.pointer(0), Some(((1.0, 0.5), false)));
         pad.buttons = PadButton::RightTrigger.bit();
         let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &view(), now);
-        assert_eq!((out.contacts[0].phase, out.contacts[0].x), (DOWN, 1.0));
+        assert_eq!((out.contacts[0].phase, out.contacts[0].x), (DOWN, (1.0 - EDGE) as f64));
         let out = m.step(&p, &Inputs { pad: &Merged::default(), keys: &keys }, &view(), now);
         assert_eq!(out.contacts[0].phase, UP);
         assert_eq!(m.pointer(0), Some(((0.5, 0.5), false)));
