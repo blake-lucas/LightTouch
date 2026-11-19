@@ -83,6 +83,19 @@ impl Rotation {
     }
 
     /// The arrows as the screen shows them, in the device's own: each still lowers the edge it points at.
+    /// A vector in the axes of the screen as shown (x right, y up, z toward the viewer: a controller's lean or turn,
+    /// held like the screen) in the guest's portrait axes, the way [`Self::keys`] turns the arrow keys.
+    pub fn to_guest_axes(self, v: [f64; 3]) -> [f64; 3] {
+        let [x, y, z] = v;
+        match self {
+            Self::Portrait => v,
+            // Up as shown is the device's right edge (+x); right as shown its bottom (-y).
+            Self::HomeRight => [y, -x, z],
+            // Up as shown is the device's left edge (-x); right as shown its top (+y).
+            Self::HomeLeft => [-y, x, z],
+        }
+    }
+
     pub fn keys(self, keys: TiltKeys) -> TiltKeys {
         let TiltKeys { left, right, up, down } = keys;
         match self {

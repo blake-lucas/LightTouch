@@ -293,7 +293,7 @@ impl Mapper {
         });
         let was_sensing = std::mem::replace(&mut self.sensing, false);
         if let (Some(sensitivity), Some(accel)) = (motion, inputs.pad.accel) {
-            out.motion = Some(self.motion_from_sensors(accel, inputs.pad.gyro, sensitivity as f64));
+            out.motion = Some(self.motion_from_sensors(accel, inputs.pad.gyro, sensitivity as f64, view.rotation));
             self.sensing = true;
             self.leveling = None;
         } else if was_sensing && motion.is_some() && inputs.pad.sensors_quiet {
@@ -324,13 +324,16 @@ impl Mapper {
         accel: [f32; 3],
         gyro: Option<[f32; 3]>,
         sensitivity: f64,
+        rotation: Rotation,
     ) -> ([f64; 3], [f64; 3]) {
+        // The controller is held like the screen as shown: its lean and turn are in those axes, and the guest's
+        // differ when the device is turned (a landscape game steered by rolling the controller).
         let g = gyro.map(|g| [g[0] as f64, -g[2] as f64, g[1] as f64]).unwrap_or([0.0; 3]);
         let (roll, pitch) = lean_of(accel);
         self.lean = Some((roll, pitch));
         let (r, p) = ((roll - self.level.0) * sensitivity, (pitch - self.level.1) * sensitivity);
         let acceleration = [-GRAVITY * r.sin(), GRAVITY * r.cos() * p.sin(), GRAVITY * r.cos() * p.cos()];
-        (acceleration, g.map(|w| w * sensitivity))
+        (rotation.to_guest_axes(acceleration), rotation.to_guest_axes(g.map(|w| w * sensitivity)))
     }
 }
 
@@ -593,6 +596,46 @@ mod tests {
         // Far edge raised: the reaction tips toward -z, away from the player.
         let (_, pitch) = lean_of([0.0, GRAVITY as f32 * 0.866, -(GRAVITY as f32) * 0.5]);
         assert!((pitch.to_degrees() - 30.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn motion_follows_the_screen_as_shown_when_the_device_is_turned() {
+        let p = preset(vec![Action::Motion { sensitivity: 1.0 }]);
+        let keys = HashSet::new();
+        // The controller's right side down 30°, and turning that way.
+        let right_down = Merged {
+            accel: Some([-(GRAVITY as f32) * 0.5, GRAVITY as f32 * 0.866, 0.0]),
+            gyro: Some([0.0, 0.0, -1.0]),
+            ..Default::default()
+        };
+        let lean = |rotation| {
+            let v = View { rotation, turned: false, aspect: 1.5 };
+            Mapper::default().step(&p, &Inputs { pad: &right_down, keys: &keys }, &v, Instant::now()).motion.unwrap()
+        };
+        // Portrait: the device's right edge goes down (gravity's reaction toward -x).
+        let (a, w) = lean(Rotation::Portrait);
+        assert!(a[0] < -4.0 && a[1].abs() < 1e-6, "{a:?}");
+        // Home on the right: right as shown is the device's bottom edge, so that goes down (reaction toward +y);
+        // as the arrow keys do it.
+        let (a, w2) = lean(Rotation::HomeRight);
+        assert!(a[1] > 4.0 && a[0].abs() < 1e-6, "{a:?}");
+        assert_eq!(w2, [w[1], -w[0], w[2]]);
+        // Home on the left: right as shown is the device's top.
+        let (a, _) = lean(Rotation::HomeLeft);
+        assert!(a[1] < -4.0 && a[0].abs() < 1e-6, "{a:?}");
+        // Same as a stick Tilt to the right in that turn.
+        let tilt = preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0 }]);
+        let v = View { rotation: Rotation::HomeRight, turned: false, aspect: 1.5 };
+        let t0 = Instant::now();
+        let mut m = Mapper::default();
+        let mut last = [0.0; 3];
+        for i in 0..40 {
+            let at = t0 + Duration::from_millis(10 * i);
+            if let Some((a, _)) = m.step(&tilt, &Inputs { pad: &stick_at(1.0, 0.0, 0), keys: &keys }, &v, at).motion {
+                last = a;
+            }
+        }
+        assert!(last[1] > 4.0 && last[0].abs() < 1e-6, "{last:?}");
     }
 
     #[test]
