@@ -28,6 +28,8 @@ pub struct Pad {
     pub gyro: Option<[f32; 3]>,
     pub accel: Option<[f32; 3]>,
     pub sensors: Sensors,
+    /// Why a controller that has motion sensors doesn't report them here (Linux: access to its devices), when known.
+    pub motion_note: Option<String>,
 }
 
 /// The controller's motion sensors.
@@ -92,6 +94,7 @@ struct Sdl {
     SDL_JoystickEventState: unsafe extern "C" fn(c_int) -> c_int,
     // 2.0.12 and 2.0.14: absent from older SDL2s, which then report no type and no sensors.
     SDL_GameControllerGetType: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    SDL_GameControllerGetVendor: Option<unsafe extern "C" fn(*mut c_void) -> u16>,
     SDL_GameControllerHasSensor: Option<unsafe extern "C" fn(*mut c_void, c_int) -> c_int>,
     SDL_GameControllerSetSensorEnabled: Option<unsafe extern "C" fn(*mut c_void, c_int, c_int) -> c_int>,
     SDL_GameControllerGetSensorData: Option<unsafe extern "C" fn(*mut c_void, c_int, *mut f32, c_int) -> c_int>,
@@ -189,6 +192,7 @@ impl Sdl {
             SDL_GameControllerEventState: need!("SDL_GameControllerEventState"),
             SDL_JoystickEventState: need!("SDL_JoystickEventState"),
             SDL_GameControllerGetType: want!("SDL_GameControllerGetType"),
+            SDL_GameControllerGetVendor: want!("SDL_GameControllerGetVendor"),
             SDL_GameControllerHasSensor: want!("SDL_GameControllerHasSensor"),
             SDL_GameControllerSetSensorEnabled: want!("SDL_GameControllerSetSensorEnabled"),
             SDL_GameControllerGetSensorData: want!("SDL_GameControllerGetSensorData"),
@@ -216,6 +220,7 @@ struct Open {
     kind: PadKind,
     gyro: bool,
     accel: bool,
+    motion_note: Option<String>,
     /// The last accelerometer sample (its timestamp, or its values on SDLs without timestamps) and when it changed.
     last_sample: Option<(u64, [f32; 3])>,
     sampled_at: Instant,
@@ -452,6 +457,8 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
             };
             let (gyro, accel) = (sensor(SDL_SENSOR_GYRO), sensor(SDL_SENSOR_ACCEL));
             let rate = |kind: c_int| sdl.SDL_GameControllerGetSensorDataRate.map_or(0.0, |f| f(handle, kind));
+            let vendor = sdl.SDL_GameControllerGetVendor.map_or(0, |f| f(handle));
+            let motion_note = if accel { None } else { motion_blocked(sdl, pad_type, vendor) };
             log.line(&format!(
                 "{name}: type {}, gyro {} ({} Hz), accelerometer {} ({} Hz)",
                 pad_type.map_or("unknown".to_string(), |t| t.to_string()),
@@ -460,6 +467,9 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
                 if accel { "on" } else { "none" },
                 rate(SDL_SENSOR_ACCEL),
             ));
+            if let Some(note) = &motion_note {
+                log.line(&format!("{name}: motion sensors not reachable: {note}"));
+            }
             let now = Instant::now();
             open.push(Open {
                 id,
@@ -468,6 +478,7 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
                 kind,
                 gyro,
                 accel,
+                motion_note,
                 last_sample: None,
                 sampled_at: now,
                 enabled_at: now,
@@ -514,7 +525,82 @@ fn read(sdl: &Sdl, o: &mut Open, log: &mut Log) -> Pad {
         gyro: gyro.map(|v| round(v, 0.01)),
         accel: accel.map(|v| round(v, 0.05)),
         sensors,
+        motion_note: o.motion_note.clone(),
     }
+}
+
+/// Why SDL found no motion sensors on a controller that has them, on Linux. SDL reads a Switch or PlayStation
+/// controller's sensors itself through its /dev/hidraw node, which most systems let only root open (Steam's udev rules,
+/// the steam-devices package, open them up); failing that, SDL 2.28 and newer read them from the separate "IMU" or
+/// "Motion Sensors" input device the kernel's driver makes, which needs read access too.
+#[cfg(target_os = "linux")]
+fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<String> {
+    // Switch Pro and Joy-Cons; PS4, PS5 and PS3 (SDL_GameControllerType).
+    if !matches!(pad_type, Some(5 | 11 | 12 | 13 | 3 | 4 | 7)) || vendor == 0 {
+        return None;
+    }
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+    let nodes = |class: &str| {
+        let mut v: Vec<String> = std::fs::read_dir(format!("/sys/class/{class}"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let can = |path: &str, mode: c_int| {
+        let c = CString::new(path).unwrap();
+        // SAFETY: a valid C string; access() only checks.
+        unsafe { libc::access(c.as_ptr(), mode) == 0 }
+    };
+    // Its hidraw nodes: HID_ID=bus:vendor:product in the device's uevent.
+    let id = format!(":{vendor:08X}:");
+    let hidraw: Vec<String> = nodes("hidraw")
+        .into_iter()
+        .filter(|n| read(&std::path::Path::new("/sys/class/hidraw").join(n).join("device/uevent")).contains(&id))
+        .map(|n| format!("/dev/{n}"))
+        .collect();
+    if hidraw.iter().any(|p| can(p, libc::R_OK | libc::W_OK)) {
+        return Some(
+            "SDL can open the controller but gets no motion from it; Steam Input, if it's running, may be holding it"
+                .into(),
+        );
+    }
+    // The driver's motion device, by name.
+    let imu: Vec<String> = nodes("input")
+        .into_iter()
+        .filter(|n| n.starts_with("event"))
+        .filter(|n| {
+            let name = read(&std::path::Path::new("/sys/class/input").join(n).join("device/name"));
+            name.contains("IMU") || name.contains("Motion Sensors")
+        })
+        .map(|n| format!("/dev/input/{n}"))
+        .collect();
+    let mut version = [0u8; 3];
+    if let Some(get) = sdl.SDL_GetVersion {
+        // SAFETY: SDL_version is three bytes.
+        unsafe { get(&mut version) };
+    }
+    let reads_imu = (version[0], version[1]) >= (2, 28);
+    if reads_imu && imu.iter().any(|p| can(p, libc::R_OK)) {
+        return None;
+    }
+    let blocked: Vec<&str> = hidraw.iter().chain(if reads_imu { imu.iter() } else { [].iter() }).map(|s| s.as_str()).collect();
+    if blocked.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Linux doesn't let LightTouch open its motion sensors ({}). Steam's controller rules (the steam-devices \
+         package) allow it: install them, then reconnect the controller",
+        blocked.join(", "),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn motion_blocked(_: &Sdl, _: Option<c_int>, _: u16) -> Option<String> {
+    None
 }
 
 /// The motion sensors' readings while they report; turns quiet ones off and on again.

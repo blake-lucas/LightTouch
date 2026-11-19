@@ -844,11 +844,12 @@ fn draw_pad(painter: &egui::Painter, p: &theme::Palette, rect: Rect, pad: Option
 /// what a motion binding gives the device, and the gyroscope's turn about each axis.
 fn motion_bars(ui: &mut Ui, p: &theme::Palette, pad: &Pad) {
     let (Some(accel), Some(gyro)) = (pad.accel, pad.gyro.or(Some([0.0; 3]))) else {
-        let text = match pad.sensors {
-            Sensors::None => "This controller has no motion sensors",
+        let text = match (pad.sensors, &pad.motion_note) {
+            (Sensors::None, Some(note)) => note.as_str(),
+            (Sensors::None, None) => "This controller has no motion sensors",
             _ => "Waiting for the motion sensors",
         };
-        ui.label(widgets::muted(p, text).size(12.0));
+        ui.add(egui::Label::new(widgets::muted(p, text).size(12.0)).wrap());
         return;
     };
     let (roll, pitch) = lighttouch_model::gamepad::mapper::lean_of(accel);
