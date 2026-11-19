@@ -1278,7 +1278,15 @@ fn bindings(app: &mut App, ui: &mut Ui) {
         capture = slot.map(|s| (i, s));
     }
     if let Some(i) = remove {
+        // Each More options fold stays with its binding, not its place in the list.
+        let open: Vec<bool> =
+            (0..preset.bindings.len()).map(|j| ui.data(|d| d.get_temp::<bool>(more_id(j))).unwrap_or(false)).collect();
         preset.bindings.remove(i);
+        for (j, open) in open.iter().enumerate().filter(|&(j, _)| j != i) {
+            let to = if j > i { j - 1 } else { j };
+            ui.data_mut(|d| d.insert_temp(more_id(to), *open));
+        }
+        ui.data_mut(|d| d.remove_temp::<bool>(more_id(open.len() - 1)));
         app.controller.expanded = None;
     }
     if set_level {
@@ -1684,7 +1692,7 @@ fn binding_settings(
     let mut more = Vec::new();
     match &mut binding.action {
         Action::Tap { mode, .. } => {
-            row(ui, "Touches", "", &mut |ui| {
+            row(ui, "Touches", "How the finger touches the spot while its button is pressed", &mut |ui| {
                 widgets::segmented_tips(
                     ui,
                     p,
@@ -1900,11 +1908,7 @@ fn binding_settings(
             let tip = "Hold the controller the way you play, then click Set level: that's flat for the device";
             row(ui, "Level", tip, &mut |ui| {
                 let can = lean.is_some();
-                if widgets::tonal_enabled(ui, p, "Set level", can)
-                    .on_hover_text(tip)
-                    .on_disabled_hover_text("Needs a controller with motion sensors")
-                    .clicked()
-                {
+                if widgets::tonal_enabled(ui, p, "Set level", can).on_hover_text(tip).clicked() {
                     *set_level = true;
                 }
                 if !can {
@@ -1914,7 +1918,7 @@ fn binding_settings(
         }
         Action::Device { button, .. } => {
             row(ui, "Presses", "Which of the device's buttons it presses", &mut |ui| {
-                let r = widgets::chip_menu(ui, p, button.label());
+                let r = widgets::chip_menu(ui, p, button.label()).on_hover_text("Pick the device's button");
                 egui::Popup::menu(&r).show(|ui| {
                     ui.set_min_width(160.0);
                     for b in DeviceButton::ALL {
@@ -1933,7 +1937,7 @@ fn binding_settings(
         return;
     }
     // More options, open or closed, and what's set in it.
-    let id = ui.make_persistent_id(("binding-more", i));
+    let id = more_id(i);
     let mut open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     let mut set = Vec::new();
     if let Some(w) = &binding.with {
@@ -2005,6 +2009,11 @@ fn binding_settings(
         }
     }
     optional_input(ui, p, &row, "Only while holding", WITH_TIP, &mut binding.with, kind, &mut with_capture);
+}
+
+/// Whether binding `i`'s More options are open.
+fn more_id(i: usize) -> egui::Id {
+    egui::Id::unique(("binding-more", i))
 }
 
 /// A setting folded under More options.
@@ -2104,7 +2113,7 @@ fn follow_stick(was: &Stick, now: &Stick, press: &mut Press) {
 fn stick_row(ui: &mut Ui, p: &theme::Palette, row: &Row, stick: &mut Stick) -> bool {
     let mut map = false;
     row(ui, "Moved by", "A stick, the D-pad or four keys", &mut |ui| {
-        let r = widgets::chip_menu(ui, p, &stick.label());
+        let r = widgets::chip_menu(ui, p, &stick.label()).on_hover_text("Pick a stick, the D-pad or keys");
         egui::Popup::menu(&r).show(|ui| {
             for (s, label) in [
                 (Stick::Left, "Left stick"),
