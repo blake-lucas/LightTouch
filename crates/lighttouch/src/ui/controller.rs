@@ -1377,7 +1377,7 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             stick: Stick::Right,
             center: Point::new(0.7, 0.45),
             half: [0.25, 0.3],
-            speed: 0.6,
+            speed: LOOK_SPEED,
             invert_y: false,
             press: Press::Pushed,
             tap: None,
@@ -1551,6 +1551,9 @@ fn input_cap(ui: &mut Ui, p: &theme::Palette, text: &str) -> egui::Response {
     .on_hover_text("Click, then press the input to use")
 }
 
+/// A new look binding's speed, in screen widths a second at full tilt: shown as 1, up to 2 (twice it).
+const LOOK_SPEED: f32 = 1.5;
+
 /// A binding's slider bar: twice egui's.
 const SLIDER: f32 = 200.0;
 
@@ -1654,8 +1657,15 @@ fn binding_settings(
             }
             follow_stick(&was, stick, press);
             row(ui, "Speed", &mut |ui| {
-                number_slider(ui, SLIDER, egui::Slider::new(speed, 0.1..=2.5).max_decimals(2))
-                    .on_hover_text("How fast the finger drags at full tilt, in screen widths a second (pushed a little, it goes gently)");
+                // Shown so a new binding's speed reads 1 (presets keep screen widths a second).
+                let was = *speed / LOOK_SPEED;
+                let mut shown = was;
+                number_slider(ui, SLIDER, egui::Slider::new(&mut shown, 0.1..=2.0).max_decimals(2)).on_hover_text(
+                    "How fast the finger drags at full tilt (pushed a little, it goes gently); 1 is the usual",
+                );
+                if shown != was {
+                    *speed = shown * LOOK_SPEED;
+                }
             });
             row(ui, "Invert up and down", &mut |ui| {
                 widgets::switch(ui, p, invert_y);
