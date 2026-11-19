@@ -325,6 +325,9 @@ impl GuestView {
         let bound = super::controller::bound_keys(model);
         let key =
             |key: egui::Key| !bound.contains(key.name()) && ui.input(|i| i.key_down(key) && i.modifiers.is_none());
+        // Pressed and let go between two frames: still a press.
+        let tapped =
+            |key: egui::Key| !bound.contains(key.name()) && ui.input(|i| i.key_pressed(key) && i.modifiers.is_none());
         let keys = [
             (egui::Key::H, device_frame::HOME),
             (egui::Key::P, device_frame::POWER),
@@ -333,11 +336,19 @@ impl GuestView {
             (egui::Key::Minus, device_frame::VOLUME_DOWN),
         ];
         for (k, button) in keys {
-            let down = key(k);
-            let held = self.held.contains(&button);
-            if down != held {
-                self.set_button(model, button, down);
-            }
+            self.follow_button(model, button, key(k), tapped(k));
+        }
+    }
+
+    /// Follow a hardware button's control: `down` while it's held, and `tapped` when it was pressed and let go
+    /// since the last frame, which is then a whole press (the engine holds it long enough for iOS to see, and
+    /// queues quick double and triple clicks).
+    pub fn follow_button(&mut self, model: &mut Model, button: u32, down: bool, tapped: bool) {
+        if tapped && !down && !self.is_held(button) {
+            self.set_button(model, button, true);
+        }
+        if down != self.is_held(button) {
+            self.set_button(model, button, down);
         }
     }
 

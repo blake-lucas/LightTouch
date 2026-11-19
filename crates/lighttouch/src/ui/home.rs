@@ -165,9 +165,7 @@ fn hardware_buttons(app: &mut App, ui: &mut Ui, layout: &device_frame::Layout) {
             response
         };
         let down = enabled && response.is_pointer_button_down_on();
-        if down != app.guest.is_held(id) {
-            app.guest.set_button(&mut app.model, id, down);
-        }
+        app.guest.follow_button(&mut app.model, id, down, enabled && response.clicked());
     }
 }
 

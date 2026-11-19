@@ -95,9 +95,7 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         let response =
             ui.interact(rect, ui.scope_id().with(("fs-key", button)), Sense::click_and_drag()).on_hover_text(label);
         let down = running && response.is_pointer_button_down_on();
-        if down != app.guest.is_held(button) {
-            app.guest.set_button(&mut app.model, button, down);
-        }
+        app.guest.follow_button(&mut app.model, button, down, running && response.clicked());
         let painter = ui.painter();
         if button == device_frame::HOME {
             painter.circle_stroke(
