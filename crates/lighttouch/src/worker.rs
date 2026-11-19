@@ -403,8 +403,15 @@ fn run(
                 Command::Screenshot { path } => runtime.screenshot_bmp(&path).map(|_| {
                     let _ = events.send(Event::Screenshot { path });
                 }),
+                // Guest requests ask the guest tools questions (which app is in front); while iOS boots, or with
+                // the tools missing, the engine turns them away. That is an answer ("rejected", state 3) the asker
+                // copes with, not an error for the player: noted in the session log only.
                 Command::Guest { operation, argument, timeout_ms } => {
-                    runtime.guest_request(operation, &argument, timeout_ms).map(|id| pending_guest = Some(id))
+                    match runtime.guest_request(operation, &argument, timeout_ms) {
+                        Ok(id) => pending_guest = Some(id),
+                        Err(e) => guest_rejected(events, 0, &e.to_string()),
+                    }
+                    Ok(())
                 }
                 Command::Profile { path } => runtime.profile(path.as_deref()),
                 Command::Mute { muted } => {
@@ -459,7 +466,7 @@ fn run(
                 }
                 Err(e) => {
                     pending_guest = None;
-                    let _ = events.send(Event::Error { command: "guest".into(), message: e.to_string() });
+                    guest_rejected(events, id, &e.to_string());
                 }
             }
         }
@@ -832,6 +839,12 @@ impl Microphone {
             }
         }
     }
+}
+
+/// A guest request the engine turned away or lost: answered as rejected, and noted in the session log.
+fn guest_rejected(events: &Sender<Event>, request_id: u64, message: &str) {
+    eprintln!("guest request {request_id} not answered: {message}");
+    let _ = events.send(Event::GuestResult { request_id, state: 3, status: -1, output: String::new() });
 }
 
 /// A motion sample on its way to the engine. Samples are a stream, as on Android, and the engine holds the newest

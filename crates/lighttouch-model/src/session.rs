@@ -295,7 +295,10 @@ impl Session {
                 self.pause_after_frontmost();
             }
             Event::GuestResult { state, status, output, .. } if self.frontmost_watched.is_some() => {
-                self.frontmost_watched = None;
+                // Turned away (the guest tools aren't up yet, while iOS boots): ask again in a few seconds.
+                if state != 3 {
+                    self.frontmost_watched = None;
+                }
                 let lines: Vec<&str> = output.trim_end().lines().collect();
                 if state == 2 && status == 0 && lines.len() >= 2 && !lines[1].trim().is_empty() {
                     self.frontmost = Some((lines[0].trim().to_string(), lines[1].trim().to_string()));
