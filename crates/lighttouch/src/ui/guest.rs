@@ -65,8 +65,12 @@ pub struct GuestView {
     /// Escape let go: the mouse is a finger again until Escape locks it again (a click doesn't), and since when
     /// (for the hint).
     released: Option<Instant>,
-    /// Locked, but the binding's free input is held: the mouse is a finger, its cursor shown and kept on the screen.
+    /// Locked, but the binding's free input is held: the mouse moves a pointer of our own over the screen (drawn as
+    /// a bubble, and stopping at its edges: the real cursor stays hidden and locked) whose left button is finger 1.
+    /// Where it is (0..1 across and down the screen as drawn), and whether its finger is down (at that scan point).
     free: bool,
+    free_at: (f32, f32),
+    free_down: Option<(f64, f64)>,
 }
 
 /// Whether a binding's input is held: a key (Ctrl, Shift and Alt among them), a mouse button or a controller's.
@@ -240,18 +244,30 @@ impl GuestView {
                 hint(ui, rect, since, "The mouse is a finger · Esc to look with it again");
             }
         }
-        if self.locked.is_some() {
+        let was_locked = self.locked.is_some();
+        if was_locked {
             let free_input = model.gamepads.mouse_free();
             let free = free_input.as_ref().is_some_and(|f| held(ui, model, f));
             if free != self.free {
-                self.set_free(ui.ctx(), model, free);
+                self.set_free(free);
             }
             let free_label = free_input.map(|f| f.label(lighttouch_model::gamepad::sdl::PadKind::default()));
             self.locked_input(ui, rect, locked_now, free_label);
             if self.locked.is_some() && self.free {
-                self.pointer_input(ui, rect, &response, model);
+                self.free_pointer(ui, rect, model);
             }
             self.keyboard_input(ui, model);
+        }
+        // The free pointer's finger lifts when it stops being one (Ctrl let go, Escape, another window).
+        if !(self.locked.is_some() && self.free) {
+            if let Some((x, y)) = self.free_down.take() {
+                if let Some(session) = &mut model.session {
+                    session.touch(vec![Contact { id: 1, phase: UP, x, y }]);
+                }
+            }
+        }
+        if was_locked {
+            // Done above.
         } else if interactive {
             self.pointer_input(ui, rect, &response, model);
             self.keyboard_input(ui, model);
@@ -405,26 +421,54 @@ impl GuestView {
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
         (self.locked, self.mouse_moved, self.armed) = (Some(Instant::now()), (0.0, 0.0), false);
+        self.free_at = (0.5, 0.5);
         self.lock_focused = ctx.input(|i| i.focused);
         self.mouse_buttons.clear();
     }
 
-    /// Held free: show the cursor, let it move (it's kept on the screen by hand, as macOS can't confine it), and
-    /// stop looking; let go: lift the mouse's finger and lock it again (a click still held doesn't fire).
-    fn set_free(&mut self, ctx: &egui::Context, model: &mut Model, free: bool) {
+    /// Held free: the mouse moves our pointer instead of looking (the cursor stays hidden and locked); let go: it
+    /// looks again (a click still held doesn't fire).
+    fn set_free(&mut self, free: bool) {
         self.free = free;
         (self.mouse_moved, self.armed) = ((0.0, 0.0), false);
         self.mouse_buttons.clear();
-        if free {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Confined));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        } else {
-            self.release_touches(model);
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Confined));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+    }
+
+    /// The free pointer: its left button is finger 1 where it is, drawn as a bubble (smaller and fuller while down).
+    fn free_pointer(&mut self, ui: &Ui, rect: Rect, model: &mut Model) {
+        let (u, v) = self.free_at;
+        let at = rect.min + egui::vec2(u * rect.width(), v * rect.height());
+        let (x, y) = model.settings.rotation.to_scan(u as f64, v as f64, self.scan_turned());
+        let (down, pressed) = ui.input(|i| {
+            (
+                i.pointer.button_down(egui::PointerButton::Primary),
+                i.pointer.button_pressed(egui::PointerButton::Primary),
+            )
+        });
+        let mut batch = Vec::new();
+        match (self.free_down, down) {
+            (None, true) if pressed => {
+                batch.push(Contact { id: 1, phase: DOWN, x, y });
+                self.free_down = Some((x, y));
+            }
+            (Some(last), true) if last != (x, y) => {
+                batch.push(Contact { id: 1, phase: MOVE, x, y });
+                self.free_down = Some((x, y));
+            }
+            (Some(_), false) => {
+                batch.push(Contact { id: 1, phase: UP, x, y });
+                self.free_down = None;
+            }
+            _ => {}
         }
+        if !batch.is_empty() {
+            if let Some(session) = &mut model.session {
+                session.touch(batch);
+            }
+        }
+        let under = self.sample(x, y).unwrap_or(Color32::GRAY);
+        bubble(&ui.painter().with_clip_rect(rect), at, 11.0, under, self.free_down.is_some());
+        ui.ctx().request_repaint();
     }
 
     fn unlock(&mut self, ctx: &egui::Context) {
@@ -455,21 +499,23 @@ impl GuestView {
             self.unlock(ctx);
             return;
         }
-        if self.free {
-            // A finger for now: the cursor stays on the screen.
-            if let Some(p) = pointer.latest_pos() {
-                let inner = rect.shrink(1.0);
-                let kept = egui::pos2(p.x.clamp(inner.left(), inner.right()), p.y.clamp(inner.top(), inner.bottom()));
-                if kept != p {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(kept));
-                }
-            }
-            return;
-        }
+        let per_point = ctx.pixels_per_point().max(0.1);
         for e in &events {
             if let egui::Event::MouseMoved(d) = e {
-                self.mouse_moved.0 += d.x;
-                self.mouse_moved.1 += d.y;
+                if self.free {
+                    // Our pointer, as far as the screen's edges: each axis stops on its own, so sliding along an
+                    // edge keeps moving along it.
+                    // A hair inside the edge, as a touch on the last pixel's far edge is off the panel.
+                    const EDGE: f32 = 0.002;
+                    let (u, v) = self.free_at;
+                    self.free_at = (
+                        (u + d.x / per_point / rect.width()).clamp(EDGE, 1.0 - EDGE),
+                        (v + d.y / per_point / rect.height()).clamp(EDGE, 1.0 - EDGE),
+                    );
+                } else {
+                    self.mouse_moved.0 += d.x;
+                    self.mouse_moved.1 += d.y;
+                }
             }
         }
         let buttons = [
@@ -478,9 +524,9 @@ impl GuestView {
             (egui::PointerButton::Middle, MOUSE_MIDDLE),
         ];
         let down: Vec<&'static str> = buttons.iter().filter(|(b, _)| pointer.button_down(*b)).map(|(_, n)| *n).collect();
-        // The click that locked it isn't a press: buttons count once it's let go.
+        // The click that locked it isn't a press: buttons count once it's let go. Freed, they're the pointer's.
         self.armed |= down.is_empty();
-        self.mouse_buttons = if self.armed { down } else { Vec::new() };
+        self.mouse_buttons = if self.armed && !self.free { down } else { Vec::new() };
         // Confined, the hidden cursor still moves: back over the screen before it reaches anything else.
         if pointer.latest_pos().is_some_and(|p| p.distance(rect.center()) > rect.width().min(rect.height()) * 0.25) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));
