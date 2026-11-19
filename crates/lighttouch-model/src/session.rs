@@ -367,18 +367,16 @@ impl Session {
     }
 
     /// A motion sample from elsewhere (a controller): acceleration in m/s², and the gyroscope's turn in rad/s for
-    /// boards that have one. At most 100 a second, while the guest runs, on boards with an accelerometer.
+    /// boards that have one, while the guest runs, on boards with an accelerometer. Every one is sent (at most one a
+    /// frame): the engine holds the last it took, so a dropped one (the level a released binding sends) would leave
+    /// the device leaning; the worker passes on only the newest of those queued.
     pub fn motion(&mut self, acceleration: [f64; 3], angular_velocity: [f64; 3]) {
         let Some(board) = &self.board else { return };
         if !matches!(self.phase, Phase::Running) || !board.has(BoardInfo::ACCELEROMETER) {
             return;
         }
         let gyro = board.has(BoardInfo::GYRO);
-        let now = Instant::now();
-        if self.last_motion.is_some_and(|t| now.duration_since(t) < Duration::from_millis(10)) {
-            return;
-        }
-        self.last_motion = Some(now);
+        self.last_motion = Some(Instant::now());
         self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
     }
 

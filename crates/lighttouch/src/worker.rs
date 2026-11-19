@@ -354,9 +354,10 @@ fn run(
                     pending_motion = Some(PendingMotion { acceleration, gyro, since: Instant::now() });
                     continue;
                 }
-                // Anything else (a release, a pause) comes after the motion sent before it.
+                // Anything else (a release, a pause) comes after the motion sent before it; one the engine turns
+                // away for coming too soon is offered again after.
                 command => {
-                    flush_motion(&runtime, &mut pending_motion, &mut motion, true);
+                    flush_motion(&runtime, &mut pending_motion, &mut motion);
                     command
                 }
             };
@@ -428,7 +429,7 @@ fn run(
             }
         }
 
-        flush_motion(&runtime, &mut pending_motion, &mut motion, false);
+        flush_motion(&runtime, &mut pending_motion, &mut motion);
         motion.note();
 
         // Touch admission results: a rejected batch releases everything.
@@ -847,12 +848,12 @@ struct PendingMotion {
 /// How long a sample the engine turned away (too soon, paused, not started) is offered again before it's dropped.
 const MOTION_RETRY: Duration = Duration::from_millis(100);
 
-/// Send the pending motion sample; `last_try` drops it if the engine turns it away (another command follows it).
-fn flush_motion(runtime: &Runtime, pending: &mut Option<PendingMotion>, stats: &mut MotionStats, last_try: bool) {
+/// Send the pending motion sample, keeping it to offer again when the engine turns it away for now.
+fn flush_motion(runtime: &Runtime, pending: &mut Option<PendingMotion>, stats: &mut MotionStats) {
     let Some(m) = pending.take() else { return };
     stats.last = m.acceleration;
     match runtime.motion(monotonic_ns(), m.acceleration, m.gyro) {
-        Err(e) if e.is(sys::LT_AGAIN) && !last_try && m.since.elapsed() < MOTION_RETRY => *pending = Some(m),
+        Err(e) if e.is(sys::LT_AGAIN) && m.since.elapsed() < MOTION_RETRY => *pending = Some(m),
         result => stats.count(result.err().map(|e| e.to_string())),
     }
 }
