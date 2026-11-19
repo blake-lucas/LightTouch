@@ -37,8 +37,12 @@ const KEY_FOLLOW: f32 = 4.0;
 /// A stick binding's tap: how long the finger stays down.
 const STICK_TAP: Duration = Duration::from_millis(60);
 /// A joystick's finger glides to where the stick points at one reach in this long (a stick let go in a frame would
-/// otherwise jump the finger back to the centre, which some games' sticks don't settle from).
+/// otherwise jump the finger back to the centre, which some games' sticks don't settle from), at speed 1.
 const JOYSTICK_GLIDE: f32 = 0.05;
+/// A joystick's finger stays where it landed, on the stick's centre, this long before following the stick: a game
+/// that reads touches once a frame (30 a second, say) would otherwise first see it already pushed away, and centre its
+/// stick there.
+const JOYSTICK_LAND: Duration = Duration::from_millis(50);
 
 /// How the screen is shown.
 /// How far inside the screen's edge a finger stays, as a fraction of its side (about a pixel): a touch on the last
@@ -202,6 +206,8 @@ struct State {
     keyed_since: Option<Instant>,
     /// Mouse movement not yet given to the look finger (it was lifted to land again).
     mouse_carry: (f32, f32),
+    /// When a joystick's finger landed on its centre.
+    landed_at: Option<Instant>,
 }
 
 impl State {
@@ -509,20 +515,26 @@ fn step_binding(
             }
             stroke(s, now, &mut put, out);
         }
-        Action::Joystick { stick, center, radius, press, tap } => {
+        Action::Joystick { stick, center, radius, press, tap, speed } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             let c = view.shown(*center);
             if tapping(s, tap, inputs, enabled, c, now, &mut put, out) {
                 return;
             }
             if !s.pressing(press, inputs, enabled, x.hypot(y), now) {
+                s.landed_at = None;
                 put(s, None, out);
+            } else if s.finger.is_some()
+                && s.landed_at.is_some_and(|t| now.saturating_duration_since(t) < JOYSTICK_LAND)
+            {
+                // Just landed: still on the centre.
+                out.busy = true;
             } else if let Some((u, v)) = s.finger {
                 // Gliding toward the stick's spot, in reaches so it goes as fast up as across.
                 let (w, h) = view.span(*radius);
                 let to = view.reach(c, (c.0 + x * w, c.1 + y * h));
                 let (dx, dy) = ((to.0 - u) / w, (to.1 - v) / h);
-                let (d, step) = (dx.hypot(dy), dt / JOYSTICK_GLIDE);
+                let (d, step) = (dx.hypot(dy), dt * speed.max(0.01) / JOYSTICK_GLIDE);
                 if d <= step {
                     put(s, Some(to), out);
                 } else {
@@ -532,6 +544,8 @@ fn step_binding(
             } else {
                 // Down on the centre first, then pushed: an on-screen stick starts where the finger lands.
                 put(s, Some(c), out);
+                s.landed_at = s.finger.map(|_| now);
+                out.busy = true;
             }
         }
         Action::Look { stick, center, half, speed, invert_y, press, tap, mouse, mouse_speed, .. } => {
@@ -788,6 +802,7 @@ mod tests {
             radius: 0.15,
             press: Press::Pushed,
             tap: None,
+            speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
         // Pushed all the way at once, left and a little up: the finger lands on the spot, then goes as far as it can.
@@ -1009,6 +1024,7 @@ mod tests {
             radius: 0.1,
             press: Press::Pushed,
             tap: None,
+            speed: 1.0,
         }]);
         let mut m = Mapper::default();
         let keys = HashSet::new();
@@ -1137,6 +1153,7 @@ mod tests {
             radius: 0.1,
             press: Press::Pushed,
             tap: None,
+            speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
         let at = |ms| t0 + Duration::from_millis(ms);
@@ -1158,6 +1175,7 @@ mod tests {
             radius: 0.1,
             press: Press::toggle_for(&Stick::Right),
             tap: None,
+            speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
         let r3 = PadButton::RightStick.bit();
@@ -1176,7 +1194,14 @@ mod tests {
     }
 
     fn joystick(press: Press, tap: Option<Input>) -> Preset {
-        preset(vec![Action::Joystick { stick: Stick::Right, center: Point::new(0.5, 0.5), radius: 0.1, press, tap }])
+        preset(vec![Action::Joystick {
+            stick: Stick::Right,
+            center: Point::new(0.5, 0.5),
+            radius: 0.1,
+            press,
+            tap,
+            speed: 1.0,
+        }])
     }
 
     #[test]
@@ -1206,6 +1231,52 @@ mod tests {
         assert!(back.len() >= 3 && back.windows(2).all(|w| w[1] < w[0]), "{back:?}");
         assert!(back.iter().any(|x| *x > 0.52 && *x < 0.58), "{back:?}");
         assert!((back.last().unwrap() - 0.5).abs() < 1e-6 && !busy);
+    }
+
+    /// Pushed all at once (a D-pad, keys, a flick): down on the centre, held there a moment, then out. A game reading
+    /// touches once a frame first sees the finger on the centre.
+    #[test]
+    fn a_joystick_pushed_at_once_lands_on_its_centre_and_stays_a_moment() {
+        let p = joystick(Press::Pushed, None);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut step = |ms| {
+            let out = m.step(&p, &Inputs { pad: &stick_at(1.0, 0.0, 0), keys: &keys }, &v, at(ms));
+            (out.contacts.iter().map(|c| (c.phase, c.x)).collect::<Vec<_>>(), out.busy)
+        };
+        assert_eq!(step(0), (vec![(DOWN, 0.5)], true));
+        for ms in [8, 16, 33, 49] {
+            assert_eq!(step(ms), (vec![], true), "{ms} ms: still on the centre");
+        }
+        let (moved, _) = step(58);
+        assert!(moved.len() == 1 && moved[0].0 == MOVE && moved[0].1 > 0.5, "{moved:?}");
+    }
+
+    /// Speed sets how fast the finger follows: at a half, it's halfway when it would have arrived.
+    #[test]
+    fn a_joystick_at_half_speed_follows_half_as_fast() {
+        let reach_after = |speed: f32| {
+            let p = preset(vec![Action::Joystick {
+                stick: Stick::Right,
+                center: Point::new(0.5, 0.5),
+                radius: 0.1,
+                press: Press::Pushed,
+                tap: None,
+                speed,
+            }]);
+            let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+            let mut x = 0.5;
+            for ms in (0..=100).step_by(10) {
+                let pad = stick_at(1.0, 0.0, 0);
+                let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(ms));
+                x = out.contacts.last().map_or(x, |c| c.x);
+            }
+            x - 0.5
+        };
+        // Landed at 0, on the centre until 50 ms, then following from the 50 ms step on (six 10 ms steps): all the way
+        // at 1 (it would take 50 ms), 60% of the way at 0.5.
+        let (full, half) = (reach_after(1.0), reach_after(0.5));
+        assert!((full - 0.1).abs() < 1e-4 && (half - 0.06).abs() < 1e-3, "{full} {half}");
     }
 
     #[test]

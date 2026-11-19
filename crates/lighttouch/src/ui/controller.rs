@@ -1412,6 +1412,7 @@ fn templates() -> Vec<fn() -> Action> {
             radius: 0.15,
             press: Press::toggle_for(&Stick::Left),
             tap: None,
+            speed: 1.0,
         },
         || Action::Look {
             stick: Stick::Right,
@@ -1714,7 +1715,7 @@ fn binding_settings(
                 number_slider(ui, SLIDER, egui::Slider::new(ms, 40..=800).suffix(" ms")).on_hover_text(tip);
             });
         }
-        Action::Joystick { stick, radius, press, tap, .. } => {
+        Action::Joystick { stick, radius, press, tap, speed, .. } => {
             let was = stick.clone();
             if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
@@ -1724,6 +1725,12 @@ fn binding_settings(
                        shorter side";
             row(ui, "Reach", tip, &mut |ui| {
                 number_slider(ui, SLIDER, percent(egui::Slider::new(radius, 0.04..=0.5))).on_hover_text(tip);
+            });
+            let tip = "How fast the finger follows the stick: at 1, across the whole reach in 50 ms. Slow it for a game \
+                       whose stick loses a finger that moves too fast (a D-pad, keys or a quick flick)";
+            row(ui, "Speed", tip, &mut |ui| {
+                number_slider(ui, SLIDER, egui::Slider::new(speed, 0.1..=2.0).logarithmic(true).max_decimals(2))
+                    .on_hover_text(tip);
             });
             gap(ui);
             press_rows(ui, p, &row, press, stick, kind, i, capture);

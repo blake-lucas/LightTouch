@@ -351,6 +351,10 @@ pub enum Action {
         /// A button that lifts the finger and taps the stick's centre (games that fire with a tap on the stick).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tap: Option<Input>,
+        /// How fast the finger follows the stick: at 1 it crosses a full reach in 50 ms; lower for games whose stick
+        /// loses a finger dragged fast.
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        speed: f32,
     },
     /// Looking around (a game's camera): the stick drags a finger across an area at a speed set by how far it's
     /// pushed, lifting and landing again before it runs off the area's edge.
@@ -422,6 +426,10 @@ fn default_speed() -> f32 {
 
 fn one() -> f32 {
     1.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Action {
@@ -591,5 +599,10 @@ mod tests {
             serde_json::from_str(r#"{"name":"x","bindings":[{"action":{"kind":"tilt","stick":"left"}}]}"#).unwrap();
         assert!(!bare.show_spots && bare.deadzone > 0.0);
         assert_eq!(bare.bindings[0].action, Action::Tilt { stick: Stick::Left, strength: 1.0 });
+        // A joystick from before its speed follows at 1, and one at 1 is saved without it.
+        let old = r#"{"name":"x","bindings":[{"action":{"kind":"joystick","stick":"left","center":{"x":0.2,"y":0.8},"radius":0.15}}]}"#;
+        let old: Preset = serde_json::from_str(old).unwrap();
+        assert!(matches!(old.bindings[0].action, Action::Joystick { speed: 1.0, .. }));
+        assert!(!serde_json::to_string(&old).unwrap().contains("speed"));
     }
 }
