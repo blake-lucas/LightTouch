@@ -5,7 +5,7 @@
 //! panel's scan ([`Rotation::to_scan`]). Each binding owns one contact id, so the engine sees every finger the bindings
 //! hold as its own; the engine takes five fingers at once, so a sixth waits.
 use super::preset::{Action, Binding, Input, Point, PointerStyle, Preset, Press, Stick, TapMode};
-use super::sdl::Pad;
+use super::sdl::{Pad, Sensors};
 use crate::rotation::Rotation;
 use crate::tilt::Tilt;
 use lighttouch_core::runtime::Contact;
@@ -75,6 +75,8 @@ pub struct Merged {
     pub axes: [f32; 6],
     pub gyro: Option<[f32; 3]>,
     pub accel: Option<[f32; 3]>,
+    /// No controller's sensors report, but one's are on and paused (sdl.rs turns them on again).
+    pub sensors_quiet: bool,
 }
 
 impl Merged {
@@ -92,7 +94,9 @@ impl Merged {
                 m.gyro = p.gyro;
                 m.accel = p.accel;
             }
+            m.sensors_quiet |= p.sensors == Sensors::Quiet;
         }
+        m.sensors_quiet &= m.accel.is_none();
         m
     }
 }
@@ -281,7 +285,8 @@ impl Mapper {
         }
 
         // Motion: the controller's sensors first (while its hold button is, if it has one), then a stick's tilt,
-        // settling back to level when it lets go.
+        // settling back to level when it lets go. Sensors that pause while the binding is engaged leave the device
+        // where they had it (the engine holds the last sample): levelling then was a recentre mid-turn.
         let motion = preset.bindings.iter().find_map(|b| match b.action {
             Action::Motion { sensitivity } if b.with.as_ref().is_none_or(|w| inputs.held(w)) => Some(sensitivity),
             _ => None,
@@ -291,6 +296,8 @@ impl Mapper {
             out.motion = Some(self.motion_from_sensors(accel, inputs.pad.gyro, sensitivity as f64));
             self.sensing = true;
             self.leveling = None;
+        } else if was_sensing && motion.is_some() && inputs.pad.sensors_quiet {
+            self.sensing = true;
         } else if tilt.is_some() || self.tilting {
             let (roll, pitch) = tilt.unwrap_or((0.0, 0.0));
             let sample = self.tilt.step_toward(roll, pitch, now);
@@ -739,6 +746,36 @@ mod tests {
             assert_eq!(a, [0.0, 0.0, GRAVITY]);
         }
         assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(200)).motion.is_none());
+    }
+
+    #[test]
+    fn motion_holds_its_lean_while_the_sensors_pause_and_levels_when_let_go() {
+        let mut p = preset(vec![Action::Motion { sensitivity: 1.0 }]);
+        p.bindings[0].with = Some(Input::Pad(PadButton::LeftShoulder));
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let lean = [-(GRAVITY as f32) * 0.5, GRAVITY as f32 * 0.866, 0.0];
+        let shoulder = PadButton::LeftShoulder.bit();
+        let live = Merged { buttons: shoulder, accel: Some(lean), ..Default::default() };
+        let quiet = Merged { buttons: shoulder, sensors_quiet: true, ..Default::default() };
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let (leaning, _) = m.step(&p, &Inputs { pad: &live, keys: &keys }, &v, at(0)).motion.unwrap();
+        // Quiet for a second (Steam Input took the sensors, say): nothing sent, so the device stays leaning.
+        for ms in (10..1000).step_by(50) {
+            assert!(m.step(&p, &Inputs { pad: &quiet, keys: &keys }, &v, at(ms)).motion.is_none(), "{ms} ms");
+        }
+        let (back, _) = m.step(&p, &Inputs { pad: &live, keys: &keys }, &v, at(1000)).motion.unwrap();
+        assert_eq!(back, leaning);
+        // Quiet again, and the hold button let go: level, as when let go while reporting.
+        m.step(&p, &Inputs { pad: &quiet, keys: &keys }, &v, at(1010));
+        let released = Merged { sensors_quiet: true, ..Default::default() };
+        let (a, _) = m.step(&p, &Inputs { pad: &released, keys: &keys }, &v, at(1020)).motion.unwrap();
+        assert_eq!(a, [0.0, 0.0, GRAVITY]);
+        // The controller gone (no sensors at all) while engaged: level too.
+        let mut m = Mapper::default();
+        m.step(&p, &Inputs { pad: &live, keys: &keys }, &v, at(0));
+        let gone = Merged { buttons: shoulder, ..Default::default() };
+        let (a, _) = m.step(&p, &Inputs { pad: &gone, keys: &keys }, &v, at(10)).motion.unwrap();
+        assert_eq!(a, [0.0, 0.0, GRAVITY]);
     }
 
     fn stick_at(x: f32, y: f32, buttons: u32) -> Merged {
