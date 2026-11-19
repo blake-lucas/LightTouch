@@ -326,6 +326,8 @@ pub enum Action {
     /// Drag a finger from one spot to another when pressed (Temple Run's turns, a menu's page flip).
     Swipe { input: Input, from: Point, to: Point, ms: u32 },
     /// An on-screen joystick: a finger held on its centre and pushed toward the stick's direction, up to `radius`.
+    /// The finger glides to where the stick points rather than jumping there, so a stick let go fast slides back to
+    /// the centre the way a thumb does.
     Joystick {
         stick: Stick,
         center: Point,
@@ -333,6 +335,9 @@ pub enum Action {
         /// Presets from before this was asked: while pushed.
         #[serde(default)]
         press: Press,
+        /// A button that lifts the finger and taps the stick's centre (games that fire with a tap on the stick).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tap: Option<Input>,
     },
     /// Looking around (a game's camera): the stick drags a finger across an area at a speed set by how far it's
     /// pushed, lifting and landing again before it runs off the area's edge.

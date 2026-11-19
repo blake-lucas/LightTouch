@@ -62,7 +62,7 @@ enum Slot {
     Stick,
     /// A stick binding's press button.
     Press,
-    /// A look binding's tap button.
+    /// A joystick's or look binding's tap button.
     Tap,
 }
 
@@ -96,13 +96,7 @@ pub fn bound_keys(model: &Model) -> HashSet<String> {
                 add(touch, &mut keys);
                 stick_keys(stick, &mut keys);
             }
-            Action::Joystick { stick, press, .. } => {
-                if let Some(i) = press.input() {
-                    add(i, &mut keys);
-                }
-                stick_keys(stick, &mut keys);
-            }
-            Action::Look { stick, press, tap, .. } => {
+            Action::Joystick { stick, press, tap, .. } | Action::Look { stick, press, tap, .. } => {
                 for i in press.input().into_iter().chain(tap.as_ref()) {
                     add(i, &mut keys);
                 }
@@ -932,8 +926,18 @@ fn options_card(app: &mut App, ui: &mut Ui) {
         widgets::setting_row(ui, &p, EYE, "Show spots", "Draw where each input touches while you play", |ui| {
             widgets::switch(ui, &p, &mut preset.show_spots);
         });
-        widgets::setting_row(ui, &p, JOYSTICK, "Stick dead zone", "", |ui| {
-            ui.add(egui::Slider::new(&mut preset.deadzone, 0.0..=0.5).show_value(false));
+        // The options column is narrow: the slider goes under its title.
+        ui.horizontal(|ui| {
+            ui.add_space(2.0);
+            ui.label(widgets::icon_text(JOYSTICK, 20.0).color(p.on_surface_variant));
+            ui.add_space(6.0);
+            ui.vertical(|ui| {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Stick dead zone").size(14.5));
+                number_slider(ui, 170.0, percent(egui::Slider::new(&mut preset.deadzone, 0.0..=0.5)))
+                    .on_hover_text("How far a stick must be pushed before it counts");
+                ui.add_space(6.0);
+            });
         });
         widgets::setting_row(
             ui,
@@ -1180,6 +1184,7 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             center: Point::new(0.22, 0.78),
             radius: 0.15,
             press: Press::toggle_for(&Stick::Left),
+            tap: None,
         }),
         (CROSSHAIR, "Look around (camera)", || Action::Look {
             stick: Stick::Right,
@@ -1236,8 +1241,9 @@ fn summary(binding: &Binding, kind: PadKind) -> String {
             TapMode::Repeat => "Taps over and over while held".into(),
         },
         Action::Swipe { ms, .. } => format!("Swipes in {ms} ms"),
-        Action::Joystick { stick, press, .. } => {
-            format!("{} drags an on-screen stick, {}", stick.label(), press_text(press, kind))
+        Action::Joystick { stick, press, tap, .. } => {
+            let tap = tap.as_ref().map(|t| format!(", {} taps it", input_text(t, kind))).unwrap_or_default();
+            format!("{} drags an on-screen stick, {}{tap}", stick.label(), press_text(press, kind))
         }
         Action::Look { stick, press, tap, .. } => {
             let tap = tap.as_ref().map(|t| format!(", {} taps", input_text(t, kind))).unwrap_or_default();
@@ -1354,6 +1360,43 @@ fn input_cap(ui: &mut Ui, p: &theme::Palette, text: &str) -> egui::Response {
     .on_hover_text("Click, then press the input to use")
 }
 
+/// A binding's slider bar: twice egui's.
+const SLIDER: f32 = 200.0;
+
+/// A slider with its value beside it, which can be clicked and typed into for an exact number.
+fn number_slider(ui: &mut Ui, width: f32, slider: egui::Slider) -> egui::Response {
+    ui.spacing_mut().slider_width = width;
+    ui.add(slider.show_value(true))
+}
+
+/// A slider over a fraction shown and typed as a percentage.
+fn percent(slider: egui::Slider) -> egui::Slider {
+    slider
+        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+        .custom_parser(|t| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0))
+}
+
+/// A stick binding's tap button, with a clear.
+fn tap_row(
+    ui: &mut Ui,
+    p: &theme::Palette,
+    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
+    tap: &mut Option<Input>,
+    kind: PadKind,
+    hover: &str,
+    capture: &mut dyn FnMut(),
+) {
+    row(ui, "Tap with", &mut |ui| {
+        let text = tap.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
+        if input_cap(ui, p, &text).on_hover_text(hover).clicked() {
+            capture();
+        }
+        if tap.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
+            *tap = None;
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn binding_settings(
     ui: &mut Ui,
@@ -1391,39 +1434,47 @@ fn binding_settings(
                 ui.add(egui::Slider::new(ms, 40..=800).suffix(" ms"));
             });
         }
-        Action::Joystick { stick, radius, press, .. } => {
+        Action::Joystick { stick, radius, press, tap, .. } => {
             let was = stick.clone();
             stick_row(ui, p, row, stick);
             follow_stick(&was, stick, press);
             row(ui, "Reach", &mut |ui| {
-                ui.add(egui::Slider::new(radius, 0.04..=0.5).show_value(false));
+                number_slider(ui, SLIDER, percent(egui::Slider::new(radius, 0.04..=0.5)))
+                    .on_hover_text("How far the finger goes at full push, as a share of the screen's shorter side");
             });
             press_rows(ui, p, row, press, stick, kind, i, capture);
+            tap_row(
+                ui,
+                p,
+                row,
+                tap,
+                kind,
+                "For games that fire with a tap on the stick: lifts the finger, taps the stick's center, then lands \
+                 again",
+                &mut || *capture = Some((i, Slot::Tap)),
+            );
         }
         Action::Look { stick, half, center, speed, invert_y, press, tap } => {
             let was = stick.clone();
             stick_row(ui, p, row, stick);
             follow_stick(&was, stick, press);
             row(ui, "Speed", &mut |ui| {
-                ui.add(egui::Slider::new(speed, 0.1..=2.5).show_value(false))
-                    .on_hover_text("How fast the finger drags at full tilt (pushed a little, it goes gently)");
+                number_slider(ui, SLIDER, egui::Slider::new(speed, 0.1..=2.5).max_decimals(2))
+                    .on_hover_text("How fast the finger drags at full tilt, in screen widths a second (pushed a little, it goes gently)");
             });
             row(ui, "Invert up and down", &mut |ui| {
                 widgets::switch(ui, p, invert_y);
             });
             press_rows(ui, p, row, press, stick, kind, i, capture);
-            row(ui, "Tap with", &mut |ui| {
-                let text = tap.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
-                if input_cap(ui, p, &text)
-                    .on_hover_text("For games that fire with a tap on the look area: lifts the look finger and taps")
-                    .clicked()
-                {
-                    *capture = Some((i, Slot::Tap));
-                }
-                if tap.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
-                    *tap = None;
-                }
-            });
+            tap_row(
+                ui,
+                p,
+                row,
+                tap,
+                kind,
+                "For games that fire with a tap on the look area: lifts the look finger and taps",
+                &mut || *capture = Some((i, Slot::Tap)),
+            );
             row(ui, "Area", &mut |ui| {
                 if widgets::text_button(ui, p, "Right half")
                     .on_hover_text("Or drag the area's corner in Edit layout")
@@ -1437,7 +1488,8 @@ fn binding_settings(
         Action::Flick { stick, length, .. } => {
             stick_row(ui, p, row, stick);
             row(ui, "Swipe length", &mut |ui| {
-                ui.add(egui::Slider::new(length, 0.05..=0.8).show_value(false));
+                number_slider(ui, SLIDER, percent(egui::Slider::new(length, 0.05..=0.8)))
+                    .on_hover_text("As a share of the screen's shorter side");
             });
         }
         Action::Pointer { stick, style, speed, follow, half, center, touch, toggle } => {
@@ -1458,19 +1510,31 @@ fn binding_settings(
             });
             if *style == PointerStyle::Cursor {
                 row(ui, "Speed", &mut |ui| {
-                    ui.add(egui::Slider::new(speed, 0.2..=3.0).show_value(false));
+                    number_slider(ui, SLIDER, egui::Slider::new(speed, 0.2..=3.0).max_decimals(2))
+                        .on_hover_text("Screen widths a second at full tilt");
                 });
             } else {
                 // All the way right: no glide, the pointer jumps to where the stick points.
                 const INSTANT: f32 = 12.0;
                 row(ui, "Speed", &mut |ui| {
                     let mut v = follow.unwrap_or(INSTANT);
-                    ui.add(
-                        egui::Slider::new(&mut v, 0.5..=INSTANT)
-                            .logarithmic(true)
-                            .show_value(false),
-                    )
-                    .on_hover_text("How fast the pointer glides to where the stick points and back (all the way right: at once)");
+                    let slider = egui::Slider::new(&mut v, 0.5..=INSTANT)
+                        .logarithmic(true)
+                        .custom_formatter(|v, _| {
+                            if v >= INSTANT as f64 {
+                                "At once".into()
+                            } else {
+                                format!("{}", (v * 100.0).round() / 100.0)
+                            }
+                        })
+                        .custom_parser(|t| match t.trim().to_lowercase().as_str() {
+                            "at once" | "instant" => Some(INSTANT as f64),
+                            t => t.parse().ok(),
+                        });
+                    number_slider(ui, SLIDER, slider).on_hover_text(
+                        "How fast the pointer glides to where the stick points and back, in screen widths a second \
+                         (all the way right: at once)",
+                    );
                     *follow = (v < INSTANT).then_some(v);
                 });
             }
@@ -1487,12 +1551,12 @@ fn binding_settings(
         Action::Tilt { stick, strength } => {
             stick_row(ui, p, row, stick);
             row(ui, "Strength", &mut |ui| {
-                ui.add(egui::Slider::new(strength, 0.2..=1.0).show_value(false));
+                number_slider(ui, SLIDER, percent(egui::Slider::new(strength, 0.2..=1.0)));
             });
         }
         Action::Motion { sensitivity } => {
             row(ui, "Sensitivity", &mut |ui| {
-                ui.add(egui::Slider::new(sensitivity, 0.3..=3.0).show_value(false));
+                number_slider(ui, SLIDER, egui::Slider::new(sensitivity, 0.3..=3.0).max_decimals(2).suffix("×"));
             });
             row(ui, "Level", &mut |ui| {
                 let can = lean.is_some();
@@ -1733,7 +1797,7 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
                 *input = g;
             }
         }
-        (Slot::Tap, Action::Look { tap, .. }) => {
+        (Slot::Tap, Action::Joystick { tap, .. } | Action::Look { tap, .. }) => {
             if got.is_some() {
                 *tap = got;
             }
