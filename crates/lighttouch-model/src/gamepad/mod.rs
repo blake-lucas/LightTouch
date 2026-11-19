@@ -95,9 +95,8 @@ impl Gamepads {
 
     /// The preset in use has a look binding the mouse steers: a click on the screen locks the mouse to the game.
     pub fn mouse_look(&self) -> bool {
-        self.active_preset().is_some_and(|p| {
-            p.bindings.iter().any(|b| matches!(b.action, preset::Action::Look { mouse: true, .. }))
-        })
+        self.active_preset()
+            .is_some_and(|p| p.bindings.iter().any(|b| matches!(b.action, preset::Action::Look { mouse: true, .. })))
     }
 
     /// The input that, held, frees the locked mouse to touch the screen (the mouse-look binding's).
@@ -186,6 +185,12 @@ impl Gamepads {
         if let Some(i) = self.active {
             self.save(i);
         }
+    }
+
+    /// The bindings move the device, or hold it where a controller's sensors left it: the keyboard's tilt and the
+    /// resting pose keep off.
+    pub fn holds_motion(&self) -> bool {
+        self.motion_active || self.mapper.holds_motion()
     }
 
     /// Lift every finger and button the bindings hold.

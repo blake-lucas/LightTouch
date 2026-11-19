@@ -461,7 +461,7 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
     }
     app.model.gamepads.start();
     let builder = egui::ViewportBuilder::default()
-        .with_title("Controller")
+        .with_title("Controls")
         .with_app_id("org.lighttouch.LightTouch")
         .with_inner_size([1240.0, 780.0])
         .with_min_inner_size([900.0, 600.0]);
@@ -1908,7 +1908,7 @@ fn binding_settings(
                 number_slider(ui, SLIDER, egui::Slider::new(sensitivity, 0.3..=3.0).max_decimals(2).suffix("×"))
                     .on_hover_text(tip);
             });
-            let tip = "Hold the controller the way you play, then click Set level: that's flat for the device";
+            let tip = "Hold the controller the way you play, then click Set level: that's the device at rest, upright as the screen shows it";
             row(ui, "Level", tip, &mut |ui| {
                 let can = lean.is_some();
                 if widgets::tonal_enabled(ui, p, "Set level", can).on_hover_text(tip).clicked() {
@@ -2446,7 +2446,7 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
 pub fn dock_button(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     let on = app.model.gamepads.active.is_some();
-    let r = widgets::dock_button(ui, &p, GAME_CONTROLLER, "Controller", true, on.then_some(p.primary));
+    let r = widgets::dock_button(ui, &p, GAME_CONTROLLER, "Controls", true, on.then_some(p.primary));
     if r.clicked() {
         app.controller.open = !app.controller.open;
         if app.controller.open {

@@ -324,6 +324,15 @@ impl App {
             }
         }
         self.guest.update(ctx, &mut self.model);
+        // At rest the device stands upright the way it's shown (tilt.rs): sent once it runs and whenever it's turned,
+        // while nothing else is moving it.
+        let resting = !self.model.gamepads.holds_motion() && !self.model.session.as_ref().is_some_and(|s| s.tilting());
+        if resting {
+            let rotation = self.model.settings.rotation;
+            if let Some(session) = &mut self.model.session {
+                session.rest(rotation);
+            }
+        }
         if let Some(at) = self.pulse_release {
             if Instant::now() >= at {
                 self.pulse_release = None;
@@ -486,7 +495,7 @@ impl App {
                     const ALT: &str = "Alt";
                     ui.label(widgets::icon_text(icons::KEYBOARD, 26.0).color(p.primary));
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Controls").font(theme::title()));
+                    ui.label(RichText::new("Mouse and keyboard").font(theme::title()));
                     ui.add_space(4.0);
                     ui.label(widgets::muted(&p, "The mouse is your finger on the device's screen."));
                     ui.add_space(12.0);

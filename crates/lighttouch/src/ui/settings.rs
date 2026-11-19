@@ -106,7 +106,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::KEYBOARD,
                     "Tilt with the arrow keys",
-                    "Leans the device toward the arrow, for games you steer by tilting",
+                    "Rocks the device toward the left or right arrow and tips it with up and down, for games you steer by tilting",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.tilt);
                     },

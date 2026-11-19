@@ -93,6 +93,8 @@ pub struct Session {
     /// A profile recorded on request (Settings > Diagnostics): its folder and when it started.
     pub recording: Option<(PathBuf, Instant)>,
     last_motion: Option<Instant>,
+    /// The last accelerometer sample sent: the engine holds it until the next.
+    last_acceleration: Option<[f64; 3]>,
     stop_requested: Option<Instant>,
     /// Force stop: the worker was killed on purpose, so its exit is not a crash.
     forced: bool,
@@ -207,6 +209,7 @@ impl Session {
             frontmost: None,
             frontmost_watched: None,
             last_motion: None,
+            last_acceleration: None,
             stop_requested: None,
             forced: false,
         };
@@ -352,9 +355,10 @@ impl Session {
         }
     }
 
-    /// Lean the device from the keyboard (tilt.rs). Called each frame while tilt controls are on: samples go out at
-    /// up to 100 Hz while the guest runs, on boards with an accelerometer.
-    pub fn tilt(&mut self, keys: crate::tilt::TiltKeys) {
+    /// Lean the device from the keyboard (tilt.rs), from upright as the desktop shows it (`rotation`). Called each
+    /// frame while tilt controls are on: samples go out at up to 100 Hz while the guest runs, on boards with an
+    /// accelerometer.
+    pub fn tilt(&mut self, keys: crate::tilt::TiltKeys, rotation: crate::rotation::Rotation) {
         let Some(board) = &self.board else { return };
         if !matches!(self.phase, Phase::Running) || !board.has(BoardInfo::ACCELEROMETER) {
             return;
@@ -365,8 +369,26 @@ impl Session {
             return;
         }
         self.last_motion = Some(now);
-        let (acceleration, angular_velocity) = self.tilt.step(keys, now);
+        let (acceleration, angular_velocity) = self.tilt.step(keys, rotation, now);
+        self.last_acceleration = Some(acceleration);
         self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
+    }
+
+    /// The device at rest, upright as the desktop shows it, unless that's the last sample sent: called each frame
+    /// while nothing else moves it, so starting the device or turning it on the desktop turns it for iOS too.
+    pub fn rest(&mut self, rotation: crate::rotation::Rotation) {
+        let Some(board) = &self.board else { return };
+        if !matches!(self.phase, Phase::Running) || !board.has(BoardInfo::ACCELEROMETER) {
+            return;
+        }
+        let acceleration = crate::tilt::rest(rotation);
+        if self.last_acceleration == Some(acceleration) {
+            return;
+        }
+        let gyro = board.has(BoardInfo::GYRO);
+        self.last_motion = Some(Instant::now());
+        self.last_acceleration = Some(acceleration);
+        self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some([0.0; 3]) });
     }
 
     /// A motion sample from elsewhere (a controller): acceleration in m/s², and the gyroscope's turn in rad/s for
@@ -380,6 +402,7 @@ impl Session {
         }
         let gyro = board.has(BoardInfo::GYRO);
         self.last_motion = Some(Instant::now());
+        self.last_acceleration = Some(acceleration);
         self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
     }
 

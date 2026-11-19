@@ -1,9 +1,8 @@
 //! Turning the device on the desktop's landscape screen. iOS lays its UI out in the panel's own scan: every panel
 //! but the iPad's scans out portrait, whatever the orientation (a landscape app draws sideways), and the iPad's
 //! scans out landscape with its portrait UI turned a quarter clockwise into it. So turning the drawn device turns
-//! the picture with it and maps clicks and the tilt arrows back to the device's own axes. The device keeps lying
-//! flat, face up.
-use crate::tilt::TiltKeys;
+//! the picture with it and maps clicks back to the device's own axes. The device's motion follows it too: at rest it
+//! stands upright as shown (tilt.rs), so iOS turns apps that rotate to match.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -82,9 +81,8 @@ impl Rotation {
         }
     }
 
-    /// The arrows as the screen shows them, in the device's own: each still lowers the edge it points at.
-    /// A vector in the axes of the screen as shown (x right, y up, z toward the viewer: a controller's lean or turn,
-    /// held like the screen) in the guest's portrait axes, the way [`Self::keys`] turns the arrow keys.
+    /// A vector in the axes of the screen as shown (x right, y up, z toward the viewer: the device's pose as shown,
+    /// or a controller's lean or turn, held like the screen) in the guest's portrait axes.
     pub fn to_guest_axes(self, v: [f64; 3]) -> [f64; 3] {
         let [x, y, z] = v;
         match self {
@@ -93,16 +91,6 @@ impl Rotation {
             Self::HomeRight => [y, -x, z],
             // Up as shown is the device's left edge (-x); right as shown its top (+y).
             Self::HomeLeft => [-y, x, z],
-        }
-    }
-
-    pub fn keys(self, keys: TiltKeys) -> TiltKeys {
-        let TiltKeys { left, right, up, down } = keys;
-        match self {
-            Self::Portrait => keys,
-            // The device's top is on the left and its right edge at the top.
-            Self::HomeRight => TiltKeys { left: down, right: up, up: left, down: right },
-            Self::HomeLeft => TiltKeys { left: up, right: down, up: right, down: left },
         }
     }
 }
@@ -146,16 +134,5 @@ mod tests {
                 assert!((u - 0.2).abs() < 1e-12 && (v - 0.7).abs() < 1e-12);
             }
         }
-    }
-
-    #[test]
-    fn arrows_lower_the_edge_they_point_at() {
-        // Home on the right, the left arrow lowers the device's top: its "up" key.
-        let left = TiltKeys { left: true, ..Default::default() };
-        assert_eq!(Rotation::HomeRight.keys(left), TiltKeys { up: true, ..Default::default() });
-        assert_eq!(Rotation::HomeLeft.keys(left), TiltKeys { down: true, ..Default::default() });
-        let up = TiltKeys { up: true, ..Default::default() };
-        assert_eq!(Rotation::HomeRight.keys(up), TiltKeys { right: true, ..Default::default() });
-        assert_eq!(Rotation::HomeLeft.keys(up), TiltKeys { left: true, ..Default::default() });
     }
 }

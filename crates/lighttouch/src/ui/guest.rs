@@ -8,9 +8,9 @@ use super::device_frame;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui};
 use lighttouch_core::runtime::{BoardInfo, Contact};
 use lighttouch_model::Model;
+use lighttouch_model::gamepad::preset::{MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT};
 use lighttouch_model::settings::Scaling;
 use lighttouch_model::tilt::TiltKeys;
-use lighttouch_model::gamepad::preset::{MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -232,9 +232,8 @@ impl GuestView {
         if mouse_look && self.locked.is_none() {
             // A click on the screen locks the mouse; after Escape let it go, Escape locks it again instead (clicks
             // are touches meanwhile, for the game's menus).
-            let (click, escape) = ui.input(|i| {
-                (i.pointer.button_pressed(egui::PointerButton::Primary), i.key_pressed(egui::Key::Escape))
-            });
+            let (click, escape) = ui
+                .input(|i| (i.pointer.button_pressed(egui::PointerButton::Primary), i.key_pressed(egui::Key::Escape)));
             let lock = if self.released.is_some() { escape } else { click && response.hovered() };
             if lock {
                 self.released = None;
@@ -523,7 +522,8 @@ impl GuestView {
             (egui::PointerButton::Secondary, MOUSE_RIGHT),
             (egui::PointerButton::Middle, MOUSE_MIDDLE),
         ];
-        let down: Vec<&'static str> = buttons.iter().filter(|(b, _)| pointer.button_down(*b)).map(|(_, n)| *n).collect();
+        let down: Vec<&'static str> =
+            buttons.iter().filter(|(b, _)| pointer.button_down(*b)).map(|(_, n)| *n).collect();
         // The click that locked it isn't a press: buttons count once it's let go. Freed, they're the pointer's.
         self.armed |= down.is_empty();
         self.mouse_buttons = if self.armed && !self.free { down } else { Vec::new() };
@@ -547,9 +547,10 @@ impl GuestView {
         let key = |key: egui::Key| {
             !typing && !bound.contains(key.name()) && ui.input(|i| i.key_down(key) && i.modifiers.is_none())
         };
-        // Tilt turned off while leaning still settles back to flat: the engine holds the last sample it was sent.
+        // Tilt turned off while leaning still settles back to rest: the engine holds the last sample it was sent.
+        // A binding moving the device, or holding it where the controller's sensors left it, comes first.
         let settling = model.session.as_ref().is_some_and(|s| s.tilting());
-        if (model.settings.tilt || settling) && !model.gamepads.motion_active {
+        if (model.settings.tilt || settling) && !model.gamepads.holds_motion() {
             let keys = if model.settings.tilt {
                 TiltKeys {
                     left: key(egui::Key::ArrowLeft),
@@ -560,9 +561,9 @@ impl GuestView {
             } else {
                 TiltKeys::default()
             };
-            let keys = model.settings.rotation.keys(keys);
+            let rotation = model.settings.rotation;
             if let Some(session) = &mut model.session {
-                session.tilt(keys);
+                session.tilt(keys, rotation);
                 // Leaning and settling back need steps between guest frames too.
                 if keys != TiltKeys::default() || session.tilting() {
                     ui.ctx().request_repaint();
