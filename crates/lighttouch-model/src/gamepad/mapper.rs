@@ -528,7 +528,7 @@ fn step_binding(
                 put(s, Some(c), out);
             }
         }
-        Action::Look { stick, center, half, speed, invert_y, press, tap, mouse, mouse_speed } => {
+        Action::Look { stick, center, half, speed, invert_y, press, tap, mouse, mouse_speed, .. } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             // Whether the finger is down goes by the push itself; the pace, by keys' built-up push.
             let mut pushed = x.hypot(y);
@@ -1199,6 +1199,7 @@ mod tests {
             tap,
             mouse: false,
             mouse_speed: 1.0,
+            free: None,
         }])
     }
 

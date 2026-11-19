@@ -148,6 +148,11 @@ pub const MOUSE_LEFT: &str = "MouseLeft";
 pub const MOUSE_RIGHT: &str = "MouseRight";
 pub const MOUSE_MIDDLE: &str = "MouseMiddle";
 
+/// Modifier keys, bound like keys (egui's keys don't include them).
+pub const KEY_CTRL: &str = "Ctrl";
+pub const KEY_SHIFT: &str = "Shift";
+pub const KEY_ALT: &str = "Alt";
+
 /// A key's name as people say it.
 pub fn key_label(key: &str) -> String {
     match key {
@@ -369,6 +374,10 @@ pub enum Action {
         /// The mouse's speed: at 1, a thousand counts of movement drag the finger across the screen's shorter side.
         #[serde(default = "one")]
         mouse_speed: f32,
+        /// Held, the locked mouse is a finger on the screen (cursor shown, kept on the screen) instead of looking:
+        /// for a game's buttons and menus.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        free: Option<Input>,
     },
     /// A pointer over an area of the screen, and an input that touches where it is. The bubble is always drawn.
     Pointer {

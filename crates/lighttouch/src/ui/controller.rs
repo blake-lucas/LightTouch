@@ -83,6 +83,8 @@ enum Slot {
     Tap,
     /// Four keys for a stick, one direction at a time.
     Keys,
+    /// A mouse-look binding's button that frees the mouse while held.
+    Free,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -115,14 +117,32 @@ pub fn bound_keys(model: &Model) -> HashSet<String> {
                 add(touch, &mut keys);
                 stick_keys(stick, &mut keys);
             }
-            Action::Joystick { stick, press, tap, .. } | Action::Look { stick, press, tap, .. } => {
+            Action::Joystick { stick, press, tap, .. } => {
                 for i in press.input().into_iter().chain(tap.as_ref()) {
+                    add(i, &mut keys);
+                }
+                stick_keys(stick, &mut keys);
+            }
+            Action::Look { stick, press, tap, free, .. } => {
+                for i in press.input().into_iter().chain(tap.as_ref()).chain(free.as_ref()) {
                     add(i, &mut keys);
                 }
                 stick_keys(stick, &mut keys);
             }
             Action::Flick { stick, .. } | Action::Tilt { stick, .. } => stick_keys(stick, &mut keys),
             Action::Motion { .. } => {}
+        }
+    }
+    keys
+}
+
+/// The keys held, by name, with Ctrl, Shift and Alt as keys too (egui keeps those apart, as modifiers).
+pub fn held_keys(i: &egui::InputState) -> HashSet<String> {
+    use lighttouch_model::gamepad::preset::{KEY_ALT, KEY_CTRL, KEY_SHIFT};
+    let mut keys: HashSet<String> = i.keys_down.iter().map(|k| k.name().to_string()).collect();
+    for (on, name) in [(i.modifiers.ctrl, KEY_CTRL), (i.modifiers.shift, KEY_SHIFT), (i.modifiers.alt, KEY_ALT)] {
+        if on {
+            keys.insert(name.to_string());
         }
     }
     keys
@@ -150,7 +170,7 @@ pub fn step(app: &mut App, ui: &Ui, screen: Rect) {
     let mut keys: HashSet<String> = if ctx.egui_wants_keyboard_input() || bound.is_empty() {
         HashSet::new()
     } else {
-        ctx.input(|i| i.keys_down.iter().map(|k| k.name().to_string()).filter(|k| bound.contains(k)).collect())
+        ctx.input(|i| held_keys(i).into_iter().filter(|k| bound.contains(k)).collect())
     };
     // The mouse, while it's locked to the game: its buttons bind like keys.
     let (mouse, buttons) = app.guest.take_mouse();
@@ -885,7 +905,7 @@ fn live_card(app: &mut App, ui: &mut Ui) {
             let bound = bound_keys(&app.model);
             let mut v: Vec<String> = ui
                 .ctx()
-                .input(|i| i.keys_down.iter().map(|k| k.name().to_string()).filter(|k| bound.contains(k)).collect());
+                .input(|i| held_keys(i).into_iter().filter(|k| bound.contains(k)).collect());
             v.sort();
             v
         };
@@ -1273,7 +1293,7 @@ fn bindings(app: &mut App, ui: &mut Ui) {
     } else if let Some((binding, slot)) = capture {
         let pads = app.model.gamepads.pads();
         let merged = lighttouch_model::gamepad::mapper::Merged::from(&pads.pads);
-        let keys = ui.ctx().input(|i| i.keys_down.iter().map(|k| k.name().to_string()).collect());
+        let keys = ui.ctx().input(held_keys);
         app.controller.capture = Some(Capture {
             binding,
             slot,
@@ -1363,6 +1383,7 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             tap: None,
             mouse: false,
             mouse_speed: 1.0,
+            free: None,
         }),
         (CURSOR, "Pointer (stick + touch)", || Action::Pointer {
             stick: Stick::Left,
@@ -1626,7 +1647,7 @@ fn binding_settings(
                 &mut || *capture = Some((i, Slot::Tap)),
             );
         }
-        Action::Look { stick, half, center, speed, invert_y, press, tap, mouse, mouse_speed } => {
+        Action::Look { stick, half, center, speed, invert_y, press, tap, mouse, mouse_speed, free } => {
             let was = stick.clone();
             if stick_row(ui, p, row, stick) {
                 *capture = Some((i, Slot::Keys));
@@ -1655,15 +1676,34 @@ fn binding_settings(
                     "Click the game's screen to lock the mouse to it: moving it looks around, and its buttons bind \
                      like keys. Escape lets go",
                 );
-                // Turned on with nothing to fire: the left button taps, as in a shooter.
+                // Turned on with nothing to fire: the left button taps, as in a shooter; Ctrl frees the mouse for
+                // the game's buttons (Alt is the pinch's).
                 if *mouse && !was && tap.is_none() {
                     *tap = Some(Input::Key(lighttouch_model::gamepad::preset::MOUSE_LEFT.into()));
+                }
+                if *mouse && !was && free.is_none() {
+                    *free = Some(Input::Key(lighttouch_model::gamepad::preset::KEY_CTRL.into()));
                 }
             });
             if *mouse {
                 row(ui, "Mouse speed", &mut |ui| {
                     number_slider(ui, SLIDER, egui::Slider::new(mouse_speed, 0.2..=5.0).logarithmic(true).max_decimals(2))
                         .on_hover_text("At 1, a thousand counts of mouse movement drag across the screen's shorter side");
+                });
+                row(ui, "Free the mouse", &mut |ui| {
+                    let text = free.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
+                    if input_cap(ui, p, &text)
+                        .on_hover_text(
+                            "While this is held, the mouse touches the screen (to tap the game's buttons and menus) \
+                             instead of looking, and stays on the screen",
+                        )
+                        .clicked()
+                    {
+                        *capture = Some((i, Slot::Free));
+                    }
+                    if free.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
+                        *free = None;
+                    }
                 });
             }
             row(ui, "Area", &mut |ui| {
@@ -2051,7 +2091,7 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
     let Some(capture) = app.controller.capture.clone() else { return };
     let pads = app.model.gamepads.pads();
     let merged = lighttouch_model::gamepad::mapper::Merged::from(&pads.pads);
-    let keys: HashSet<String> = ui.ctx().input(|i| i.keys_down.iter().map(|k| k.name().to_string()).collect());
+    let keys: HashSet<String> = ui.ctx().input(held_keys);
     let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
     // A new press: a button not held when the prompt opened, or a key.
     let new_button =
@@ -2178,6 +2218,11 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
         (Slot::Press, Action::Joystick { press, .. } | Action::Look { press, .. }) => {
             if let (Some(g), Some(input)) = (got, press.input_mut()) {
                 *input = g;
+            }
+        }
+        (Slot::Free, Action::Look { free, .. }) => {
+            if got.is_some() {
+                *free = got;
             }
         }
         (Slot::Tap, Action::Joystick { tap, .. } | Action::Look { tap, .. }) => {

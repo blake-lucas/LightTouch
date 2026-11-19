@@ -65,6 +65,30 @@ pub struct GuestView {
     /// Escape let go: the mouse is a finger again until Escape locks it again (a click doesn't), and since when
     /// (for the hint).
     released: Option<Instant>,
+    /// Locked, but the binding's free input is held: the mouse is a finger, its cursor shown and kept on the screen.
+    free: bool,
+}
+
+/// Whether a binding's input is held: a key (Ctrl, Shift and Alt among them), a mouse button or a controller's.
+fn held(ui: &Ui, model: &Model, input: &lighttouch_model::gamepad::preset::Input) -> bool {
+    use lighttouch_model::gamepad::preset::Input;
+    match input {
+        Input::Key(k) => {
+            let button = match k.as_str() {
+                MOUSE_LEFT => Some(egui::PointerButton::Primary),
+                MOUSE_RIGHT => Some(egui::PointerButton::Secondary),
+                MOUSE_MIDDLE => Some(egui::PointerButton::Middle),
+                _ => None,
+            };
+            match button {
+                Some(b) => ui.input(|i| i.pointer.button_down(b)),
+                None => ui.input(|i| super::controller::held_keys(i).contains(k)),
+            }
+        }
+        Input::Pad(b) => {
+            lighttouch_model::gamepad::mapper::Merged::from(&model.gamepads.pads().pads).buttons & b.bit() != 0
+        }
+    }
 }
 
 /// A note across the top of the screen for a couple of seconds after `since`.
@@ -217,7 +241,16 @@ impl GuestView {
             }
         }
         if self.locked.is_some() {
-            self.locked_input(ui, rect, locked_now);
+            let free_input = model.gamepads.mouse_free();
+            let free = free_input.as_ref().is_some_and(|f| held(ui, model, f));
+            if free != self.free {
+                self.set_free(ui.ctx(), model, free);
+            }
+            let free_label = free_input.map(|f| f.label(lighttouch_model::gamepad::sdl::PadKind::default()));
+            self.locked_input(ui, rect, locked_now, free_label);
+            if self.locked.is_some() && self.free {
+                self.pointer_input(ui, rect, &response, model);
+            }
             self.keyboard_input(ui, model);
         } else if interactive {
             self.pointer_input(ui, rect, &response, model);
@@ -376,7 +409,26 @@ impl GuestView {
         self.mouse_buttons.clear();
     }
 
+    /// Held free: show the cursor, let it move (it's kept on the screen by hand, as macOS can't confine it), and
+    /// stop looking; let go: lift the mouse's finger and lock it again (a click still held doesn't fire).
+    fn set_free(&mut self, ctx: &egui::Context, model: &mut Model, free: bool) {
+        self.free = free;
+        (self.mouse_moved, self.armed) = ((0.0, 0.0), false);
+        self.mouse_buttons.clear();
+        if free {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Confined));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+        } else {
+            self.release_touches(model);
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Confined));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+        }
+    }
+
     fn unlock(&mut self, ctx: &egui::Context) {
+        self.free = false;
         if self.locked.take().is_none() {
             return;
         }
@@ -387,7 +439,7 @@ impl GuestView {
     }
 
     /// While locked: the mouse's movement and buttons for the preset, Escape or another window lets go.
-    fn locked_input(&mut self, ui: &Ui, rect: Rect, locked_now: bool) {
+    fn locked_input(&mut self, ui: &Ui, rect: Rect, locked_now: bool, free_label: Option<String>) {
         let ctx = ui.ctx();
         let (escape, focused, events, pointer) =
             ui.input(|i| (i.key_pressed(egui::Key::Escape), i.focused, i.events.clone(), i.pointer.clone()));
@@ -401,6 +453,17 @@ impl GuestView {
         self.lock_focused = focused;
         if escape || lost {
             self.unlock(ctx);
+            return;
+        }
+        if self.free {
+            // A finger for now: the cursor stays on the screen.
+            if let Some(p) = pointer.latest_pos() {
+                let inner = rect.shrink(1.0);
+                let kept = egui::pos2(p.x.clamp(inner.left(), inner.right()), p.y.clamp(inner.top(), inner.bottom()));
+                if kept != p {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(kept));
+                }
+            }
             return;
         }
         for e in &events {
@@ -423,7 +486,11 @@ impl GuestView {
             ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));
         }
         if let Some(since) = self.locked {
-            hint(ui, rect, since, "The mouse looks around · Esc to use it as a finger");
+            let text = match free_label {
+                Some(key) => format!("The mouse looks around · hold {key} to tap and swipe · Esc lets go"),
+                None => "The mouse looks around · Esc to use it as a finger".to_string(),
+            };
+            hint(ui, rect, since, &text);
         }
     }
 

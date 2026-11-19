@@ -100,6 +100,14 @@ impl Gamepads {
         })
     }
 
+    /// The input that, held, frees the locked mouse to touch the screen (the mouse-look binding's).
+    pub fn mouse_free(&self) -> Option<preset::Input> {
+        self.active_preset()?.bindings.iter().find_map(|b| match &b.action {
+            preset::Action::Look { mouse: true, free, .. } => free.clone(),
+            _ => None,
+        })
+    }
+
     /// The name of the preset in use, for settings.
     pub fn active_name(&self) -> Option<String> {
         self.active_preset().map(|p| p.name.clone())
