@@ -292,12 +292,18 @@ impl GuestView {
         let key = |key: egui::Key| {
             !typing && !bound.contains(key.name()) && ui.input(|i| i.key_down(key) && i.modifiers.is_none())
         };
-        if model.settings.tilt && !model.gamepads.motion_active {
-            let keys = TiltKeys {
-                left: key(egui::Key::ArrowLeft),
-                right: key(egui::Key::ArrowRight),
-                up: key(egui::Key::ArrowUp),
-                down: key(egui::Key::ArrowDown),
+        // Tilt turned off while leaning still settles back to flat: the engine holds the last sample it was sent.
+        let settling = model.session.as_ref().is_some_and(|s| s.tilting());
+        if (model.settings.tilt || settling) && !model.gamepads.motion_active {
+            let keys = if model.settings.tilt {
+                TiltKeys {
+                    left: key(egui::Key::ArrowLeft),
+                    right: key(egui::Key::ArrowRight),
+                    up: key(egui::Key::ArrowUp),
+                    down: key(egui::Key::ArrowDown),
+                }
+            } else {
+                TiltKeys::default()
             };
             let keys = model.settings.rotation.keys(keys);
             if let Some(session) = &mut model.session {

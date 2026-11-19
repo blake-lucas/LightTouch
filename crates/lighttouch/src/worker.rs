@@ -329,6 +329,8 @@ fn run(
     // Motion samples sent and turned away, noted in the log every 10 s while they flow (errors aren't events: the
     // stream drops them), so a session log shows whether tilt reached the engine.
     let mut motion = MotionStats::default();
+    // The newest motion sample the engine hasn't taken yet (see PendingMotion).
+    let mut pending_motion: Option<PendingMotion> = None;
     let mut pending_guest: Option<u64> = None;
     let mut microphone = Microphone { enabled: args.microphone, ..Default::default() };
     let mut ui_gone = false;
@@ -345,6 +347,17 @@ fn run(
                     ui_gone = true;
                     eprintln!("the app closed; shutting down");
                     Command::Stop
+                }
+            };
+            let command = match command {
+                Command::Motion { acceleration, gyro } => {
+                    pending_motion = Some(PendingMotion { acceleration, gyro, since: Instant::now() });
+                    continue;
+                }
+                // Anything else (a release, a pause) comes after the motion sent before it.
+                command => {
+                    flush_motion(&runtime, &mut pending_motion, &mut motion, true);
+                    command
                 }
             };
             let name = command_name(&command);
@@ -385,10 +398,7 @@ fn run(
                     }
                 }
                 Command::CancelInput => runtime.cancel_input(),
-                Command::Motion { acceleration, gyro } => {
-                    motion.last = acceleration;
-                    runtime.motion(monotonic_ns(), acceleration, gyro)
-                }
+                Command::Motion { .. } => unreachable!("motion samples are taken above"),
                 Command::Screenshot { path } => runtime.screenshot_bmp(&path).map(|_| {
                     let _ = events.send(Event::Screenshot { path });
                 }),
@@ -413,15 +423,12 @@ fn run(
                     Ok(())
                 }
             };
-            // Motion samples are a stream, as on Android: one the engine turns away (not ready yet, paused) is just
-            // dropped.
-            if name == "motion" {
-                motion.count(result.as_ref().err().map(|e| e.to_string()));
-            } else if let Err(e) = result {
+            if let Err(e) = result {
                 let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
             }
         }
 
+        flush_motion(&runtime, &mut pending_motion, &mut motion, false);
         motion.note();
 
         // Touch admission results: a rejected batch releases everything.
@@ -823,6 +830,30 @@ impl Microphone {
                 }
             }
         }
+    }
+}
+
+/// A motion sample on its way to the engine. Samples are a stream, as on Android, and the engine holds the newest
+/// one it took until the next arrives, so the one that matters is the newest: of the samples queued while the
+/// worker was busy only that one goes, and when the engine turns it away for coming too soon after the last (its
+/// limit is 200 a second, and two queued samples reach it microseconds apart) it goes again on the next pass, for a
+/// little while. Dropped, the engine would keep reading the sample before it until the player moved again.
+struct PendingMotion {
+    acceleration: Option<[f64; 3]>,
+    gyro: Option<[f64; 3]>,
+    since: Instant,
+}
+
+/// How long a sample the engine turned away (too soon, paused, not started) is offered again before it's dropped.
+const MOTION_RETRY: Duration = Duration::from_millis(100);
+
+/// Send the pending motion sample; `last_try` drops it if the engine turns it away (another command follows it).
+fn flush_motion(runtime: &Runtime, pending: &mut Option<PendingMotion>, stats: &mut MotionStats, last_try: bool) {
+    let Some(m) = pending.take() else { return };
+    stats.last = m.acceleration;
+    match runtime.motion(monotonic_ns(), m.acceleration, m.gyro) {
+        Err(e) if e.is(sys::LT_AGAIN) && !last_try && m.since.elapsed() < MOTION_RETRY => *pending = Some(m),
+        result => stats.count(result.err().map(|e| e.to_string())),
     }
 }
 
