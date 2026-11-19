@@ -328,3 +328,6 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   why Linux and macOS never showed it. The upload now does the conversion itself. Confirmed on the
   Poco F3 (Jetpack: white before, correct after, same NAND) and by the user on the Pixel 10
   (Jetpack, Battle Bears, Real Racing).
+- [ ] Zombie Gunship on the iPod touch 4G (iOS 6.1.6): only its interface draws; the game world stays black. Reported
+  by the user 2026-11-19 (host not noted); not investigated yet. Check the engine log for refused GL calls or uploads
+  first, then whether it happens on every host.

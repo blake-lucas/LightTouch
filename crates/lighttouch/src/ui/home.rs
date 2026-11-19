@@ -78,6 +78,7 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                 if widgets::icon_button_sized(ui, &p, icons::BAG, "Legacy Store", 40.0, has_device).clicked() {
                     app.page = super::Page::Store;
                 }
+                super::store::queue_button(app, ui);
                 error_chip(app, ui);
             });
         });

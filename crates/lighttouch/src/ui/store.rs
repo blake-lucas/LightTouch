@@ -187,8 +187,9 @@ fn search_field(app: &mut App, ui: &mut Ui) -> bool {
     submit
 }
 
-/// The install queue's button: a download icon in a progress ring, which opens the queue. Absent while empty.
-fn queue_button(app: &mut App, ui: &mut Ui) {
+/// The install queue's button: a download icon in a progress ring, which opens the queue. Absent while empty. Also in
+/// the device page's header, so installs can be followed (and cleared once finished) from there.
+pub(super) fn queue_button(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     let items = app.model.store.queue.clone();
     if items.is_empty() {
