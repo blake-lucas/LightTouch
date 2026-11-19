@@ -195,7 +195,9 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     ] {
         state.bg_fill = fill;
         state.weak_bg_fill = fill;
-        state.bg_stroke = Stroke::NONE;
+        // As wide as the hover outline, but unseen: egui narrows a button's padding by its outline's width, so a
+        // button with an outline of its own (a menu chip, a key cap) would otherwise shift its label on hover.
+        state.bg_stroke = Stroke::new(1.0, Color32::TRANSPARENT);
         state.fg_stroke = Stroke::new(1.5, palette.on_surface);
         state.corner_radius = corner;
         state.expansion = 0.0;

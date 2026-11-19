@@ -514,8 +514,11 @@ fn body(app: &mut App, ui: &mut Ui) {
     );
     let column = |ui: &mut Ui, salt: &str, rect: Rect, app: &mut App, add: &dyn Fn(&mut App, &mut Ui)| {
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            // The scroll bar takes room of its own when it shows, beside the column's cards and buttons, not over
+            // them.
+            ui.spacing_mut().scroll.floating = false;
             egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_width(rect.width());
+                ui.set_width(ui.available_width());
                 add(app, ui);
                 ui.add_space(20.0);
             });
