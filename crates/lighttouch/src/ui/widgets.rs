@@ -138,6 +138,17 @@ pub fn switch(ui: &mut Ui, p: &Palette, on: &mut bool) -> Response {
 
 /// A row of mutually exclusive choices. Returns true when the choice changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, options: &[(T, &str)]) -> bool {
+    let options: Vec<(T, &str, &str)> = options.iter().map(|&(v, text)| (v, text, "")).collect();
+    segmented_tips(ui, p, value, &options)
+}
+
+/// The same, each choice with a tooltip saying what it does (none where empty).
+pub fn segmented_tips<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    p: &Palette,
+    value: &mut T,
+    options: &[(T, &str, &str)],
+) -> bool {
     let mut changed = false;
     let label = |text: &str, selected: bool| {
         RichText::new(text).color(if selected { p.on_primary } else { p.on_surface }).size(13.0)
@@ -147,7 +158,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, o
     let padding = ui.spacing().button_padding.x;
     let width = options
         .iter()
-        .map(|(_, text)| {
+        .map(|(_, text, _)| {
             let galley = egui::WidgetText::from(label(text, false)).into_galley(
                 ui,
                 Some(egui::TextWrapMode::Extend),
@@ -167,14 +178,17 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, o
             .inner_margin(Margin::same(3))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                for (option, text) in options {
+                for (option, text, tip) in options {
                     let selected = *value == *option;
-                    let r = ui.add(
+                    let mut r = ui.add(
                         egui::Button::new(label(text, selected))
                             .fill(if selected { p.primary } else { Color32::TRANSPARENT })
                             .corner_radius(CornerRadius::same(15))
                             .min_size(vec2(0.0, 30.0)),
                     );
+                    if !tip.is_empty() {
+                        r = r.on_hover_text(*tip);
+                    }
                     if r.clicked() && !selected {
                         *value = *option;
                         changed = true;

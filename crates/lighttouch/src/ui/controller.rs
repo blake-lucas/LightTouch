@@ -789,8 +789,11 @@ fn access_row(c: &mut ControllerUi, p: &theme::Palette, ui: &mut Ui) {
     match &c.access_result {
         Some(Ok(())) => {
             ui.label(
-                widgets::muted(p, "Done. Turn the controller off and on again, or reconnect it, for motion to come through")
-                    .size(12.0),
+                widgets::muted(
+                    p,
+                    "Done. Turn the controller off and on again, or reconnect it, for motion to come through",
+                )
+                .size(12.0),
             );
         }
         Some(Err(e)) => {
@@ -903,9 +906,8 @@ fn live_card(app: &mut App, ui: &mut Ui) {
         }
         let held: Vec<String> = {
             let bound = bound_keys(&app.model);
-            let mut v: Vec<String> = ui
-                .ctx()
-                .input(|i| held_keys(i).into_iter().filter(|k| bound.contains(k)).collect());
+            let mut v: Vec<String> =
+                ui.ctx().input(|i| held_keys(i).into_iter().filter(|k| bound.contains(k)).collect());
             v.sort();
             v
         };
@@ -1319,10 +1321,11 @@ fn bindings_header(app: &mut App, ui: &mut Ui) -> Option<Action> {
             }
             let add = widgets::chip_menu(ui, &p, "Add binding");
             egui::Popup::menu(&add).show(|ui| {
-                ui.set_min_width(230.0);
-                for (icon, title, make) in templates() {
-                    if ui.button(widgets::icon_label(icon, title, None)).clicked() {
-                        added = Some(make());
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for make in templates() {
+                    let action = make();
+                    if menu_item(ui, &p, action_icon(&action), action.title(), about(&action)).clicked() {
+                        added = Some(action);
                     }
                 }
             });
@@ -1357,23 +1360,49 @@ fn action_icon(action: &Action) -> &'static str {
     }
 }
 
-fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
+/// What a kind of binding is for, in a line: under its name in Add binding, and atop its settings.
+fn about(action: &Action) -> &'static str {
+    match action {
+        Action::Tap { .. } => "Puts a finger on a spot of the screen (drag the spot into place in Edit layout)",
+        Action::Swipe { .. } => "Swipes across the screen with each press (drag its ends in Edit layout)",
+        Action::Joystick { .. } => "Works a game's on-screen joystick: a finger rests on it and follows your stick",
+        Action::Look { .. } => "Turns a game's camera, the way a finger dragged across the screen does",
+        Action::Pointer { .. } => "Steers a pointer around the screen with a stick, and touches where it points",
+        Action::Flick { .. } => "Flicking the stick swipes the screen that way",
+        Action::Tilt { .. } => "Leans the device as the stick is pushed, for games you steer by tilting",
+        Action::Motion { .. } => "Tilts the device as you tilt the controller (one with motion sensors)",
+        Action::Device { .. } => "Presses one of the device's own buttons: Home, Sleep/Wake or the volume",
+    }
+}
+
+/// One choice in Add binding: its icon, name, and what it's for underneath.
+fn menu_item(ui: &mut Ui, p: &theme::Palette, icon: &str, title: &str, about: &str) -> egui::Response {
+    let width = 340.0;
+    let text = ui.painter().layout(about.to_owned(), FontId::proportional(12.0), p.on_surface_variant, width - 54.0);
+    let (rect, r) = ui.allocate_exact_size(vec2(width, 34.0 + text.size().y), Sense::click());
+    let painter = ui.painter();
+    if r.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(8), p.container_highest);
+    }
+    let left = rect.left_top();
+    painter.text(left + vec2(14.0, 11.0), Align2::LEFT_TOP, icon, FontId::new(20.0, theme::icons()), p.primary);
+    painter.text(left + vec2(46.0, 8.0), Align2::LEFT_TOP, title, FontId::new(14.0, theme::medium()), p.on_surface);
+    painter.galley(left + vec2(46.0, 27.0), text, p.on_surface_variant);
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn templates() -> Vec<fn() -> Action> {
     vec![
-        (HAND_TAP, "Tap a spot", || Action::Tap { input: unset(), at: Point::new(0.5, 0.75), mode: TapMode::Hold }),
-        (SWIPE, "Swipe", || Action::Swipe {
-            input: unset(),
-            from: Point::new(0.5, 0.65),
-            to: Point::new(0.5, 0.35),
-            ms: 150,
-        }),
-        (JOYSTICK, "On-screen joystick", || Action::Joystick {
+        || Action::Tap { input: unset(), at: Point::new(0.5, 0.75), mode: TapMode::Hold },
+        || Action::Swipe { input: unset(), from: Point::new(0.5, 0.65), to: Point::new(0.5, 0.35), ms: 150 },
+        || Action::Joystick {
             stick: Stick::Left,
             center: Point::new(0.22, 0.78),
             radius: 0.15,
             press: Press::toggle_for(&Stick::Left),
             tap: None,
-        }),
-        (CROSSHAIR, "Look around (camera)", || Action::Look {
+        },
+        || Action::Look {
             stick: Stick::Right,
             center: Point::new(0.7, 0.45),
             half: [0.25, 0.3],
@@ -1384,8 +1413,8 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             mouse: false,
             mouse_speed: 1.0,
             free: None,
-        }),
-        (CURSOR, "Pointer (stick + touch)", || Action::Pointer {
+        },
+        || Action::Pointer {
             stick: Stick::Left,
             center: Point::CENTER,
             half: [0.5, 0.5],
@@ -1394,11 +1423,11 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             style: PointerStyle::Centered,
             speed: 0.9,
             follow: Some(4.0),
-        }),
-        (FLICK, "Flick a stick to swipe", || Action::Flick { stick: Stick::Right, center: Point::CENTER, length: 0.3 }),
-        (TILT, "Tilt the device with a stick", || Action::Tilt { stick: Stick::Left, strength: 1.0 }),
-        (MOTION, "Tilt with controller motion", || Action::Motion { sensitivity: 1.0 }),
-        (HOUSE, "Home or another device button", || Action::Device { input: unset(), button: DeviceButton::Home }),
+        },
+        || Action::Flick { stick: Stick::Right, center: Point::CENTER, length: 0.3 },
+        || Action::Tilt { stick: Stick::Left, strength: 1.0 },
+        || Action::Motion { sensitivity: 1.0 },
+        || Action::Device { input: unset(), button: DeviceButton::Home },
     ]
 }
 
@@ -1471,51 +1500,65 @@ fn binding_row(
     let reserved = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(190.0);
     // The whole row opens and closes its settings; its buttons still take their own clicks.
     let background = ui.painter().add(egui::Shape::Noop);
-    let row = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| ui.horizontal(|ui| {
-        ui.set_min_height(52.0);
-        let icon_color = if lit { p.primary } else { p.on_surface_variant };
-        ui.label(widgets::icon_text(action_icon(&binding.action), 22.0).color(icon_color));
-        ui.add_space(4.0);
-        ui.vertical(|ui| {
-            ui.set_max_width((ui.available_width() - reserved - 16.0).max(140.0));
-            ui.add_space(5.0);
-            ui.label(RichText::new(binding.action.title()).size(14.5));
-            ui.label(RichText::new(summary(binding, kind)).size(12.5).color(p.on_surface_variant));
-        });
-        let trailing = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::icon_button_sized(ui, p, icons::TRASH, "Remove", 32.0, true).clicked() {
-                *remove = Some(i);
-            }
-            let caret = if expanded { icons::CARET_DOWN } else { icons::CARET_RIGHT };
-            if widgets::icon_button_sized(ui, p, caret, if expanded { "Hide settings" } else { "Settings" }, 32.0, true)
+    let row = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(52.0);
+            let icon_color = if lit { p.primary } else { p.on_surface_variant };
+            ui.label(widgets::icon_text(action_icon(&binding.action), 22.0).color(icon_color));
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.set_max_width((ui.available_width() - reserved - 16.0).max(140.0));
+                ui.add_space(5.0);
+                ui.label(RichText::new(binding.action.title()).size(14.5));
+                ui.label(RichText::new(summary(binding, kind)).size(12.5).color(p.on_surface_variant));
+            });
+            let trailing = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::icon_button_sized(ui, p, icons::TRASH, "Remove", 32.0, true).clicked() {
+                    *remove = Some(i);
+                }
+                let caret = if expanded { icons::CARET_DOWN } else { icons::CARET_RIGHT };
+                if widgets::icon_button_sized(
+                    ui,
+                    p,
+                    caret,
+                    if expanded { "Hide settings" } else { "Settings" },
+                    32.0,
+                    true,
+                )
                 .clicked()
-            {
-                *open = if expanded { None } else { Some(i) };
-            }
-            match &binding.action {
-                Action::Tap { input, .. } | Action::Swipe { input, .. } | Action::Device { input, .. } => {
-                    if input_cap(ui, p, &input_text(input, kind)).clicked() {
-                        *capture = Some((i, Slot::Main));
-                    }
+                {
+                    *open = if expanded { None } else { Some(i) };
                 }
-                Action::Pointer { touch, .. } => {
-                    if input_cap(ui, p, &input_text(touch, kind)).clicked() {
-                        *capture = Some((i, Slot::Touch));
+                match &binding.action {
+                    Action::Tap { input, .. } | Action::Swipe { input, .. } | Action::Device { input, .. } => {
+                        if input_cap(ui, p, &input_text(input, kind), CAP_HINT).clicked() {
+                            *capture = Some((i, Slot::Main));
+                        }
                     }
-                }
-                Action::Joystick { stick, .. }
-                | Action::Look { stick, .. }
-                | Action::Flick { stick, .. }
-                | Action::Tilt { stick, .. } => {
-                    if input_cap(ui, p, &stick.label()).clicked() {
-                        *capture = Some((i, Slot::Stick));
+                    Action::Pointer { touch, .. } => {
+                        if input_cap(ui, p, &input_text(touch, kind), &cap_hover("Touches where the pointer is"))
+                            .clicked()
+                        {
+                            *capture = Some((i, Slot::Touch));
+                        }
                     }
+                    Action::Joystick { stick, .. }
+                    | Action::Look { stick, .. }
+                    | Action::Flick { stick, .. }
+                    | Action::Tilt { stick, .. } => {
+                        if input_cap(ui, p, &stick.label(), "Click, then move a stick or press a direction key")
+                            .clicked()
+                        {
+                            *capture = Some((i, Slot::Stick));
+                        }
+                    }
+                    Action::Motion { .. } => {}
                 }
-                Action::Motion { .. } => {}
-            }
-        });
-        trailing.response.rect.width()
-    }).inner);
+            });
+            trailing.response.rect.width()
+        })
+        .inner
+    });
     let clicked = row.response.clicked();
     let hovered = row.response.hovered();
     let row_rect = row.response.rect.expand2(vec2(8.0, 2.0));
@@ -1533,8 +1576,11 @@ fn binding_row(
     }
 }
 
-/// A clickable key cap: the input bound, and click to bind another.
-fn input_cap(ui: &mut Ui, p: &theme::Palette, text: &str) -> egui::Response {
+/// What clicking an input's cap does.
+const CAP_HINT: &str = "Click, then press the button or key to use";
+
+/// A clickable key cap: the input bound, and click to bind another. `hover` says what it's for and how to change it.
+fn input_cap(ui: &mut Ui, p: &theme::Palette, text: &str, hover: &str) -> egui::Response {
     let unset = text == "Not set";
     let color = if unset { theme::WARNING } else { p.on_surface };
     ui.add(
@@ -1548,7 +1594,12 @@ fn input_cap(ui: &mut Ui, p: &theme::Palette, text: &str) -> egui::Response {
             .min_size(vec2(44.0, 30.0)),
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
-    .on_hover_text("Click, then press the input to use")
+    .on_hover_text(hover)
+}
+
+/// A cap's tooltip: what the input is for, then how to change it (one tooltip: egui shows each one added separately).
+fn cap_hover(what: &str) -> String {
+    format!("{what}\n{CAP_HINT}")
 }
 
 /// A new look binding's speed, in screen widths a second at full tilt: shown as 1, up to 2 (twice it).
@@ -1570,26 +1621,35 @@ fn percent(slider: egui::Slider) -> egui::Slider {
         .custom_parser(|t| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0))
 }
 
-/// A stick binding's tap button, with a clear.
-fn tap_row(
+/// A setting's row: its name (hover it for what it does) and its controls.
+type Row<'a> = dyn Fn(&mut Ui, &str, &str, &mut dyn FnMut(&mut Ui)) + 'a;
+
+/// An optional input (a binding's tap, Free the mouse, Only while holding): its cap, "Nothing" when there's none, and
+/// Clear.
+#[allow(clippy::too_many_arguments)]
+fn optional_input(
     ui: &mut Ui,
     p: &theme::Palette,
-    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
-    tap: &mut Option<Input>,
+    row: &Row,
+    title: &str,
+    tip: &str,
+    input: &mut Option<Input>,
     kind: PadKind,
-    hover: &str,
     capture: &mut dyn FnMut(),
 ) {
-    row(ui, "Tap with", &mut |ui| {
-        let text = tap.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
-        if input_cap(ui, p, &text).on_hover_text(hover).clicked() {
+    row(ui, title, tip, &mut |ui| {
+        let text = input.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
+        if input_cap(ui, p, &text, &cap_hover(tip)).clicked() {
             capture();
         }
-        if tap.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
-            *tap = None;
+        if input.is_some() && widgets::text_button(ui, p, "Clear").on_hover_text("Bind nothing").clicked() {
+            *input = None;
         }
     });
 }
+
+const WITH_TIP: &str = "The binding works only while this is held too, so one button can do two things";
+const SHOWN_TIP: &str = "Draw its spot, area and finger on the screen while playing (Edit layout always shows them)";
 
 #[allow(clippy::too_many_arguments)]
 fn binding_settings(
@@ -1602,90 +1662,111 @@ fn binding_settings(
     lean: Option<(f64, f64)>,
     set_level: &mut bool,
 ) {
-    let row = |ui: &mut Ui, title: &str, add: &mut dyn FnMut(&mut Ui)| {
+    // Names in a column of their own, narrower when the window is.
+    let label = (ui.available_width() * 0.3).clamp(104.0, 136.0);
+    let row = |ui: &mut Ui, title: &str, tip: &str, add: &mut dyn FnMut(&mut Ui)| {
         ui.horizontal(|ui| {
             ui.set_min_height(36.0);
-            ui.allocate_ui_with_layout(vec2(136.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.set_min_width(136.0);
-                ui.label(widgets::muted(p, title).size(13.0));
+            ui.allocate_ui_with_layout(vec2(label, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(label);
+                let r = ui.label(widgets::muted(p, title).size(13.0));
+                if !tip.is_empty() {
+                    r.on_hover_text(tip);
+                }
             });
             add(ui);
         });
     };
+    let gap = |ui: &mut Ui| ui.add_space(8.0);
+    ui.label(widgets::muted(p, about(&binding.action)).size(12.5));
+    ui.add_space(4.0);
+    // Rarely changed settings fold away under More options, which lists any that are set while it's closed.
+    let mut more = Vec::new();
     match &mut binding.action {
         Action::Tap { mode, .. } => {
-            row(ui, "Acts", &mut |ui| {
-                widgets::segmented(
+            row(ui, "Touches", "", &mut |ui| {
+                widgets::segmented_tips(
                     ui,
                     p,
                     mode,
-                    &[(TapMode::Hold, "While held"), (TapMode::Toggle, "Toggle"), (TapMode::Repeat, "Repeat")],
+                    &[
+                        (TapMode::Hold, "While held", "Touches while the button is held"),
+                        (TapMode::Toggle, "Toggle", "A press touches, the next lifts the finger"),
+                        (TapMode::Repeat, "Repeatedly", "Taps over and over while the button is held"),
+                    ],
                 );
             });
         }
         Action::Swipe { ms, .. } => {
-            row(ui, "Duration", &mut |ui| {
-                ui.add(egui::Slider::new(ms, 40..=800).suffix(" ms"));
+            let tip = "How long each swipe takes: quicker is a flick, slower a drag";
+            row(ui, "Duration", tip, &mut |ui| {
+                number_slider(ui, SLIDER, egui::Slider::new(ms, 40..=800).suffix(" ms")).on_hover_text(tip);
             });
         }
         Action::Joystick { stick, radius, press, tap, .. } => {
             let was = stick.clone();
-            if stick_row(ui, p, row, stick) {
+            if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
             follow_stick(&was, stick, press);
-            row(ui, "Reach", &mut |ui| {
-                number_slider(ui, SLIDER, percent(egui::Slider::new(radius, 0.04..=0.5)))
-                    .on_hover_text("How far the finger goes at full push, as a share of the screen's shorter side");
+            let tip = "How far the finger moves from the stick's center at a full push, as a share of the screen's \
+                       shorter side";
+            row(ui, "Reach", tip, &mut |ui| {
+                number_slider(ui, SLIDER, percent(egui::Slider::new(radius, 0.04..=0.5))).on_hover_text(tip);
             });
-            press_rows(ui, p, row, press, stick, kind, i, capture);
-            tap_row(
+            gap(ui);
+            press_rows(ui, p, &row, press, stick, kind, i, capture);
+            optional_input(
                 ui,
                 p,
-                row,
-                tap,
-                kind,
+                &row,
+                "Tap with",
                 "For games that fire with a tap on the stick: lifts the finger, taps the stick's center, then lands \
                  again",
+                tap,
+                kind,
                 &mut || *capture = Some((i, Slot::Tap)),
             );
+            more.push(More::Shown);
         }
         Action::Look { stick, half, center, speed, invert_y, press, tap, mouse, mouse_speed, free } => {
             let was = stick.clone();
-            if stick_row(ui, p, row, stick) {
+            if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
             follow_stick(&was, stick, press);
-            row(ui, "Speed", &mut |ui| {
+            let tip = "How fast the view turns at a full push (pushed a little, it turns gently); 1 is the usual";
+            row(ui, "Speed", tip, &mut |ui| {
                 // Shown so a new binding's speed reads 1 (presets keep screen widths a second).
                 let was = *speed / LOOK_SPEED;
                 let mut shown = was;
-                number_slider(ui, SLIDER, egui::Slider::new(&mut shown, 0.1..=2.0).max_decimals(2)).on_hover_text(
-                    "How fast the finger drags at full tilt (pushed a little, it goes gently); 1 is the usual",
-                );
+                number_slider(ui, SLIDER, egui::Slider::new(&mut shown, 0.1..=2.0).max_decimals(2)).on_hover_text(tip);
                 if shown != was {
                     *speed = shown * LOOK_SPEED;
                 }
             });
-            row(ui, "Invert up and down", &mut |ui| {
-                widgets::switch(ui, p, invert_y);
+            let tip = "Pushing up looks down, as in a plane";
+            row(ui, "Invert up and down", tip, &mut |ui| {
+                widgets::switch(ui, p, invert_y).on_hover_text(tip);
             });
-            press_rows(ui, p, row, press, stick, kind, i, capture);
-            tap_row(
+            gap(ui);
+            press_rows(ui, p, &row, press, stick, kind, i, capture);
+            optional_input(
                 ui,
                 p,
-                row,
+                &row,
+                "Tap with",
+                "For games that fire with a tap: lifts the look finger and taps the area",
                 tap,
                 kind,
-                "For games that fire with a tap on the look area: lifts the look finger and taps",
                 &mut || *capture = Some((i, Slot::Tap)),
             );
-            row(ui, "Mouse looks", &mut |ui| {
+            gap(ui);
+            let tip = "Click the game's screen to lock the mouse to it: moving it looks around, and its buttons bind \
+                       like keys. Escape lets go";
+            row(ui, "Mouse looks", tip, &mut |ui| {
                 let was = *mouse;
-                widgets::switch(ui, p, mouse).on_hover_text(
-                    "Click the game's screen to lock the mouse to it: moving it looks around, and its buttons bind \
-                     like keys. Escape lets go",
-                );
+                widgets::switch(ui, p, mouse).on_hover_text(tip);
                 // Turned on with nothing to fire: the left button taps, as in a shooter; Ctrl frees the mouse for
                 // the game's buttons (Alt is the pinch's).
                 if *mouse && !was && tap.is_none() {
@@ -1696,72 +1777,74 @@ fn binding_settings(
                 }
             });
             if *mouse {
-                row(ui, "Mouse speed", &mut |ui| {
-                    number_slider(ui, SLIDER, egui::Slider::new(mouse_speed, 0.2..=5.0).logarithmic(true).max_decimals(2))
-                        .on_hover_text("At 1, a thousand counts of mouse movement drag across the screen's shorter side");
+                let tip = "How far the view turns as the mouse moves; 1 is the usual";
+                row(ui, "Mouse speed", tip, &mut |ui| {
+                    number_slider(
+                        ui,
+                        SLIDER,
+                        egui::Slider::new(mouse_speed, 0.2..=5.0).logarithmic(true).max_decimals(2),
+                    )
+                    .on_hover_text(tip);
                 });
-                row(ui, "Free the mouse", &mut |ui| {
-                    let text = free.as_ref().map_or("Nothing".to_string(), |t| input_text(t, kind));
-                    if input_cap(ui, p, &text)
-                        .on_hover_text(
-                            "While this is held, the mouse touches the screen (to tap the game's buttons and menus) \
-                             instead of looking, and stays on the screen",
-                        )
-                        .clicked()
-                    {
-                        *capture = Some((i, Slot::Free));
-                    }
-                    if free.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
-                        *free = None;
-                    }
-                });
+                optional_input(
+                    ui,
+                    p,
+                    &row,
+                    "Free the mouse",
+                    "Hold it to use the mouse as a finger instead, to tap and swipe the game's buttons and menus",
+                    free,
+                    kind,
+                    &mut || *capture = Some((i, Slot::Free)),
+                );
             }
-            row(ui, "Area", &mut |ui| {
-                if widgets::text_button(ui, p, "Right half")
-                    .on_hover_text("Or drag the area's corner in Edit layout")
-                    .clicked()
-                {
-                    *half = [0.25, 0.5];
-                    *center = Point::new(0.75, 0.5);
-                }
-            });
+            more.push(More::Area { half, center, whole: false });
+            more.push(More::Shown);
         }
         Action::Flick { stick, length, .. } => {
-            if stick_row(ui, p, row, stick) {
+            if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
-            row(ui, "Swipe length", &mut |ui| {
-                number_slider(ui, SLIDER, percent(egui::Slider::new(length, 0.05..=0.8)))
-                    .on_hover_text("As a share of the screen's shorter side");
+            let tip = "How far each swipe goes, as a share of the screen's shorter side";
+            row(ui, "Swipe length", tip, &mut |ui| {
+                number_slider(ui, SLIDER, percent(egui::Slider::new(length, 0.05..=0.8))).on_hover_text(tip);
             });
+            more.push(More::Shown);
         }
         Action::Pointer { stick, style, speed, follow, half, center, touch, toggle } => {
-            if stick_row(ui, p, row, stick) {
+            if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
-            row(ui, "Touch with", &mut |ui| {
-                if input_cap(ui, p, &input_text(touch, kind)).clicked() {
-                    *capture = Some((i, Slot::Touch));
-                }
-                widgets::segmented(ui, p, toggle, &[(false, "While held"), (true, "Toggle")]);
-            });
-            row(ui, "Pointer", &mut |ui| {
-                widgets::segmented(
+            row(ui, "When let go", "Where the pointer goes when the stick is let go", &mut |ui| {
+                widgets::segmented_tips(
                     ui,
                     p,
                     style,
-                    &[(PointerStyle::Centered, "Returns to center"), (PointerStyle::Cursor, "Stays put")],
+                    &[
+                        (
+                            PointerStyle::Centered,
+                            "Returns to center",
+                            "The stick points from the area's center, and the pointer goes back there when it's let \
+                             go: like aiming a remote at the screen",
+                        ),
+                        (
+                            PointerStyle::Cursor,
+                            "Stays put",
+                            "Like a mouse: the stick moves the pointer, and it stays where it's left",
+                        ),
+                    ],
                 );
             });
             if *style == PointerStyle::Cursor {
-                row(ui, "Speed", &mut |ui| {
-                    number_slider(ui, SLIDER, egui::Slider::new(speed, 0.2..=3.0).max_decimals(2))
-                        .on_hover_text("Screen widths a second at full tilt");
+                let tip = "How fast the pointer moves at a full push, in screen widths a second";
+                row(ui, "Speed", tip, &mut |ui| {
+                    number_slider(ui, SLIDER, egui::Slider::new(speed, 0.2..=3.0).max_decimals(2)).on_hover_text(tip);
                 });
             } else {
                 // All the way right: no glide, the pointer jumps to where the stick points.
                 const INSTANT: f32 = 12.0;
-                row(ui, "Speed", &mut |ui| {
+                let tip = "How fast the pointer glides to where the stick points and back, in screen widths a second \
+                           (all the way right: at once)";
+                row(ui, "Speed", tip, &mut |ui| {
                     let mut v = follow.unwrap_or(INSTANT);
                     let slider = egui::Slider::new(&mut v, 0.5..=INSTANT)
                         .logarithmic(true)
@@ -1776,39 +1859,50 @@ fn binding_settings(
                             "at once" | "instant" => Some(INSTANT as f64),
                             t => t.parse().ok(),
                         });
-                    number_slider(ui, SLIDER, slider).on_hover_text(
-                        "How fast the pointer glides to where the stick points and back, in screen widths a second \
-                         (all the way right: at once)",
-                    );
+                    number_slider(ui, SLIDER, slider).on_hover_text(tip);
                     *follow = (v < INSTANT).then_some(v);
                 });
             }
-            row(ui, "Area", &mut |ui| {
-                if widgets::text_button(ui, p, "Whole screen")
-                    .on_hover_text("Or drag the area's corner in Edit layout")
-                    .clicked()
-                {
-                    *half = [0.5, 0.5];
-                    *center = Point::CENTER;
+            gap(ui);
+            let tip = "Touches the screen where the pointer is";
+            row(ui, "Touch with", tip, &mut |ui| {
+                if input_cap(ui, p, &input_text(touch, kind), &cap_hover(tip)).clicked() {
+                    *capture = Some((i, Slot::Touch));
                 }
+                widgets::segmented_tips(
+                    ui,
+                    p,
+                    toggle,
+                    &[
+                        (false, "While held", "Touches while the button is held"),
+                        (true, "Toggle", "A press touches, the next lifts the finger"),
+                    ],
+                );
             });
+            more.push(More::Area { half, center, whole: true });
+            more.push(More::Shown);
         }
         Action::Tilt { stick, strength } => {
-            if stick_row(ui, p, row, stick) {
+            if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
-            row(ui, "Strength", &mut |ui| {
-                number_slider(ui, SLIDER, percent(egui::Slider::new(strength, 0.2..=1.0)));
+            let tip = "How far the device leans at a full push";
+            row(ui, "Strength", tip, &mut |ui| {
+                number_slider(ui, SLIDER, percent(egui::Slider::new(strength, 0.2..=1.0))).on_hover_text(tip);
             });
         }
         Action::Motion { sensitivity } => {
-            row(ui, "Sensitivity", &mut |ui| {
-                number_slider(ui, SLIDER, egui::Slider::new(sensitivity, 0.3..=3.0).max_decimals(2).suffix("×"));
+            let tip = "How far the device tilts as the controller tilts; 1× is the same amount";
+            row(ui, "Sensitivity", tip, &mut |ui| {
+                number_slider(ui, SLIDER, egui::Slider::new(sensitivity, 0.3..=3.0).max_decimals(2).suffix("×"))
+                    .on_hover_text(tip);
             });
-            row(ui, "Level", &mut |ui| {
+            let tip = "Hold the controller the way you play, then click Set level: that's flat for the device";
+            row(ui, "Level", tip, &mut |ui| {
                 let can = lean.is_some();
                 if widgets::tonal_enabled(ui, p, "Set level", can)
-                    .on_hover_text("Hold the controller the way you play, then click: that's flat for the device")
+                    .on_hover_text(tip)
+                    .on_disabled_hover_text("Needs a controller with motion sensors")
                     .clicked()
                 {
                     *set_level = true;
@@ -1819,7 +1913,7 @@ fn binding_settings(
             });
         }
         Action::Device { button, .. } => {
-            row(ui, "Button", &mut |ui| {
+            row(ui, "Presses", "Which of the device's buttons it presses", &mut |ui| {
                 let r = widgets::chip_menu(ui, p, button.label());
                 egui::Popup::menu(&r).show(|ui| {
                     ui.set_min_width(160.0);
@@ -1832,26 +1926,93 @@ fn binding_settings(
             });
         }
     }
-    if matches!(
-        binding.action,
-        Action::Joystick { .. } | Action::Look { .. } | Action::Pointer { .. } | Action::Flick { .. }
-    ) {
-        row(ui, "Show on screen", &mut |ui| {
-            let mut shown = !binding.hidden;
-            widgets::switch(ui, p, &mut shown)
-                .on_hover_text("Draw its spot, area and finger while playing (Edit layout always shows them)");
-            binding.hidden = !shown;
-        });
+    let mut with_capture = || *capture = Some((i, Slot::With));
+    if more.is_empty() {
+        // Nothing else to fold away: no fold for one row.
+        optional_input(ui, p, &row, "Only while holding", WITH_TIP, &mut binding.with, kind, &mut with_capture);
+        return;
     }
-    row(ui, "Only while holding", &mut |ui| {
-        let text = binding.with.as_ref().map_or("Nothing".to_string(), |w| w.label(kind));
-        if input_cap(ui, p, &text).clicked() {
-            *capture = Some((i, Slot::With));
+    // More options, open or closed, and what's set in it.
+    let id = ui.make_persistent_id(("binding-more", i));
+    let mut open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let mut set = Vec::new();
+    if let Some(w) = &binding.with {
+        set.push(format!("only while holding {}", w.label(kind)));
+    }
+    if binding.hidden {
+        set.push("not shown on screen".to_string());
+    }
+    gap(ui);
+    ui.horizontal(|ui| {
+        ui.set_min_height(32.0);
+        let mut job = egui::text::LayoutJob::default();
+        let format = |font: FontId| egui::TextFormat {
+            font_id: font,
+            color: p.primary,
+            valign: egui::Align::Center,
+            ..Default::default()
+        };
+        job.append(
+            if open { icons::CARET_DOWN } else { icons::CARET_RIGHT },
+            0.0,
+            format(FontId::new(13.0, theme::icons())),
+        );
+        job.append("More options", 6.0, format(FontId::new(13.0, theme::medium())));
+        let r = ui
+            .add(egui::Button::new(job).frame(false).min_size(vec2(0.0, 28.0)))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Where it shows on the screen, and making it work only while another button is held");
+        if r.clicked() {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(id, open));
         }
-        if binding.with.is_some() && widgets::text_button(ui, p, "Clear").clicked() {
-            binding.with = None;
+        if !open && !set.is_empty() {
+            let mut text = set.join(" · ");
+            text[..1].make_ascii_uppercase();
+            ui.label(widgets::muted(p, &text).size(12.0));
         }
     });
+    if !open {
+        return;
+    }
+    for item in more {
+        match item {
+            More::Area { half, center, whole } => {
+                let tip = "Where the finger moves. Drag its corners in Edit layout to change it";
+                row(ui, "Area", tip, &mut |ui| {
+                    let (text, to_half, to_center) = if whole {
+                        ("Whole screen", [0.5, 0.5], Point::CENTER)
+                    } else {
+                        ("Right half", [0.25, 0.5], Point::new(0.75, 0.5))
+                    };
+                    if widgets::text_button(ui, p, text)
+                        .on_hover_text(format!("Make the area the {}", text.to_lowercase()))
+                        .clicked()
+                    {
+                        *half = to_half;
+                        *center = to_center;
+                    }
+                    ui.label(widgets::muted(p, "or drag its corners in Edit layout").size(12.0));
+                });
+            }
+            More::Shown => {
+                row(ui, "Show on screen", SHOWN_TIP, &mut |ui| {
+                    let mut shown = !binding.hidden;
+                    widgets::switch(ui, p, &mut shown).on_hover_text(SHOWN_TIP);
+                    binding.hidden = !shown;
+                });
+            }
+        }
+    }
+    optional_input(ui, p, &row, "Only while holding", WITH_TIP, &mut binding.with, kind, &mut with_capture);
+}
+
+/// A setting folded under More options.
+enum More<'a> {
+    /// The area's size and place, with a button for the usual one: the whole screen or its right half.
+    Area { half: &'a mut [f32; 2], center: &'a mut Point, whole: bool },
+    /// Drawing the spot while playing.
+    Shown,
 }
 
 /// A stick binding's press setting: while pushed, while a button is held, or toggled by one (the stick's click unless
@@ -1860,7 +2021,7 @@ fn binding_settings(
 fn press_rows(
     ui: &mut Ui,
     p: &theme::Palette,
-    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
+    row: &Row,
     press: &mut Press,
     stick: &Stick,
     kind: PadKind,
@@ -1879,12 +2040,20 @@ fn press_rows(
         Press::Toggle { .. } => Mode::Toggle,
     };
     let mut mode = was;
-    row(ui, "Finger down", &mut |ui| {
-        widgets::segmented(
+    row(ui, "Finger down", "When the finger is on the screen", &mut |ui| {
+        widgets::segmented_tips(
             ui,
             p,
             &mut mode,
-            &[(Mode::Toggle, "Toggle"), (Mode::Hold, "While held"), (Mode::Pushed, "While pushed")],
+            &[
+                (Mode::Toggle, "Toggle", "A button puts the finger down, and the next press lifts it"),
+                (Mode::Hold, "While held", "The finger is down while a button is held"),
+                (
+                    Mode::Pushed,
+                    "While pushed",
+                    "The finger is down while the stick is pushed, and lifts when it's let go",
+                ),
+            ],
         );
     });
     if mode != was {
@@ -1901,12 +2070,18 @@ fn press_rows(
             *capture = Some((i, Slot::Press));
         }
     }
+    // The button, under the choice that needs it, saying what it does.
     if let Some(input) = press.input() {
-        let text = input_text(input, kind);
-        row(ui, "Button", &mut |ui| {
-            if input_cap(ui, p, &text).on_hover_text("Click, then press the button to use").clicked() {
+        let what = if matches!(press, Press::Toggle { .. }) {
+            "puts the finger down, and lifts it"
+        } else {
+            "holds the finger down"
+        };
+        row(ui, "", "", &mut |ui| {
+            if input_cap(ui, p, &input_text(input, kind), &cap_hover(&format!("The button that {what}"))).clicked() {
                 *capture = Some((i, Slot::Press));
             }
+            ui.label(widgets::muted(p, what).size(12.5));
         });
     }
 }
@@ -1926,14 +2101,9 @@ fn follow_stick(was: &Stick, now: &Stick, press: &mut Press) {
 
 /// The stick a binding follows, and Map keys, which asks for four keys one direction at a time (returns true when
 /// clicked).
-fn stick_row(
-    ui: &mut Ui,
-    p: &theme::Palette,
-    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
-    stick: &mut Stick,
-) -> bool {
+fn stick_row(ui: &mut Ui, p: &theme::Palette, row: &Row, stick: &mut Stick) -> bool {
     let mut map = false;
-    row(ui, "Stick", &mut |ui| {
+    row(ui, "Moved by", "A stick, the D-pad or four keys", &mut |ui| {
         let r = widgets::chip_menu(ui, p, &stick.label());
         egui::Popup::menu(&r).show(|ui| {
             for (s, label) in [
@@ -1949,7 +2119,7 @@ fn stick_row(
             }
         });
         map = widgets::text_button(ui, p, "Map keys")
-            .on_hover_text("Pick a key for each direction (up, right, down, left), for playing on the keyboard")
+            .on_hover_text("Pick a key for each direction (up, right, down, left), to play on the keyboard")
             .clicked();
     });
     map
@@ -1994,9 +2164,8 @@ fn key_map_prompt(app: &mut App, ui: &mut Ui) {
         }
     }
     let step = map.keys.len();
-    let modal = egui::Modal::new(egui::Id::unique("controller-key-map"))
-        .backdrop_color(Color32::from_black_alpha(140))
-        .frame(
+    let modal =
+        egui::Modal::new(egui::Id::unique("controller-key-map")).backdrop_color(Color32::from_black_alpha(140)).frame(
             Frame::new()
                 .fill(p.container_high)
                 .corner_radius(CornerRadius::same(theme::radius::DOCK))
@@ -2088,7 +2257,12 @@ fn draw_key_map(painter: &egui::Painter, p: &theme::Palette, rect: Rect, keys: &
         } else if i == step {
             (p.primary.gamma_multiply(0.18), Stroke::new(2.0, p.primary), "?".to_string(), p.primary)
         } else {
-            (Color32::TRANSPARENT, Stroke::new(1.0, p.outline.gamma_multiply(0.5)), KEY_DIRECTIONS[i].to_string(), p.on_surface_variant)
+            (
+                Color32::TRANSPARENT,
+                Stroke::new(1.0, p.outline.gamma_multiply(0.5)),
+                KEY_DIRECTIONS[i].to_string(),
+                p.on_surface_variant,
+            )
         };
         painter.rect(cap, CornerRadius::same(8), fill, stroke, egui::StrokeKind::Inside);
         painter.text(at, Align2::CENTER_CENTER, text, FontId::new(14.0, theme::medium()), color);
