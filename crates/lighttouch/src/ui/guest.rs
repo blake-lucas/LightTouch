@@ -45,9 +45,24 @@ pub struct GuestView {
     touches: HashMap<u64, u32>,
     /// The second finger following the left button while Alt-dragging.
     pair: Option<Pair>,
-    /// Hardware buttons held by the pointer on the drawn device or by keys.
+    /// Hardware buttons as the guest has them: down while any control holds them.
     held: Vec<u32>,
+    /// Which control holds which button. Each keeps its own state (the H key is up while the pointer holds the
+    /// drawn Home), or they would undo each other every frame.
+    held_by: Vec<(u32, ButtonControl)>,
     focused: bool,
+}
+
+/// What presses a hardware button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonControl {
+    Keys,
+    /// The drawn device's buttons.
+    Device,
+    /// The full-screen bar's.
+    Bar,
+    /// A short Home press that wakes the screen.
+    Wake,
 }
 
 impl GuestView {
@@ -328,43 +343,49 @@ impl GuestView {
         // Pressed and let go between two frames: still a press.
         let tapped =
             |key: egui::Key| !bound.contains(key.name()) && ui.input(|i| i.key_pressed(key) && i.modifiers.is_none());
-        let keys = [
-            (egui::Key::H, device_frame::HOME),
-            (egui::Key::P, device_frame::POWER),
-            (egui::Key::Plus, device_frame::VOLUME_UP),
-            (egui::Key::Equals, device_frame::VOLUME_UP),
-            (egui::Key::Minus, device_frame::VOLUME_DOWN),
+        let keys: [(&[egui::Key], u32); 4] = [
+            (&[egui::Key::H], device_frame::HOME),
+            (&[egui::Key::P], device_frame::POWER),
+            (&[egui::Key::Plus, egui::Key::Equals], device_frame::VOLUME_UP),
+            (&[egui::Key::Minus], device_frame::VOLUME_DOWN),
         ];
-        for (k, button) in keys {
-            self.follow_button(model, button, key(k), tapped(k));
+        for (ks, button) in keys {
+            let (down, tap) = (ks.iter().any(|k| key(*k)), ks.iter().any(|k| tapped(*k)));
+            self.follow_button(model, ButtonControl::Keys, button, down, tap);
         }
     }
 
-    /// Follow a hardware button's control: `down` while it's held, and `tapped` when it was pressed and let go
-    /// since the last frame, which is then a whole press (the engine holds it long enough for iOS to see, and
-    /// queues quick double and triple clicks).
-    pub fn follow_button(&mut self, model: &mut Model, button: u32, down: bool, tapped: bool) {
-        if tapped && !down && !self.is_held(button) {
-            self.set_button(model, button, true);
+    /// Follow one control of a hardware button: `down` while it holds the button, and `tapped` when it was pressed
+    /// and let go since the last frame, which is then a whole press (the engine holds it long enough for iOS to see,
+    /// and queues quick double and triple clicks).
+    pub fn follow_button(&mut self, model: &mut Model, control: ButtonControl, button: u32, down: bool, tapped: bool) {
+        let mine = |s: &Self| s.held_by.contains(&(button, control));
+        if tapped && !down && !mine(self) {
+            self.set_button(model, control, button, true);
         }
-        if down != self.is_held(button) {
-            self.set_button(model, button, down);
+        if down != mine(self) {
+            self.set_button(model, control, button, down);
         }
     }
 
-    /// Press or release a hardware button (drawn device, fullscreen bar or keys).
-    pub fn set_button(&mut self, model: &mut Model, button: u32, down: bool) {
-        let held = self.held.contains(&button);
-        if down == held {
+    /// One control presses or lets go of a hardware button; the guest sees it go down when the first control holds
+    /// it and up when the last lets go.
+    pub fn set_button(&mut self, model: &mut Model, control: ButtonControl, button: u32, down: bool) {
+        self.held_by.retain(|h| *h != (button, control));
+        if down {
+            self.held_by.push((button, control));
+        }
+        let any = self.held_by.iter().any(|(b, _)| *b == button);
+        if any == self.held.contains(&button) {
             return;
         }
-        if down {
+        if any {
             self.held.push(button);
         } else {
             self.held.retain(|b| *b != button);
         }
         if let Some(session) = &mut model.session {
-            session.button(button, down);
+            session.button(button, any);
         }
     }
 
@@ -399,6 +420,7 @@ impl GuestView {
         self.touches.clear();
         self.pair = None;
         self.held.clear();
+        self.held_by.clear();
         if let Some(session) = &mut model.session {
             session.cancel_input();
         }

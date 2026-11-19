@@ -274,7 +274,7 @@ impl App {
 
     /// Press Home briefly (wakes the screen like a tap on the Home button).
     pub fn pulse_home(&mut self) {
-        self.guest.set_button(&mut self.model, device_frame::HOME, true);
+        self.guest.set_button(&mut self.model, guest::ButtonControl::Wake, device_frame::HOME, true);
         self.pulse_release = Some(Instant::now() + Duration::from_millis(100));
     }
 
@@ -327,7 +327,7 @@ impl App {
         if let Some(at) = self.pulse_release {
             if Instant::now() >= at {
                 self.pulse_release = None;
-                self.guest.set_button(&mut self.model, device_frame::HOME, false);
+                self.guest.set_button(&mut self.model, guest::ButtonControl::Wake, device_frame::HOME, false);
             } else {
                 ctx.request_repaint_after(Duration::from_millis(20));
             }

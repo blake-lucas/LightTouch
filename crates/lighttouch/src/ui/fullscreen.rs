@@ -1,6 +1,7 @@
 //! Full screen: the guest centred on black, with a button bar docked below it when there is room, or floating over
 //! it (hiding after a few seconds without the mouse) when there is not. Esc leaves.
 use super::device_frame::{self, Skin};
+use super::guest::ButtonControl;
 use super::{App, Dialog, Page, icons, overlay, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
@@ -95,7 +96,7 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         let response =
             ui.interact(rect, ui.scope_id().with(("fs-key", button)), Sense::click_and_drag()).on_hover_text(label);
         let down = running && response.is_pointer_button_down_on();
-        app.guest.follow_button(&mut app.model, button, down, running && response.clicked());
+        app.guest.follow_button(&mut app.model, ButtonControl::Bar, button, down, running && response.clicked());
         let painter = ui.painter();
         if button == device_frame::HOME {
             painter.circle_stroke(

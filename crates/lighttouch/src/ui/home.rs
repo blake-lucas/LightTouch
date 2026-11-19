@@ -1,6 +1,7 @@
 //! The device page: the selected device drawn with its live screen, what state it is in, and the dock of session
 //! controls while it runs. Start lives only on the screen itself (one control per action).
 use super::device_frame::{self, Skin};
+use super::guest::ButtonControl;
 use super::{App, Dialog, Page, icons, overlay, sidebar, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
@@ -165,7 +166,7 @@ fn hardware_buttons(app: &mut App, ui: &mut Ui, layout: &device_frame::Layout) {
             response
         };
         let down = enabled && response.is_pointer_button_down_on();
-        app.guest.follow_button(&mut app.model, id, down, enabled && response.clicked());
+        app.guest.follow_button(&mut app.model, ButtonControl::Device, id, down, enabled && response.clicked());
     }
 }
 
