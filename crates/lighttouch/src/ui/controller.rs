@@ -147,15 +147,18 @@ pub fn step(app: &mut App, ui: &Ui, screen: Rect) {
     let ctx = ui.ctx().clone();
     let view = view(app, screen);
     let bound = bound_keys(&app.model);
-    let keys: HashSet<String> = if ctx.egui_wants_keyboard_input() || bound.is_empty() {
+    let mut keys: HashSet<String> = if ctx.egui_wants_keyboard_input() || bound.is_empty() {
         HashSet::new()
     } else {
         ctx.input(|i| i.keys_down.iter().map(|k| k.name().to_string()).filter(|k| bound.contains(k)).collect())
     };
+    // The mouse, while it's locked to the game: its buttons bind like keys.
+    let (mouse, buttons) = app.guest.take_mouse();
+    keys.extend(buttons.into_iter().filter(|b| bound.contains(*b)).map(String::from));
     let focused = ctx.input(|i| i.focused) || app.controller.window_focused;
     let listening = focused || app.model.settings.controller_background;
     let model = &mut app.model;
-    if model.gamepads.step(&keys, view, listening, model.session.as_mut()) {
+    if model.gamepads.step(&keys, mouse, view, listening, model.session.as_mut()) {
         ctx.request_repaint_after(Duration::from_millis(8));
     }
 }
@@ -1358,6 +1361,8 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             invert_y: false,
             press: Press::Pushed,
             tap: None,
+            mouse: false,
+            mouse_speed: 1.0,
         }),
         (CURSOR, "Pointer (stick + touch)", || Action::Pointer {
             stick: Stick::Left,
@@ -1409,10 +1414,11 @@ fn summary(binding: &Binding, kind: PadKind) -> String {
             let tap = tap.as_ref().map(|t| format!(", {} taps it", input_text(t, kind))).unwrap_or_default();
             format!("{} drags an on-screen stick, {}{tap}", stick.label(), press_text(press, kind))
         }
-        Action::Look { stick, press, tap, .. } => {
+        Action::Look { stick, press, tap, mouse, .. } => {
             let tap = tap.as_ref().map(|t| format!(", {} taps", input_text(t, kind))).unwrap_or_default();
             let press = if *press == Press::Pushed { String::new() } else { format!(", {}", press_text(press, kind)) };
-            format!("{} looks around{press}{tap}", stick.label())
+            let mouse = if *mouse { " (and the mouse)" } else { "" };
+            format!("{}{mouse} looks around{press}{tap}", stick.label())
         }
         Action::Pointer { stick, touch, toggle, style, .. } => {
             let how = if *style == PointerStyle::Centered { "returns to center" } else { "stays where it's left" };
@@ -1620,7 +1626,7 @@ fn binding_settings(
                 &mut || *capture = Some((i, Slot::Tap)),
             );
         }
-        Action::Look { stick, half, center, speed, invert_y, press, tap } => {
+        Action::Look { stick, half, center, speed, invert_y, press, tap, mouse, mouse_speed } => {
             let was = stick.clone();
             if stick_row(ui, p, row, stick) {
                 *capture = Some((i, Slot::Keys));
@@ -1643,6 +1649,23 @@ fn binding_settings(
                 "For games that fire with a tap on the look area: lifts the look finger and taps",
                 &mut || *capture = Some((i, Slot::Tap)),
             );
+            row(ui, "Mouse looks", &mut |ui| {
+                let was = *mouse;
+                widgets::switch(ui, p, mouse).on_hover_text(
+                    "Click the game's screen to lock the mouse to it: moving it looks around, and its buttons bind \
+                     like keys. Escape lets go",
+                );
+                // Turned on with nothing to fire: the left button taps, as in a shooter.
+                if *mouse && !was && tap.is_none() {
+                    *tap = Some(Input::Key(lighttouch_model::gamepad::preset::MOUSE_LEFT.into()));
+                }
+            });
+            if *mouse {
+                row(ui, "Mouse speed", &mut |ui| {
+                    number_slider(ui, SLIDER, egui::Slider::new(mouse_speed, 0.2..=5.0).logarithmic(true).max_decimals(2))
+                        .on_hover_text("At 1, a thousand counts of mouse movement drag across the screen's shorter side");
+                });
+            }
             row(ui, "Area", &mut |ui| {
                 if widgets::text_button(ui, p, "Right half")
                     .on_hover_text("Or drag the area's corner in Edit layout")
@@ -2066,6 +2089,7 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
                 .inner_margin(Margin::same(24)),
         );
     let mut cancelled = false;
+    let mut mouse_got = None;
     modal.show(ui.ctx(), |ui| {
         ui.set_width(340.0);
         let icon = if capture.slot == Slot::Stick { JOYSTICK } else { GAME_CONTROLLER };
@@ -2079,6 +2103,36 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new(title).font(theme::title()));
         ui.add_space(2.0);
         ui.label(widgets::muted(&p, detail));
+        if capture.slot != Slot::Stick {
+            // Mouse buttons bind like keys (they act while the mouse is locked to the game, for a mouse-look binding).
+            ui.add_space(12.0);
+            let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+            let lit = r.hovered();
+            ui.painter().rect(
+                rect,
+                CornerRadius::same(8),
+                if lit { p.container_highest } else { Color32::TRANSPARENT },
+                Stroke::new(1.0, p.outline.gamma_multiply(0.7)),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                "Or click here with a mouse button",
+                FontId::new(13.0, theme::medium()),
+                p.on_surface_variant,
+            );
+            use lighttouch_model::gamepad::preset::{MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT};
+            for (button, name) in [
+                (egui::PointerButton::Primary, MOUSE_LEFT),
+                (egui::PointerButton::Secondary, MOUSE_RIGHT),
+                (egui::PointerButton::Middle, MOUSE_MIDDLE),
+            ] {
+                if r.clicked_by(button) {
+                    mouse_got = Some(Input::Key(name.into()));
+                }
+            }
+        }
         ui.add_space(16.0);
         widgets::dialog_buttons(ui, |ui| {
             if widgets::tonal(ui, &p, "Cancel").clicked() {
@@ -2089,6 +2143,9 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
     if cancelled {
         app.controller.capture = None;
         return;
+    }
+    if mouse_got.is_some() {
+        got = mouse_got;
     }
     if cancel {
         app.controller.capture = None;

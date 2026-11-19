@@ -143,6 +143,11 @@ impl Input {
     }
 }
 
+/// The mouse's buttons, bound like keys: they act while the mouse is locked to the game (a mouse-look binding).
+pub const MOUSE_LEFT: &str = "MouseLeft";
+pub const MOUSE_RIGHT: &str = "MouseRight";
+pub const MOUSE_MIDDLE: &str = "MouseMiddle";
+
 /// A key's name as people say it.
 pub fn key_label(key: &str) -> String {
     match key {
@@ -152,6 +157,9 @@ pub fn key_label(key: &str) -> String {
         "ArrowRight" => "→".into(),
         "Space" => "Space".into(),
         "Enter" => "Enter".into(),
+        MOUSE_LEFT => "Left click".into(),
+        MOUSE_RIGHT => "Right click".into(),
+        MOUSE_MIDDLE => "Middle click".into(),
         k => k.to_string(),
     }
 }
@@ -355,6 +363,12 @@ pub enum Action {
         /// A button that taps where the finger is (games that fire with a tap on the look area).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tap: Option<Input>,
+        /// The mouse looks too, while it's locked to the game (a click on the screen locks it, Escape lets go).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mouse: bool,
+        /// The mouse's speed: at 1, a thousand counts of movement drag the finger across the screen's shorter side.
+        #[serde(default = "one")]
+        mouse_speed: f32,
     },
     /// A pointer over an area of the screen, and an input that touches where it is. The bubble is always drawn.
     Pointer {

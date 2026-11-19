@@ -93,6 +93,13 @@ impl Gamepads {
         self.active.and_then(|i| self.presets.get(i))
     }
 
+    /// The preset in use has a look binding the mouse steers: a click on the screen locks the mouse to the game.
+    pub fn mouse_look(&self) -> bool {
+        self.active_preset().is_some_and(|p| {
+            p.bindings.iter().any(|b| matches!(b.action, preset::Action::Look { mouse: true, .. }))
+        })
+    }
+
     /// The name of the preset in use, for settings.
     pub fn active_name(&self) -> Option<String> {
         self.active_preset().map(|p| p.name.clone())
@@ -183,9 +190,17 @@ impl Gamepads {
         self.motion_active = false;
     }
 
-    /// One frame: read the controllers and `keys`, and act on the device. `listening` is false while the window is
-    /// in the background (or the device's screen isn't showing). Returns true when another step is due soon.
-    pub fn step(&mut self, keys: &HashSet<String>, view: View, listening: bool, session: Option<&mut Session>) -> bool {
+    /// One frame: read the controllers, `keys` and the locked mouse's movement since the last (`mouse`), and act on
+    /// the device. `listening` is false while the window is in the background (or the device's screen isn't
+    /// showing). Returns true when another step is due soon.
+    pub fn step(
+        &mut self,
+        keys: &HashSet<String>,
+        mouse: (f32, f32),
+        view: View,
+        listening: bool,
+        session: Option<&mut Session>,
+    ) -> bool {
         let Some(session) = session else {
             self.mapper = Mapper::default();
             return false;
@@ -203,7 +218,8 @@ impl Gamepads {
             self.release(Some(session));
             return false;
         };
-        let merged = Merged::from(&pads);
+        let mut merged = Merged::from(&pads);
+        merged.mouse = mouse;
         if self.editing {
             // The mouse places the bindings; the controller's motion still reaches a running game.
             let out =

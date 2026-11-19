@@ -11,7 +11,8 @@ const BAR: f32 = 88.0;
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Escape first lets go of a locked mouse (the guest view does that).
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !app.guest.mouse_locked() {
         app.set_fullscreen(&ctx, false);
         return;
     }

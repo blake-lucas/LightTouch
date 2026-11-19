@@ -2,14 +2,17 @@
 //! touchscreen's fingers map to their own contacts. As on Android, a finger dragged past the screen's edge holds at
 //! the nearest edge rather than lifting. Alt-dragging adds a second finger opposite the first through the screen's centre, to pinch
 //! and rotate; Alt+Shift moves the two together (as in Xcode's Simulator). Keys: H Home, P Sleep/Wake, +/- volume
-//! (held while the key is held).
+//! (held while the key is held). With a mouse-look binding in the controller preset, a click on the screen locks the
+//! mouse to the game instead: its movement and buttons go to the preset until Escape (or another window) lets go.
 use super::device_frame;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui};
 use lighttouch_core::runtime::{BoardInfo, Contact};
 use lighttouch_model::Model;
 use lighttouch_model::settings::Scaling;
 use lighttouch_model::tilt::TiltKeys;
+use lighttouch_model::gamepad::preset::{MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 const DOWN: u32 = 0;
 const MOVE: u32 = 1;
@@ -51,6 +54,12 @@ pub struct GuestView {
     /// drawn Home), or they would undo each other every frame.
     held_by: Vec<(u32, ButtonControl)>,
     focused: bool,
+    /// The mouse is locked to the game (since when, for the hint), its movement not yet taken, and its buttons
+    /// held; `armed` once the click that locked it has been let go (that click isn't a press).
+    locked: Option<Instant>,
+    mouse_moved: (f32, f32),
+    mouse_buttons: Vec<&'static str>,
+    armed: bool,
 }
 
 /// What presses a hardware button.
@@ -166,7 +175,19 @@ impl GuestView {
         if !asleep {
             self.paint(ui.painter(), rect, model.settings.rotation);
         }
-        if interactive {
+        let mouse_look = interactive && model.gamepads.mouse_look();
+        if !mouse_look {
+            self.unlock(ui.ctx());
+        } else if self.locked.is_none()
+            && response.hovered()
+            && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+        {
+            self.lock(ui.ctx(), model);
+        }
+        if self.locked.is_some() {
+            self.locked_input(ui, rect);
+            self.keyboard_input(ui, model);
+        } else if interactive {
             self.pointer_input(ui, rect, &response, model);
             self.keyboard_input(ui, model);
         } else {
@@ -298,6 +319,80 @@ impl GuestView {
             self.release_all(model);
         }
         self.focused = focused;
+    }
+
+    pub fn mouse_locked(&self) -> bool {
+        self.locked.is_some()
+    }
+
+    /// The locked mouse's movement since this was last asked, and its buttons held (as key names: MouseLeft...).
+    pub fn take_mouse(&mut self) -> ((f32, f32), Vec<&'static str>) {
+        (std::mem::take(&mut self.mouse_moved), self.mouse_buttons.clone())
+    }
+
+    /// Hide the cursor and keep it on the game: locked where the system can (macOS, Wayland), else confined to the
+    /// window (Windows, X11) and put back over the screen each frame. The look follows the mouse's raw movement,
+    /// which neither stops at the window's edge nor sees the cursor put back.
+    fn lock(&mut self, ctx: &egui::Context, model: &mut Model) {
+        self.release_touches(model);
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Confined));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::Locked));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+        (self.locked, self.mouse_moved, self.armed) = (Some(Instant::now()), (0.0, 0.0), false);
+        self.mouse_buttons.clear();
+    }
+
+    fn unlock(&mut self, ctx: &egui::Context) {
+        if self.locked.take().is_none() {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::CursorGrab::None));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+        self.mouse_moved = (0.0, 0.0);
+        self.mouse_buttons.clear();
+    }
+
+    /// While locked: the mouse's movement and buttons for the preset, Escape or another window lets go.
+    fn locked_input(&mut self, ui: &Ui, rect: Rect) {
+        let ctx = ui.ctx();
+        let (escape, focused, events, pointer) =
+            ui.input(|i| (i.key_pressed(egui::Key::Escape), i.focused, i.events.clone(), i.pointer.clone()));
+        if escape || !focused {
+            self.unlock(ctx);
+            return;
+        }
+        for e in &events {
+            if let egui::Event::MouseMoved(d) = e {
+                self.mouse_moved.0 += d.x;
+                self.mouse_moved.1 += d.y;
+            }
+        }
+        let buttons = [
+            (egui::PointerButton::Primary, MOUSE_LEFT),
+            (egui::PointerButton::Secondary, MOUSE_RIGHT),
+            (egui::PointerButton::Middle, MOUSE_MIDDLE),
+        ];
+        let down: Vec<&'static str> = buttons.iter().filter(|(b, _)| pointer.button_down(*b)).map(|(_, n)| *n).collect();
+        // The click that locked it isn't a press: buttons count once it's let go.
+        self.armed |= down.is_empty();
+        self.mouse_buttons = if self.armed { down } else { Vec::new() };
+        // Confined, the hidden cursor still moves: back over the screen before it reaches anything else.
+        if pointer.latest_pos().is_some_and(|p| p.distance(rect.center()) > rect.width().min(rect.height()) * 0.25) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));
+        }
+        if let Some(since) = self.locked {
+            let shown = since.elapsed() < Duration::from_millis(2500);
+            if shown {
+                let at = egui::pos2(rect.center().x, rect.top() + 22.0);
+                let font = egui::FontId::proportional(13.0);
+                let text = "Mouse locked to the game · Esc lets go";
+                let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), Color32::WHITE);
+                let back = Rect::from_center_size(at, galley.size() + egui::vec2(20.0, 10.0));
+                ui.painter().rect_filled(back, 8.0, Color32::from_black_alpha(170));
+                ui.painter().text(at, egui::Align2::CENTER_CENTER, text, font, Color32::WHITE);
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+        }
     }
 
     fn keyboard_input(&mut self, ui: &Ui, model: &mut Model) {

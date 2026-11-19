@@ -110,6 +110,8 @@ pub struct Merged {
     pub accel: Option<[f32; 3]>,
     /// No controller's sensors report, but one's are on and paused (sdl.rs turns them on again).
     pub sensors_quiet: bool,
+    /// The mouse's movement since the last step (raw counts), while it's locked to the game.
+    pub mouse: (f32, f32),
 }
 
 impl Merged {
@@ -199,6 +201,8 @@ struct State {
     regrip_at: Option<Instant>,
     /// Since when a D-pad or keys stick has been pushed (its speed builds up).
     keyed_since: Option<Instant>,
+    /// Mouse movement not yet given to the look finger (it was lifted to land again).
+    mouse_carry: (f32, f32),
 }
 
 impl State {
@@ -524,13 +528,24 @@ fn step_binding(
                 put(s, Some(c), out);
             }
         }
-        Action::Look { stick, center, half, speed, invert_y, press, tap } => {
+        Action::Look { stick, center, half, speed, invert_y, press, tap, mouse, mouse_speed } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             // Whether the finger is down goes by the push itself; the pace, by keys' built-up push.
-            let pushed = x.hypot(y);
+            let mut pushed = x.hypot(y);
             let (x, y) = key_ramp(s, stick, (x, y), now);
             let (x, y) = (x, if *invert_y { -y } else { y });
             let m = x.hypot(y);
+            // The mouse, while it's locked to the game: its movement is the finger's.
+            if *mouse && enabled {
+                let (mx, my) = inputs.pad.mouse;
+                s.mouse_carry.0 += mx;
+                s.mouse_carry.1 += if *invert_y { -my } else { my };
+            }
+            let carry = s.mouse_carry;
+            let mousing = carry != (0.0, 0.0);
+            if mousing {
+                pushed = 1.0;
+            }
             let c = view.shown(*center);
             let (hw, hh) = (half[0].max(0.01), half[1].max(0.01));
             let inside = |(u, v): (f32, f32)| {
@@ -545,12 +560,12 @@ fn step_binding(
             let mut down = s.pressing(press, inputs, enabled, pushed, now);
             if *press == Press::Pushed && s.finger.is_some() {
                 // Resting where it is for a moment once the stick lets go.
-                s.rest_since = if m > 0.0 { None } else { s.rest_since.or(Some(now)) };
+                s.rest_since = if m > 0.0 || mousing { None } else { s.rest_since.or(Some(now)) };
                 down = s.rest_since.is_none_or(|t| now.saturating_duration_since(t) < LOOK_REST);
             }
             if !down {
                 put(s, None, out);
-                (s.rest_since, s.regrip_at) = (None, None);
+                (s.rest_since, s.regrip_at, s.mouse_carry) = (None, None, (0.0, 0.0));
                 return;
             }
             match s.finger {
@@ -561,17 +576,40 @@ fn step_binding(
                     s.regrip_at = None;
                     s.rest_since = None;
                     // Set back from the way it's heading, so the drag has room before the edge.
-                    let back = if m > 0.0 { (-x / m * hw * 0.5, -y / m * hh * 0.5) } else { (0.0, 0.0) };
+                    let (dx, dy, d) = if m > 0.0 { (x, y, m) } else { (carry.0, carry.1, carry.0.hypot(carry.1)) };
+                    let back = if d > 0.0 { (-dx / d * hw * 0.5, -dy / d * hh * 0.5) } else { (0.0, 0.0) };
                     put(s, Some((c.0 + back.0, c.1 + back.1)), out);
                 }
-                Some(f) if m > 0.0 => {
-                    // Faster the further it's pushed, gently near the middle for aiming.
-                    let pace = m.powf(1.5) / m;
-                    let (w, h) = view.span(*speed * dt);
-                    let next = (f.0 + x * pace * w, f.1 + y * pace * h);
-                    if inside(next) {
-                        put(s, Some(next), out);
+                Some(f) if m > 0.0 || mousing => {
+                    let mut next = f;
+                    if m > 0.0 {
+                        // Faster the further it's pushed, gently near the middle for aiming.
+                        let pace = m.powf(1.5) / m;
+                        let (w, h) = view.span(*speed * dt);
+                        next = (next.0 + x * pace * w, next.1 + y * pace * h);
+                    }
+                    // A thousand counts across the shorter side at speed 1.
+                    let (w, h) = view.span(mouse_speed.max(0.01) / 1000.0);
+                    let to = (next.0 + carry.0 * w, next.1 + carry.1 * h);
+                    if inside(to) {
+                        put(s, Some(to), out);
+                        s.mouse_carry = (0.0, 0.0);
+                    } else if !mousing {
+                        put(s, None, out);
+                        s.regrip_at = Some(now + REGRIP);
                     } else {
+                        // As far as the area goes, then lift to land again; the rest of the mouse's movement
+                        // goes on from there (a flick can be wider than the area).
+                        let d = (to.0 - f.0, to.1 - f.1);
+                        let room = |p: f32, d: f32, lo: f32, hi: f32| {
+                            if d > 0.0 { (hi - p) / d } else if d < 0.0 { (lo - p) / d } else { f32::INFINITY }
+                        };
+                        let (lo_u, hi_u) = ((c.0 - hw).max(0.0), (c.0 + hw).min(1.0));
+                        let (lo_v, hi_v) = ((c.1 - hh).max(0.0), (c.1 + hh).min(1.0));
+                        let t = (room(f.0, d.0, lo_u, hi_u).min(room(f.1, d.1, lo_v, hi_v)) * 0.98).clamp(0.0, 1.0);
+                        put(s, Some((f.0 + d.0 * t, f.1 + d.1 * t)), out);
+                        // The mouse's movement past where the finger stopped (the stick's isn't carried).
+                        s.mouse_carry = (carry.0 * (1.0 - t), carry.1 * (1.0 - t));
                         put(s, None, out);
                         s.regrip_at = Some(now + REGRIP);
                     }
@@ -1159,7 +1197,53 @@ mod tests {
             invert_y: false,
             press,
             tap,
+            mouse: false,
+            mouse_speed: 1.0,
         }])
+    }
+
+    #[test]
+    fn the_mouse_drags_the_look_finger_and_carries_on_past_a_landing() {
+        let mut p = look(Press::Pushed, None);
+        if let Action::Look { mouse, .. } = &mut p.bindings[0].action {
+            *mouse = true;
+        }
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let moved = |dx: f32, dy: f32| Merged { mouse: (dx, dy), ..Default::default() };
+        // The first movement lands the finger (set back from the way it's going), the next drags it.
+        assert_eq!(phases(&m.step(&p, &Inputs { pad: &moved(10.0, 0.0), keys: &keys }, &v, at(0))), [DOWN]);
+        let landed = m.states[0].finger.unwrap();
+        m.step(&p, &Inputs { pad: &moved(0.0, 0.0), keys: &keys }, &v, at(16));
+        // That first movement was kept: 10 counts, then 50 more: 60 thousandths of the width.
+        m.step(&p, &Inputs { pad: &moved(50.0, 0.0), keys: &keys }, &v, at(32));
+        let (w, _) = v.span(1.0);
+        assert!((m.states[0].finger.unwrap().0 - (landed.0 + 0.06 * w)).abs() < 1e-4);
+        // A flick wider than the whole area: as far as it goes, lift, land again and carry on, until all of it is
+        // given; nothing is lost on the way.
+        let mut travelled = 0.0;
+        let mut last = m.states[0].finger;
+        let mut ms = 48;
+        let mut pad = moved(450.0, 0.0);
+        while ms < 400 {
+            let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, at(ms));
+            pad = moved(0.0, 0.0);
+            for c in &out.contacts {
+                if c.phase == MOVE {
+                    travelled += c.x as f32 - last.unwrap().0;
+                }
+                last = if c.phase == UP { None } else { Some((c.x as f32, c.y as f32)) };
+            }
+            ms += 16;
+        }
+        assert!((travelled - 0.45 * w).abs() < 1e-3, "{travelled}");
+        // Still: it rests, then lifts.
+        assert_eq!(phases(&m.step(&p, &Inputs { pad: &moved(0.0, 0.0), keys: &keys }, &v, at(800))), [UP]);
+        // Turned off, the mouse does nothing.
+        if let Action::Look { mouse, .. } = &mut p.bindings[0].action {
+            *mouse = false;
+        }
+        assert!(m.step(&p, &Inputs { pad: &moved(30.0, 0.0), keys: &keys }, &v, at(600)).contacts.is_empty());
     }
 
     #[test]
