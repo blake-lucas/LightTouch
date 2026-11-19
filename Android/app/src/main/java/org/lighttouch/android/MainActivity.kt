@@ -469,7 +469,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
     override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
     override fun applySettings() {
-        if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
+        if (!settings.tilt) stopSensors(release = true) else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
         val microphone = settings.microphone && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -1033,13 +1033,16 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (record.getBoolean("gyro")) sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 10_000, thread) }
         listening = true
     }
-    /** The engine holds the last sample it was sent (a gap between samples is not the device turning), so when the
-     *  stream stops (tilt off, the app in the background, the guest stopping) it is let go of, and the guest reads
-     *  its resting pose again. On the sensor thread, after any samples still queued there. */
-    private fun stopSensors() {
+    /** The engine holds the last sample it was sent (a gap between samples is not the device turning). `release`
+     *  (Tilt turned off) lets go of it, so the guest reads its resting pose again: on the sensor thread, after any
+     *  samples still queued there, and only while this activity owns the display (a cancel lifts touches and buttons
+     *  too, and must never reach another owner's input). In the background the guest pauses and the sensors start
+     *  again on return; a stopping guest needs nothing. */
+    private fun stopSensors(release: Boolean = false) {
         sensors.unregisterListener(this)
         val worker = motionWorker
-        if (listening && worker != null) Handler(sensorThread.looper).post { try { worker.cancelInput() } catch (_: RemoteException) { } }
+        if (release && listening && worker != null && ownsDisplay())
+            Handler(sensorThread.looper).post { try { worker.cancelInput() } catch (_: RemoteException) { } }
         listening = false; motionWorker = null
     }
     override fun onSensorChanged(event: SensorEvent) {
