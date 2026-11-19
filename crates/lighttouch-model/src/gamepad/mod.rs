@@ -1,6 +1,8 @@
 //! Game controllers and keyboard bindings: presets of what each input does (`preset`), the step that turns inputs
 //! into touches, buttons and motion (`mapper`), and the controllers themselves (`sdl`). The UI shows and edits the
 //! presets; this runs the active one every frame.
+#[cfg(target_os = "linux")]
+pub mod linux_access;
 pub mod mapper;
 pub mod preset;
 pub mod sdl;

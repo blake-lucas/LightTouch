@@ -42,6 +42,10 @@ pub struct ControllerUi {
     /// Frames drawn since the window opened, and whether its title bar has been given the theme since it was shown.
     frames: u32,
     title_themed: bool,
+    /// Linux: the motion-access explanation is open; the rule's install under way, and how it went.
+    access_help: bool,
+    access_job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    access_result: Option<Result<(), String>>,
 }
 
 /// Waiting for the input to bind: which binding and which of its inputs.
@@ -493,6 +497,10 @@ fn body(app: &mut App, ui: &mut Ui) {
     if app.controller.capture.is_some() {
         capture_prompt(app, ui);
     }
+    #[cfg(target_os = "linux")]
+    if app.controller.access_help {
+        access_help(app, ui);
+    }
 }
 
 fn header(app: &mut App, ui: &mut Ui) {
@@ -686,6 +694,7 @@ fn controllers_card(app: &mut App, ui: &mut Ui) {
                         let motion = match pad.sensors {
                             Sensors::Live => "Motion sensors",
                             Sensors::Quiet => "Motion sensors aren't reporting; trying again",
+                            Sensors::None if pad.motion_note.is_some() => "Motion sensors not reachable",
                             Sensors::None => "No motion sensors",
                         };
                         let color = if pad.sensors == Sensors::Quiet { theme::WARNING } else { p.on_surface_variant };
@@ -695,6 +704,136 @@ fn controllers_card(app: &mut App, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// Linux: a button that installs LightTouch's udev rule for controllers' motion sensors (with the password prompt),
+/// a ? that explains it, and how it went.
+#[cfg(target_os = "linux")]
+fn access_row(c: &mut ControllerUi, p: &theme::Palette, ui: &mut Ui) {
+    use lighttouch_model::gamepad::linux_access;
+    if let Some(rx) = &c.access_job {
+        match rx.try_recv() {
+            Ok(result) => {
+                c.access_result = Some(result);
+                c.access_job = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ui.ctx().request_repaint_after(Duration::from_millis(200)),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => c.access_job = None,
+        }
+    }
+    let running = c.access_job.is_some();
+    let done = matches!(c.access_result, Some(Ok(())));
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if !done {
+            let label = if running { "Waiting for your password…" } else { "Allow access" };
+            if widgets::tonal_enabled(ui, p, label, !running)
+                .on_hover_text("Adds one udev rule so LightTouch can read the motion sensors; asks for your password")
+                .clicked()
+            {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let _ = tx.send(linux_access::install());
+                    ctx.request_repaint();
+                });
+                c.access_job = Some(rx);
+                c.access_result = None;
+            }
+        }
+        if widgets::icon_button_sized(ui, p, icons::QUESTION, "Why this needs your password", 30.0, true).clicked() {
+            c.access_help = true;
+        }
+    });
+    match &c.access_result {
+        Some(Ok(())) => {
+            ui.label(
+                widgets::muted(p, "Done. Turn the controller off and on again, or reconnect it, for motion to come through")
+                    .size(12.0),
+            );
+        }
+        Some(Err(e)) => {
+            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(theme::WARNING)).wrap());
+        }
+        None => {}
+    }
+}
+
+/// Linux: why motion needs the person's password, what is changed, and the commands to do it by hand or undo it.
+#[cfg(target_os = "linux")]
+fn access_help(app: &mut App, ui: &mut Ui) {
+    use lighttouch_model::gamepad::linux_access;
+    let p = app.palette;
+    let modal = egui::Modal::new(egui::Id::unique("controller-motion-access"))
+        .backdrop_color(Color32::from_black_alpha(140))
+        .frame(
+            Frame::new()
+                .fill(p.container_high)
+                .corner_radius(CornerRadius::same(theme::radius::DOCK))
+                .inner_margin(Margin::same(24)),
+        );
+    let mut close = false;
+    let response = modal.show(ui.ctx(), |ui| {
+        ui.set_width(560.0);
+        ui.label(widgets::icon_text(MOTION, 26.0).color(p.primary));
+        ui.add_space(6.0);
+        ui.label(RichText::new("Motion sensors on Linux").font(theme::title()));
+        ui.add_space(8.0);
+        let para = |ui: &mut Ui, text: &str| {
+            ui.add(egui::Label::new(RichText::new(text).size(13.0)).wrap());
+            ui.add_space(6.0);
+        };
+        para(
+            ui,
+            "LightTouch reads controllers through SDL, which gets a Switch or PlayStation controller's motion sensors \
+             from device files that Linux lets only the administrator open unless a rule allows more. Steam installs \
+             such a rule; this computer has none that covers this controller.",
+        );
+        para(
+            ui,
+            &format!(
+                "Allow access adds one file, {}, which lets whoever is signed in at this computer open Nintendo and \
+                 Sony controllers, as Steam's rule does. No other file is changed. Writing it needs your password, \
+                 which your system asks for. /etc is kept across updates, including on Fedora Silverblue, Bluefin, \
+                 Bazzite and other atomic systems. Delete the file to undo it.",
+                linux_access::RULES_PATH
+            ),
+        );
+        let code = |ui: &mut Ui, title: &str, text: String| {
+            ui.horizontal(|ui| {
+                ui.label(widgets::muted(&p, title).size(12.5));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::text_button(ui, &p, "Copy").clicked() {
+                        ui.ctx().copy_text(text.clone());
+                    }
+                });
+            });
+            // Unwrapped, as it would be typed: a long line scrolls sideways.
+            Frame::new()
+                .fill(p.container_highest)
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::same(10))
+                .show(ui, |ui| {
+                    egui::ScrollArea::horizontal().id_salt(title).show(ui, |ui| {
+                        ui.add(egui::Label::new(RichText::new(text.trim_end()).monospace().size(12.0)).extend());
+                    });
+                });
+            ui.add_space(8.0);
+        };
+        egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+            code(ui, "To do it yourself, in a terminal:", linux_access::install_commands());
+            code(ui, "To undo it:", linux_access::remove_commands());
+        });
+        para(ui, "Then turn the controller off and on again, or reconnect it.");
+        widgets::dialog_buttons(ui, |ui| {
+            if widgets::tonal(ui, &p, "Close").clicked() {
+                close = true;
+            }
+        });
+    });
+    if close || response.should_close() {
+        app.controller.access_help = false;
+    }
 }
 
 fn sdl_hint() -> &'static str {
@@ -716,6 +855,10 @@ fn live_card(app: &mut App, ui: &mut Ui) {
         if let Some(pad) = pad {
             ui.add_space(8.0);
             motion_bars(ui, &p, pad);
+            #[cfg(target_os = "linux")]
+            if pad.motion_fix || app.controller.access_result.is_some() || app.controller.access_job.is_some() {
+                access_row(&mut app.controller, &p, ui);
+            }
         }
         let held: Vec<String> = {
             let bound = bound_keys(&app.model);

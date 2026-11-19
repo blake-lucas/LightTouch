@@ -30,6 +30,8 @@ pub struct Pad {
     pub sensors: Sensors,
     /// Why a controller that has motion sensors doesn't report them here (Linux: access to its devices), when known.
     pub motion_note: Option<String>,
+    /// Linux: LightTouch's udev rule (linux_access) would let it open them.
+    pub motion_fix: bool,
 }
 
 /// The controller's motion sensors.
@@ -221,6 +223,7 @@ struct Open {
     gyro: bool,
     accel: bool,
     motion_note: Option<String>,
+    motion_fix: bool,
     /// The last accelerometer sample (its timestamp, or its values on SDLs without timestamps) and when it changed.
     last_sample: Option<(u64, [f32; 3])>,
     sampled_at: Instant,
@@ -335,6 +338,8 @@ struct Virtual {
     seen: Option<std::time::SystemTime>,
     accel: Option<[f32; 3]>,
     gyro: Option<[f32; 3]>,
+    /// `"blocked": true`: stands in for a controller whose motion Linux won't let LightTouch open.
+    blocked: bool,
 }
 
 impl Virtual {
@@ -345,7 +350,7 @@ impl Virtual {
         let index = unsafe { attach(1, 6, BUTTONS, 0) };
         let joystick = if index >= 0 { unsafe { open(index) } } else { std::ptr::null_mut() };
         let id = unsafe { (sdl.SDL_JoystickGetDeviceInstanceID)(index) };
-        (!joystick.is_null()).then_some(Virtual { file, joystick, id, seen: None, accel: None, gyro: None })
+        (!joystick.is_null()).then_some(Virtual { file, joystick, id, seen: None, accel: None, gyro: None, blocked: false })
     }
 
     fn update(&mut self, sdl: &Sdl) {
@@ -367,6 +372,7 @@ impl Virtual {
             (v.len() == 3).then(|| [v[0], v[1], v[2]])
         };
         (self.accel, self.gyro) = (three("accel"), three("gyro"));
+        self.blocked = state["blocked"].as_bool() == Some(true);
         let (Some(set_axis), Some(set_button)) = (sdl.SDL_JoystickSetVirtualAxis, sdl.SDL_JoystickSetVirtualButton)
         else {
             return;
@@ -408,6 +414,12 @@ fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn(), log: &mut Log) {
         if let Some(v) = virtual_pad.as_ref().filter(|v| v.accel.is_some()) {
             for pad in pads.iter_mut().filter(|p| p.id == v.id) {
                 (pad.accel, pad.gyro, pad.sensors) = (v.accel, v.gyro, Sensors::Live);
+            }
+        }
+        if let Some(v) = virtual_pad.as_ref().filter(|v| v.blocked) {
+            for pad in pads.iter_mut().filter(|p| p.id == v.id) {
+                pad.motion_note = Some("Linux doesn't let LightTouch open its motion sensors (/dev/hidraw7)".into());
+                pad.motion_fix = true;
             }
         }
         if pads != last {
@@ -458,7 +470,10 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
             let (gyro, accel) = (sensor(SDL_SENSOR_GYRO), sensor(SDL_SENSOR_ACCEL));
             let rate = |kind: c_int| sdl.SDL_GameControllerGetSensorDataRate.map_or(0.0, |f| f(handle, kind));
             let vendor = sdl.SDL_GameControllerGetVendor.map_or(0, |f| f(handle));
-            let motion_note = if accel { None } else { motion_blocked(sdl, pad_type, vendor) };
+            let (motion_note, motion_fix) = match if accel { None } else { motion_blocked(sdl, pad_type, vendor) } {
+                Some((note, fix)) => (Some(note), fix),
+                None => (None, false),
+            };
             log.line(&format!(
                 "{name}: type {}, gyro {} ({} Hz), accelerometer {} ({} Hz)",
                 pad_type.map_or("unknown".to_string(), |t| t.to_string()),
@@ -479,6 +494,7 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
                 gyro,
                 accel,
                 motion_note,
+                motion_fix,
                 last_sample: None,
                 sampled_at: now,
                 enabled_at: now,
@@ -526,6 +542,7 @@ fn read(sdl: &Sdl, o: &mut Open, log: &mut Log) -> Pad {
         accel: accel.map(|v| round(v, 0.05)),
         sensors,
         motion_note: o.motion_note.clone(),
+        motion_fix: o.motion_fix,
     }
 }
 
@@ -533,8 +550,9 @@ fn read(sdl: &Sdl, o: &mut Open, log: &mut Log) -> Pad {
 /// controller's sensors itself through its /dev/hidraw node, which most systems let only root open (Steam's udev rules,
 /// the steam-devices package, open them up); failing that, SDL 2.28 and newer read them from the separate "IMU" or
 /// "Motion Sensors" input device the kernel's driver makes, which needs read access too.
+/// The reason, and whether LightTouch's udev rule would let it open them.
 #[cfg(target_os = "linux")]
-fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<String> {
+fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<(String, bool)> {
     // Switch Pro and Joy-Cons; PS4, PS5 and PS3 (SDL_GameControllerType).
     if !matches!(pad_type, Some(5 | 11 | 12 | 13 | 3 | 4 | 7)) || vendor == 0 {
         return None;
@@ -562,11 +580,21 @@ fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<Str
         .filter(|n| read(&std::path::Path::new("/sys/class/hidraw").join(n).join("device/uevent")).contains(&id))
         .map(|n| format!("/dev/{n}"))
         .collect();
+    let mut version = [0u8; 3];
+    if let Some(get) = sdl.SDL_GetVersion {
+        // SAFETY: SDL_version is three bytes.
+        unsafe { get(&mut version) };
+    }
     if hidraw.iter().any(|p| can(p, libc::R_OK | libc::W_OK)) {
-        return Some(
-            "SDL can open the controller but gets no motion from it; Steam Input, if it's running, may be holding it"
-                .into(),
-        );
+        let old = if (version[0], version[1]) < (2, 26) {
+            format!(", or SDL {}.{}.{} is too old for this controller and the kernel's driver", version[0], version[1], version[2])
+        } else {
+            String::new()
+        };
+        return Some((
+            format!("SDL can open the controller but gets no motion from it: Steam Input may be holding it{old}"),
+            false,
+        ));
     }
     // The driver's motion device, by name.
     let imu: Vec<String> = nodes("input")
@@ -578,11 +606,6 @@ fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<Str
         })
         .map(|n| format!("/dev/input/{n}"))
         .collect();
-    let mut version = [0u8; 3];
-    if let Some(get) = sdl.SDL_GetVersion {
-        // SAFETY: SDL_version is three bytes.
-        unsafe { get(&mut version) };
-    }
     let reads_imu = (version[0], version[1]) >= (2, 28);
     if reads_imu && imu.iter().any(|p| can(p, libc::R_OK)) {
         return None;
@@ -591,15 +614,19 @@ fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<Str
     if blocked.is_empty() {
         return None;
     }
-    Some(format!(
-        "Linux doesn't let LightTouch open its motion sensors ({}). Steam's controller rules (the steam-devices \
-         package) allow it: install them, then reconnect the controller",
-        blocked.join(", "),
-    ))
+    if super::linux_access::installed() {
+        return Some((
+            "LightTouch's access rule is installed: turn the controller off and on again, or reconnect it, for it to \
+             apply"
+                .into(),
+            false,
+        ));
+    }
+    Some((format!("Linux doesn't let LightTouch open its motion sensors ({})", blocked.join(", ")), true))
 }
 
 #[cfg(not(target_os = "linux"))]
-fn motion_blocked(_: &Sdl, _: Option<c_int>, _: u16) -> Option<String> {
+fn motion_blocked(_: &Sdl, _: Option<c_int>, _: u16) -> Option<(String, bool)> {
     None
 }
 
