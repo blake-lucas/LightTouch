@@ -1033,7 +1033,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (record.getBoolean("gyro")) sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 10_000, thread) }
         listening = true
     }
-    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null }
+    /** The engine holds the last sample it was sent (a gap between samples is not the device turning), so when the
+     *  stream stops (tilt off, the app in the background, the guest stopping) it is let go of, and the guest reads
+     *  its resting pose again. On the sensor thread, after any samples still queued there. */
+    private fun stopSensors() {
+        sensors.unregisterListener(this)
+        val worker = motionWorker
+        if (listening && worker != null) Handler(sensorThread.looper).post { try { worker.cancelInput() } catch (_: RemoteException) { } }
+        listening = false; motionWorker = null
+    }
     override fun onSensorChanged(event: SensorEvent) {
         val kind = if (event.sensor.type == Sensor.TYPE_GYROSCOPE) 2 else 1
         try { motionWorker?.motion(kind, event.timestamp, event.values.copyOf(3), displayRotation) } catch (_: RemoteException) { }
