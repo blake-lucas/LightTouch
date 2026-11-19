@@ -46,7 +46,20 @@ pub struct ControllerUi {
     access_help: bool,
     access_job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     access_result: Option<Result<(), String>>,
+    /// Mapping four keys to a stick binding, one direction at a time.
+    key_map: Option<KeyMap>,
 }
+
+/// The keys mapped so far (up, right, down, left: the order they're asked for), for which binding, and the last
+/// key turned away (already used for another direction).
+struct KeyMap {
+    binding: usize,
+    keys: Vec<String>,
+    refused: Option<String>,
+}
+
+/// The directions keys are asked for, in that order.
+const KEY_DIRECTIONS: [&str; 4] = ["Up", "Right", "Down", "Left"];
 
 /// Waiting for the input to bind: which binding and which of its inputs.
 #[derive(Clone)]
@@ -68,6 +81,8 @@ enum Slot {
     Press,
     /// A joystick's or look binding's tap button.
     Tap,
+    /// Four keys for a stick, one direction at a time.
+    Keys,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -496,6 +511,9 @@ fn body(app: &mut App, ui: &mut Ui) {
     }
     if app.controller.capture.is_some() {
         capture_prompt(app, ui);
+    }
+    if app.controller.key_map.is_some() {
+        key_map_prompt(app, ui);
     }
     #[cfg(target_os = "linux")]
     if app.controller.access_help {
@@ -1247,7 +1265,9 @@ fn bindings(app: &mut App, ui: &mut Ui) {
         app.model.gamepads.presets[index] = preset;
         app.model.gamepads.changed(app.model.session.as_mut());
     }
-    if let Some((binding, slot)) = capture {
+    if let Some((binding, Slot::Keys)) = capture {
+        app.controller.key_map = Some(KeyMap { binding, keys: Vec::new(), refused: None });
+    } else if let Some((binding, slot)) = capture {
         let pads = app.model.gamepads.pads();
         let merged = lighttouch_model::gamepad::mapper::Merged::from(&pads.pads);
         let keys = ui.ctx().input(|i| i.keys_down.iter().map(|k| k.name().to_string()).collect());
@@ -1580,7 +1600,9 @@ fn binding_settings(
         }
         Action::Joystick { stick, radius, press, tap, .. } => {
             let was = stick.clone();
-            stick_row(ui, p, row, stick);
+            if stick_row(ui, p, row, stick) {
+                *capture = Some((i, Slot::Keys));
+            }
             follow_stick(&was, stick, press);
             row(ui, "Reach", &mut |ui| {
                 number_slider(ui, SLIDER, percent(egui::Slider::new(radius, 0.04..=0.5)))
@@ -1600,7 +1622,9 @@ fn binding_settings(
         }
         Action::Look { stick, half, center, speed, invert_y, press, tap } => {
             let was = stick.clone();
-            stick_row(ui, p, row, stick);
+            if stick_row(ui, p, row, stick) {
+                *capture = Some((i, Slot::Keys));
+            }
             follow_stick(&was, stick, press);
             row(ui, "Speed", &mut |ui| {
                 number_slider(ui, SLIDER, egui::Slider::new(speed, 0.1..=2.5).max_decimals(2))
@@ -1630,14 +1654,18 @@ fn binding_settings(
             });
         }
         Action::Flick { stick, length, .. } => {
-            stick_row(ui, p, row, stick);
+            if stick_row(ui, p, row, stick) {
+                *capture = Some((i, Slot::Keys));
+            }
             row(ui, "Swipe length", &mut |ui| {
                 number_slider(ui, SLIDER, percent(egui::Slider::new(length, 0.05..=0.8)))
                     .on_hover_text("As a share of the screen's shorter side");
             });
         }
         Action::Pointer { stick, style, speed, follow, half, center, touch, toggle } => {
-            stick_row(ui, p, row, stick);
+            if stick_row(ui, p, row, stick) {
+                *capture = Some((i, Slot::Keys));
+            }
             row(ui, "Touch with", &mut |ui| {
                 if input_cap(ui, p, &input_text(touch, kind)).clicked() {
                     *capture = Some((i, Slot::Touch));
@@ -1693,7 +1721,9 @@ fn binding_settings(
             });
         }
         Action::Tilt { stick, strength } => {
-            stick_row(ui, p, row, stick);
+            if stick_row(ui, p, row, stick) {
+                *capture = Some((i, Slot::Keys));
+            }
             row(ui, "Strength", &mut |ui| {
                 number_slider(ui, SLIDER, percent(egui::Slider::new(strength, 0.2..=1.0)));
             });
@@ -1821,7 +1851,15 @@ fn follow_stick(was: &Stick, now: &Stick, press: &mut Press) {
     }
 }
 
-fn stick_row(ui: &mut Ui, p: &theme::Palette, row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)), stick: &mut Stick) {
+/// The stick a binding follows, and Map keys, which asks for four keys one direction at a time (returns true when
+/// clicked).
+fn stick_row(
+    ui: &mut Ui,
+    p: &theme::Palette,
+    row: impl Fn(&mut Ui, &str, &mut dyn FnMut(&mut Ui)),
+    stick: &mut Stick,
+) -> bool {
+    let mut map = false;
     row(ui, "Stick", &mut |ui| {
         let r = widgets::chip_menu(ui, p, &stick.label());
         egui::Popup::menu(&r).show(|ui| {
@@ -1837,7 +1875,151 @@ fn stick_row(ui: &mut Ui, p: &theme::Palette, row: impl Fn(&mut Ui, &str, &mut d
                 }
             }
         });
+        map = widgets::text_button(ui, p, "Map keys")
+            .on_hover_text("Pick a key for each direction (up, right, down, left), for playing on the keyboard")
+            .clicked();
     });
+    map
+}
+
+/// Map keys: asks for the key for each direction in turn over a drawing of the stick, then gives the binding those
+/// four keys. Backspace goes back a step, Escape cancels; a key already used for another direction is turned away.
+fn key_map_prompt(app: &mut App, ui: &mut Ui) {
+    let p = app.palette;
+    let Some(map) = app.controller.key_map.as_mut() else { return };
+    let pressed: Vec<egui::Key> = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key),
+                _ => None,
+            })
+            .collect()
+    });
+    let mut cancel = false;
+    for key in pressed {
+        match key {
+            egui::Key::Escape => cancel = true,
+            egui::Key::Backspace => {
+                map.keys.pop();
+                map.refused = None;
+            }
+            _ if map.keys.len() < 4 => {
+                let name = key.name().to_string();
+                if let Some(i) = map.keys.iter().position(|k| *k == name) {
+                    map.refused = Some(format!(
+                        "{} is already {}",
+                        lighttouch_model::gamepad::preset::key_label(&name),
+                        KEY_DIRECTIONS[i]
+                    ));
+                } else {
+                    map.keys.push(name);
+                    map.refused = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    let step = map.keys.len();
+    let modal = egui::Modal::new(egui::Id::unique("controller-key-map"))
+        .backdrop_color(Color32::from_black_alpha(140))
+        .frame(
+            Frame::new()
+                .fill(p.container_high)
+                .corner_radius(CornerRadius::same(theme::radius::DOCK))
+                .inner_margin(Margin::same(24)),
+        );
+    let mut back = false;
+    modal.show(ui.ctx(), |ui| {
+        ui.set_width(340.0);
+        if step < 4 {
+            ui.label(RichText::new(format!("Press the key for {}", KEY_DIRECTIONS[step])).font(theme::title()));
+        }
+        ui.add_space(2.0);
+        ui.label(widgets::muted(&p, format!("Step {} of 4 · Backspace goes back · Escape cancels", (step + 1).min(4))));
+        ui.add_space(8.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 220.0), Sense::hover());
+        draw_key_map(ui.painter(), &p, rect, &map.keys);
+        let note = map.refused.clone().unwrap_or_default();
+        ui.label(RichText::new(note).size(12.5).color(theme::WARNING));
+        ui.add_space(8.0);
+        widgets::dialog_buttons(ui, |ui| {
+            if widgets::tonal(ui, &p, "Cancel").clicked() {
+                cancel = true;
+            }
+            if step > 0 && widgets::text_button(ui, &p, "Back").clicked() {
+                back = true;
+            }
+        });
+    });
+    if back {
+        map.keys.pop();
+        map.refused = None;
+    }
+    if cancel {
+        app.controller.key_map = None;
+        return;
+    }
+    if map.keys.len() < 4 {
+        return;
+    }
+    let (binding, keys) = (map.binding, map.keys.clone());
+    app.controller.key_map = None;
+    let new = Stick::Keys { up: keys[0].clone(), right: keys[1].clone(), down: keys[2].clone(), left: keys[3].clone() };
+    let Some(index) = app.model.gamepads.active else { return };
+    let mut preset = app.model.gamepads.presets[index].clone();
+    let Some(binding) = preset.bindings.get_mut(binding) else { return };
+    match &mut binding.action {
+        Action::Joystick { stick, press, .. } | Action::Look { stick, press, .. } => {
+            let was = std::mem::replace(stick, new);
+            follow_stick(&was, stick, press);
+        }
+        Action::Flick { stick, .. } | Action::Tilt { stick, .. } | Action::Pointer { stick, .. } => *stick = new,
+        _ => return,
+    }
+    app.model.gamepads.presets[index] = preset;
+    app.model.gamepads.changed(app.model.session.as_mut());
+}
+
+/// The stick with a key cap for each direction: the ones mapped show their key, the one being asked for is lit with
+/// the stick pushed toward it, the rest wait.
+fn draw_key_map(painter: &egui::Painter, p: &theme::Palette, rect: Rect, keys: &[String]) {
+    let c = rect.center();
+    let dirs = [vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 0.0)];
+    let step = keys.len();
+    // The stick: a ring, and its knob pushed toward the direction asked for.
+    painter.circle_stroke(c, 34.0, Stroke::new(2.0, p.outline));
+    let push = dirs.get(step).copied().unwrap_or(vec2(0.0, 0.0));
+    if step < 4 {
+        // Short of the nearest cap (above and below, 64 px out).
+        let tip = c + push * 50.0;
+        painter.line_segment([c + push * 20.0, tip], Stroke::new(3.0, p.primary));
+        let side = vec2(-push.y, push.x);
+        painter.add(egui::Shape::convex_polygon(
+            vec![tip + push * 8.0, tip - push * 4.0 + side * 7.0, tip - push * 4.0 - side * 7.0],
+            p.primary,
+            Stroke::NONE,
+        ));
+    }
+    painter.circle_filled(c + push * 14.0, 16.0, if step < 4 { p.primary } else { p.on_surface_variant });
+    for (i, d) in dirs.iter().enumerate() {
+        let at = c + *d * vec2(118.0, 84.0);
+        let cap = Rect::from_center_size(at, vec2(72.0, 40.0));
+        let (fill, stroke, text, color) = if let Some(k) = keys.get(i) {
+            (
+                p.container_highest,
+                Stroke::new(1.0, p.outline),
+                lighttouch_model::gamepad::preset::key_label(k),
+                p.on_surface,
+            )
+        } else if i == step {
+            (p.primary.gamma_multiply(0.18), Stroke::new(2.0, p.primary), "?".to_string(), p.primary)
+        } else {
+            (Color32::TRANSPARENT, Stroke::new(1.0, p.outline.gamma_multiply(0.5)), KEY_DIRECTIONS[i].to_string(), p.on_surface_variant)
+        };
+        painter.rect(cap, CornerRadius::same(8), fill, stroke, egui::StrokeKind::Inside);
+        painter.text(at, Align2::CENTER_CENTER, text, FontId::new(14.0, theme::medium()), color);
+    }
 }
 
 /// "Press a button or key": the next input pressed binds (Escape cancels).

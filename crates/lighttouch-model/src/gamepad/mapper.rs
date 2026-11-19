@@ -28,6 +28,12 @@ const ENGAGE: Duration = Duration::from_millis(50);
 /// fling the camera), and how long it stays up before landing again at an edge.
 const LOOK_REST: Duration = Duration::from_millis(300);
 const REGRIP: Duration = Duration::from_millis(20);
+/// A D-pad or keys, all or nothing, push a speed-set binding (looking, a cursor) from this share of full speed up to
+/// all of it over `KEY_RAMP`, so a tap nudges and holding turns fully.
+const KEY_START: f32 = 0.3;
+const KEY_RAMP: Duration = Duration::from_millis(300);
+/// A centered pointer set to jump at once glides at this speed when keys steer it (screen widths a second).
+const KEY_FOLLOW: f32 = 4.0;
 /// A stick binding's tap: how long the finger stays down.
 const STICK_TAP: Duration = Duration::from_millis(60);
 /// A joystick's finger glides to where the stick points at one reach in this long (a stick let go in a frame would
@@ -191,6 +197,8 @@ struct State {
     /// Looking: when the stick let go with the finger down, and when the finger may land again after an edge.
     rest_since: Option<Instant>,
     regrip_at: Option<Instant>,
+    /// Since when a D-pad or keys stick has been pushed (its speed builds up).
+    keyed_since: Option<Instant>,
 }
 
 impl State {
@@ -518,6 +526,9 @@ fn step_binding(
         }
         Action::Look { stick, center, half, speed, invert_y, press, tap } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
+            // Whether the finger is down goes by the push itself; the pace, by keys' built-up push.
+            let pushed = x.hypot(y);
+            let (x, y) = key_ramp(s, stick, (x, y), now);
             let (x, y) = (x, if *invert_y { -y } else { y });
             let m = x.hypot(y);
             let c = view.shown(*center);
@@ -531,7 +542,7 @@ fn step_binding(
                 s.regrip_at = None;
                 return;
             }
-            let mut down = s.pressing(press, inputs, enabled, m, now);
+            let mut down = s.pressing(press, inputs, enabled, pushed, now);
             if *press == Press::Pushed && s.finger.is_some() {
                 // Resting where it is for a moment once the stick lets go.
                 s.rest_since = if m > 0.0 { None } else { s.rest_since.or(Some(now)) };
@@ -570,6 +581,9 @@ fn step_binding(
         }
         Action::Pointer { stick, center, half, touch, toggle, style, speed, follow } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
+            let digital = matches!(stick, Stick::Dpad | Stick::Keys { .. });
+            let follow = if digital { follow.or(Some(KEY_FOLLOW)) } else { *follow };
+            let (x, y) = if *style == PointerStyle::Cursor { key_ramp(s, stick, (x, y), now) } else { (x, y) };
             let c = view.shown(*center);
             let (hw, hh) = (half[0].max(0.01), half[1].max(0.01));
             let at = match style {
@@ -624,6 +638,21 @@ fn step_binding(
 }
 
 /// Advance a swipe or flick under way: down at its start, along the line, up at its end.
+/// A D-pad or keys stick's push, built up from `KEY_START` over `KEY_RAMP` while held; an analog stick's as it is.
+fn key_ramp(s: &mut State, stick: &Stick, (x, y): (f32, f32), now: Instant) -> (f32, f32) {
+    if !matches!(stick, Stick::Dpad | Stick::Keys { .. }) {
+        return (x, y);
+    }
+    if x == 0.0 && y == 0.0 {
+        s.keyed_since = None;
+        return (x, y);
+    }
+    let since = *s.keyed_since.get_or_insert(now);
+    let t = (now.saturating_duration_since(since).as_secs_f32() / KEY_RAMP.as_secs_f32()).min(1.0);
+    let k = KEY_START + (1.0 - KEY_START) * t;
+    (x * k, y * k)
+}
+
 /// A stick binding's tap button: on its press, lift the binding's finger, tap `at` (a second finger on a game's
 /// stick or look area would confuse it), then leave the finger to land again. True while the tap is under way: the
 /// binding does nothing else meanwhile.
@@ -1131,6 +1160,63 @@ mod tests {
             press,
             tap,
         }])
+    }
+
+    #[test]
+    fn keys_looking_start_slow_and_build_to_full_speed() {
+        let mut p = look(Press::Pushed, None);
+        if let Action::Look { stick, half, speed, .. } = &mut p.bindings[0].action {
+            *stick = Stick::wasd();
+            *half = [0.5, 0.5];
+            // Slow enough not to reach the edge (and land again) in the time.
+            *speed = 0.2;
+        }
+        let (mut m, v, t0) = (Mapper::default(), view(), Instant::now());
+        let d: HashSet<String> = ["D".to_string()].into();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let x = |m: &Mapper| m.states[0].finger.map(|f| f.0);
+        m.step(&p, &Inputs { pad: &Merged::default(), keys: &d }, &v, at(0));
+        let start = x(&m).unwrap();
+        // The first 50 ms against 50 ms once it's built up: a tap moves the camera a little.
+        let mut last = start;
+        let mut early = 0.0;
+        for ms in (10..=400).step_by(10) {
+            m.step(&p, &Inputs { pad: &Merged::default(), keys: &d }, &v, at(ms));
+            let now = x(&m).unwrap();
+            if ms == 50 {
+                early = now - start;
+            }
+            if ms == 350 {
+                last = now;
+            }
+        }
+        let late = x(&m).unwrap() - last;
+        assert!(early > 0.0 && late > early * 1.8, "{early} {late}");
+    }
+
+    #[test]
+    fn keys_glide_a_centered_pointer_set_to_jump() {
+        let p = preset(vec![Action::Pointer {
+            stick: Stick::arrows(),
+            center: Point::CENTER,
+            half: [0.5, 0.5],
+            touch: Input::Key("Space".into()),
+            toggle: false,
+            style: PointerStyle::Centered,
+            speed: 0.9,
+            follow: None,
+        }]);
+        let (mut m, v, t0) = (Mapper::default(), view(), Instant::now());
+        let none = HashSet::new();
+        let right: HashSet<String> = ["ArrowRight".to_string()].into();
+        m.step(&p, &Inputs { pad: &Merged::default(), keys: &none }, &v, t0);
+        let out = m.step(&p, &Inputs { pad: &Merged::default(), keys: &right }, &v, t0 + Duration::from_millis(16));
+        let (u, _) = m.states[0].pointer.unwrap();
+        assert!(u > 0.5 && u < 0.6 && out.busy, "{u}");
+        for ms in (32..=400).step_by(16) {
+            m.step(&p, &Inputs { pad: &Merged::default(), keys: &right }, &v, t0 + Duration::from_millis(ms));
+        }
+        assert!((m.states[0].pointer.unwrap().0 - 1.0).abs() < 1e-4);
     }
 
     #[test]
