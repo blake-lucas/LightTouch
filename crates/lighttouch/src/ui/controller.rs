@@ -1198,6 +1198,7 @@ fn templates() -> Vec<(&'static str, &'static str, fn() -> Action)> {
             toggle: false,
             style: PointerStyle::Centered,
             speed: 0.9,
+            follow: Some(4.0),
         }),
         (FLICK, "Flick a stick to swipe", || Action::Flick { stick: Stick::Right, center: Point::CENTER, length: 0.3 }),
         (TILT, "Tilt the device with a stick", || Action::Tilt { stick: Stick::Left, strength: 1.0 }),
@@ -1244,7 +1245,7 @@ fn summary(binding: &Binding, kind: PadKind) -> String {
             format!("{} looks around{press}{tap}", stick.label())
         }
         Action::Pointer { stick, touch, toggle, style, .. } => {
-            let how = if *style == PointerStyle::Centered { "returns to centre" } else { "stays where it's left" };
+            let how = if *style == PointerStyle::Centered { "returns to center" } else { "stays where it's left" };
             let touches = if *toggle { "toggles the touch" } else { "touches" };
             format!("{} points ({how}), {} {touches}", stick.label(), input_text(touch, kind))
         }
@@ -1439,7 +1440,7 @@ fn binding_settings(
                 ui.add(egui::Slider::new(length, 0.05..=0.8).show_value(false));
             });
         }
-        Action::Pointer { stick, style, speed, half, center, touch, toggle } => {
+        Action::Pointer { stick, style, speed, follow, half, center, touch, toggle } => {
             stick_row(ui, p, row, stick);
             row(ui, "Touch with", &mut |ui| {
                 if input_cap(ui, p, &input_text(touch, kind)).clicked() {
@@ -1452,12 +1453,25 @@ fn binding_settings(
                     ui,
                     p,
                     style,
-                    &[(PointerStyle::Centered, "Returns to centre"), (PointerStyle::Cursor, "Stays put")],
+                    &[(PointerStyle::Centered, "Returns to center"), (PointerStyle::Cursor, "Stays put")],
                 );
             });
             if *style == PointerStyle::Cursor {
                 row(ui, "Speed", &mut |ui| {
                     ui.add(egui::Slider::new(speed, 0.2..=3.0).show_value(false));
+                });
+            } else {
+                // All the way right: no glide, the pointer jumps to where the stick points.
+                const INSTANT: f32 = 12.0;
+                row(ui, "Speed", &mut |ui| {
+                    let mut v = follow.unwrap_or(INSTANT);
+                    ui.add(
+                        egui::Slider::new(&mut v, 0.5..=INSTANT)
+                            .logarithmic(true)
+                            .show_value(false),
+                    )
+                    .on_hover_text("How fast the pointer glides to where the stick points and back (all the way right: at once)");
+                    *follow = (v < INSTANT).then_some(v);
                 });
             }
             row(ui, "Area", &mut |ui| {

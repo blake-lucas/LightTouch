@@ -160,7 +160,12 @@ impl Gamepads {
 
     /// The preset in use was edited: its fingers may no longer belong to anything.
     pub fn changed(&mut self, session: Option<&mut Session>) {
-        self.release(session);
+        // Fingers go; the device's lean stays (a removed Motion binding levels on the next step).
+        let view = self.view.unwrap_or(View { rotation: Default::default(), turned: false, aspect: 1.0 });
+        let out = self.mapper.release_fingers(self.active.and_then(|i| self.presets.get(i)), &view);
+        if let Some(session) = session {
+            send(session, out);
+        }
         if let Some(i) = self.active {
             self.save(i);
         }
@@ -192,11 +197,20 @@ impl Gamepads {
         self.follow_app(session);
         let pads = self.shared.lock().unwrap().pads.clone();
         self.note_motion(&pads, keys, listening, running, session);
-        let Some(index) = self.active.filter(|_| listening && running && !self.editing) else {
+        let Some(index) = self.active.filter(|_| listening && running) else {
             self.release(Some(session));
             return false;
         };
         let merged = Merged::from(&pads);
+        if self.editing {
+            // The mouse places the bindings; the controller's motion still reaches a running game.
+            let out =
+                self.mapper.step_motion(&self.presets[index], &Inputs { pad: &merged, keys }, &view, Instant::now());
+            self.motion_active = out.motion.is_some();
+            let busy = out.busy;
+            send(session, out);
+            return busy;
+        }
         let out = self.mapper.step(&self.presets[index], &Inputs { pad: &merged, keys }, &view, Instant::now());
         self.motion_active = out.motion.is_some();
         let held = merged.buttons != 0 || merged.axes.iter().any(|a| a.abs() > 0.05) || !keys.is_empty();
@@ -226,8 +240,6 @@ impl Gamepads {
                 "not sent: this device has no accelerometer".to_string()
             } else if !listening {
                 "not sent: LightTouch isn't in front (\"In the background\" is off)".to_string()
-            } else if self.editing {
-                "not sent: editing the layout".to_string()
             } else if let Some(pad) = sensing {
                 let held = binding.with.as_ref().is_none_or(|w| (Inputs { pad: &merged, keys }).held(w));
                 if held {

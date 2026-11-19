@@ -366,6 +366,10 @@ pub enum Action {
         /// Cursor style: screen widths a second at full tilt.
         #[serde(default = "default_speed")]
         speed: f32,
+        /// Centered style: how fast the pointer glides to the stick's spot and back, in screen widths a second;
+        /// none jumps straight there (as presets from before this setting do).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follow: Option<f32>,
     },
     /// Flicking the stick swipes from `center` toward it (four directions), `length` long.
     Flick { stick: Stick, center: Point, length: f32 },
@@ -476,6 +480,7 @@ impl Preset {
                 toggle: false,
                 style: PointerStyle::Centered,
                 speed: default_speed(),
+                follow: None,
             }),
             Binding::new(Action::Tap {
                 input: Input::Pad(PadButton::South),

@@ -232,8 +232,22 @@ impl Mapper {
         self.states.get(index).is_some_and(|s| s.finger.is_some() || s.pressed || s.stroke.is_some())
     }
 
-    /// Lift every finger and release every button the preset holds (it changed, or input stopped).
+    /// Lift every finger and release every button the preset holds (it changed, or input stopped), and level the
+    /// device if its motion was leaning it.
     pub fn release(&mut self, preset: Option<&Preset>, view: &View) -> Output {
+        let mut out = self.release_fingers(preset, view);
+        if self.tilting || self.sensing {
+            self.tilting = false;
+            self.sensing = false;
+            self.tilt = Tilt::default();
+            out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
+        }
+        out
+    }
+
+    /// Lift every finger and release every button the preset holds, leaving the device's motion as it is (an edit
+    /// to the preset: a Motion binding removed levels on the next step).
+    pub fn release_fingers(&mut self, preset: Option<&Preset>, view: &View) -> Output {
         let mut out = Output::default();
         for (i, s) in self.states.iter_mut().enumerate() {
             if let Some((u, v)) = s.finger.take() {
@@ -246,12 +260,15 @@ impl Mapper {
             }
         }
         self.states.clear();
-        if self.tilting || self.sensing {
-            self.tilting = false;
-            self.sensing = false;
-            self.tilt = Tilt::default();
-            out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
-        }
+        out
+    }
+
+    /// While the layout is edited: no fingers or buttons (the mouse places the bindings), but the controller's
+    /// motion still tilts the device, so a running game isn't jolted level.
+    pub fn step_motion(&mut self, preset: &Preset, inputs: &Inputs, view: &View, now: Instant) -> Output {
+        self.last = Some(now);
+        let mut out = self.release_fingers(Some(preset), view);
+        self.motion(preset, inputs, view, None, now, &mut out);
         out
     }
 
@@ -284,6 +301,23 @@ impl Mapper {
             );
         }
 
+        self.motion(preset, inputs, view, tilt, now, &mut out);
+        out.busy |= self
+            .states
+            .iter()
+            .any(|s| s.stroke.is_some() || s.repeat_at.is_some() || s.rest_since.is_some() || s.regrip_at.is_some());
+        out
+    }
+
+    fn motion(
+        &mut self,
+        preset: &Preset,
+        inputs: &Inputs,
+        view: &View,
+        tilt: Option<(f64, f64)>,
+        now: Instant,
+        out: &mut Output,
+    ) {
         // Motion: the controller's sensors first (while its hold button is, if it has one), then a stick's tilt,
         // settling back to level when it lets go. Sensors that pause while the binding is engaged leave the device
         // where they had it (the engine holds the last sample): levelling then was a recentre mid-turn.
@@ -309,11 +343,6 @@ impl Mapper {
             out.motion = Some(([0.0, 0.0, GRAVITY], [0.0; 3]));
             out.busy = true;
         }
-        out.busy |= self
-            .states
-            .iter()
-            .any(|s| s.stroke.is_some() || s.repeat_at.is_some() || s.rest_since.is_some() || s.regrip_at.is_some());
-        out
     }
 
     /// The device's motion from the controller's: as if the controller were the device lying face up on a table with
@@ -509,12 +538,29 @@ fn step_binding(
                 Some(_) => {}
             }
         }
-        Action::Pointer { stick, center, half, touch, toggle, style, speed } => {
+        Action::Pointer { stick, center, half, touch, toggle, style, speed, follow } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             let c = view.shown(*center);
             let (hw, hh) = (half[0].max(0.01), half[1].max(0.01));
             let at = match style {
-                PointerStyle::Centered => (c.0 + x * hw, c.1 + y * hh),
+                PointerStyle::Centered => {
+                    let to = (c.0 + x * hw, c.1 + y * hh);
+                    match (follow, s.pointer) {
+                        // Gliding toward the stick's spot at `follow` screen widths a second (and back to the center
+                        // when let go), in widths both ways so it moves as fast up as across.
+                        (Some(follow), Some((u, v))) => {
+                            let (dx, dy) = (to.0 - u, (to.1 - v) / view.aspect);
+                            let (d, step) = (dx.hypot(dy), follow * dt);
+                            if d <= step {
+                                to
+                            } else {
+                                out.busy = true;
+                                (u + dx * step / d, v + dy * step / d * view.aspect)
+                            }
+                        }
+                        _ => to,
+                    }
+                }
                 PointerStyle::Cursor => {
                     let (u, v) = s.pointer.unwrap_or(c);
                     let step = speed * dt;
@@ -596,6 +642,61 @@ mod tests {
         // Far edge raised: the reaction tips toward -z, away from the player.
         let (_, pitch) = lean_of([0.0, GRAVITY as f32 * 0.866, -(GRAVITY as f32) * 0.5]);
         assert!((pitch.to_degrees() - 30.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn a_centered_pointer_with_a_speed_glides_to_the_stick_and_back() {
+        let p = preset(vec![Action::Pointer {
+            stick: Stick::Right,
+            center: Point::CENTER,
+            half: [0.5, 0.5],
+            touch: Input::Pad(PadButton::RightTrigger),
+            toggle: false,
+            style: PointerStyle::Centered,
+            speed: 0.9,
+            follow: Some(2.0),
+        }]);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let rest = stick_at(0.0, 0.0, 0);
+        let right = stick_at(1.0, 0.0, 0);
+        m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(0));
+        // Two widths a second: a tenth of a second in, a fifth of the way from the center to the right edge.
+        let out = m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, at(100));
+        let (u, _) = m.states[0].pointer.unwrap();
+        assert!((u - 0.7).abs() < 1e-4 && out.busy, "{u}");
+        for ms in (110..=400).step_by(10) {
+            m.step(&p, &Inputs { pad: &right, keys: &keys }, &v, at(ms));
+        }
+        assert!((m.states[0].pointer.unwrap().0 - 1.0).abs() < 1e-4);
+        // Let go: it glides back, still busy until it's there.
+        assert!(m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(410)).busy);
+        for ms in (420..=700).step_by(10) {
+            m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(ms));
+        }
+        assert!((m.states[0].pointer.unwrap().0 - 0.5).abs() < 1e-4);
+        assert!(!m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(710)).busy);
+    }
+
+    #[test]
+    fn editing_the_layout_keeps_the_controllers_motion_but_lifts_fingers() {
+        let p = preset(vec![
+            Action::Motion { sensitivity: 1.0 },
+            Action::Tap { input: Input::Pad(PadButton::South), at: Point::CENTER, mode: TapMode::Hold },
+        ]);
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let lean = [-(GRAVITY as f32) * 0.5, GRAVITY as f32 * 0.866, 0.0];
+        let pad = Merged { buttons: PadButton::South.bit(), accel: Some(lean), ..Default::default() };
+        let playing = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0);
+        assert_eq!(playing.contacts.len(), 1);
+        let editing = m.step_motion(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(10));
+        assert_eq!(editing.contacts.len(), 1, "the tap's finger lifts");
+        assert_eq!(editing.motion, playing.motion, "the lean carries on");
+        let again = m.step_motion(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(20));
+        assert!(again.contacts.is_empty() && again.motion == playing.motion);
+        // An edit to the preset lifts fingers without levelling.
+        m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(30));
+        assert!(m.release_fingers(Some(&p), &v).motion.is_none());
     }
 
     #[test]
@@ -688,6 +789,7 @@ mod tests {
             toggle: false,
             style: PointerStyle::Centered,
             speed: 1.0,
+            follow: None,
         }]);
         let mut m = Mapper::default();
         let keys = HashSet::new();
