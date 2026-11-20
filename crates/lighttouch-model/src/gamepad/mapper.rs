@@ -34,11 +34,9 @@ const KEY_START: f32 = 0.3;
 const KEY_RAMP: Duration = Duration::from_millis(300);
 /// A centered pointer set to jump at once glides at this speed when keys steer it (screen widths a second).
 const KEY_FOLLOW: f32 = 4.0;
-/// A stick binding's tap: how long the finger stays down at least (a quick click still registers), and how long it
-/// stays up around the tap, so a game that reads its touches once a frame sees every lift, even one held to 30 frames
-/// a second that drops to 20 (Battle Bears Zombies missed 35 ms).
+/// A stick binding's tap: how long the finger stays down at least, so a quick click still registers (how long it stays
+/// up around the tap is the binding's `tap_lift`).
 const STICK_TAP: Duration = Duration::from_millis(60);
-const TAP_GAP: Duration = Duration::from_millis(70);
 /// A joystick's finger glides to where the stick points at one reach in this long (a stick let go in a frame would
 /// otherwise jump the finger back to the centre, which some games' sticks don't settle from), at speed 1.
 const JOYSTICK_GLIDE: f32 = 0.05;
@@ -554,10 +552,10 @@ fn step_binding(
             }
             stroke(s, now, &mut put, out);
         }
-        Action::Joystick { stick, center, radius, press, tap, speed } => {
+        Action::Joystick { stick, center, radius, press, tap, tap_lift, speed } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             let c = view.shown(*center);
-            if tapping(s, tap, inputs, enabled, c, now, &mut put, out) {
+            if tapping(s, tap, lift(*tap_lift), inputs, enabled, c, now, &mut put, out) {
                 return;
             }
             if !s.pressing(press, inputs, enabled, x.hypot(y), now) {
@@ -587,7 +585,7 @@ fn step_binding(
                 out.busy = true;
             }
         }
-        Action::Look { stick, center, half, speed, invert_y, press, tap, mouse, mouse_speed, .. } => {
+        Action::Look { stick, center, half, speed, invert_y, press, tap, tap_lift, mouse, mouse_speed, .. } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
             // Whether the finger is down goes by the push itself; the pace, by keys' built-up push.
             let mut pushed = x.hypot(y);
@@ -612,7 +610,7 @@ fn step_binding(
             };
             // The tap, where the look finger was.
             let at = s.finger.unwrap_or(c);
-            if tapping(s, tap, inputs, enabled, at, now, &mut put, out) {
+            if tapping(s, tap, lift(*tap_lift), inputs, enabled, at, now, &mut put, out) {
                 s.regrip_at = None;
                 return;
             }
@@ -755,15 +753,21 @@ fn key_ramp(s: &mut State, stick: &Stick, (x, y): (f32, f32), now: Instant) -> (
     (x * k, y * k)
 }
 
-/// A stick binding's tap button, as a finger: its press lifts the binding's finger and, `TAP_GAP` later, puts one
-/// down on `at` (a second finger on a game's stick or look area would confuse it); letting go lifts it, though not
-/// before `STICK_TAP`, so a quick click still registers; `TAP_GAP` after that, the binding's own finger may land again.
+/// A stick binding's tap lift, as set (within reason).
+fn lift(ms: u32) -> Duration {
+    Duration::from_millis(ms.clamp(10, 500) as u64)
+}
+
+/// A stick binding's tap button, as a finger: its press lifts the binding's finger and, `gap` later, puts one down on
+/// `at` (a second finger on a game's stick or look area would confuse it); letting go lifts it, though not before
+/// `STICK_TAP`, so a quick click still registers; `gap` after that, the binding's own finger may land again.
 /// A click while the tap is down taps once more after it, however many came meanwhile, so fast clicks never queue up
 /// taps that go on after the clicking stops. True while the tap is under way: the binding does nothing else meanwhile.
 #[allow(clippy::too_many_arguments)]
 fn tapping(
     s: &mut State,
     tap: &Option<Input>,
+    gap: Duration,
     inputs: &Inputs,
     enabled: bool,
     at: (f32, f32),
@@ -779,7 +783,7 @@ fn tapping(
             None => {
                 put(s, None, out);
                 s.tap_at = at;
-                s.tap = Some(TapPhase::Landing(now + TAP_GAP));
+                s.tap = Some(TapPhase::Landing(now + gap));
             }
             // Lifted a moment ago: down again once the lift has registered, where it was.
             Some(TapPhase::Resting(until)) => s.tap = Some(TapPhase::Landing(until)),
@@ -801,9 +805,9 @@ fn tapping(
             put(s, None, out);
             // A click that came while it was down taps once more (if it's still held, that tap lasts while it is).
             s.tap = Some(if std::mem::take(&mut s.tap_again) {
-                TapPhase::Landing(now + TAP_GAP)
+                TapPhase::Landing(now + gap)
             } else {
-                TapPhase::Resting(now + TAP_GAP)
+                TapPhase::Resting(now + gap)
             });
         }
         Some(TapPhase::Resting(until)) if now >= until => {
@@ -839,7 +843,7 @@ fn stroke(
 
 #[cfg(test)]
 mod tests {
-    use super::super::preset::{Binding, DeviceButton, PadButton};
+    use super::super::preset::{Binding, DeviceButton, PadButton, TAP_LIFT_MS};
     use super::*;
     use crate::tilt::{GRAVITY, rest};
 
@@ -874,6 +878,7 @@ mod tests {
             radius: 0.15,
             press: Press::Pushed,
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
@@ -1109,6 +1114,7 @@ mod tests {
             radius: 0.1,
             press: Press::Pushed,
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         }]);
         let mut m = Mapper::default();
@@ -1240,6 +1246,7 @@ mod tests {
             radius: 0.1,
             press: Press::Pushed,
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
@@ -1262,6 +1269,7 @@ mod tests {
             radius: 0.1,
             press: Press::toggle_for(&Stick::Right),
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         }]);
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
@@ -1287,6 +1295,7 @@ mod tests {
             radius: 0.1,
             press,
             tap,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         }])
     }
@@ -1349,6 +1358,7 @@ mod tests {
                 radius: 0.1,
                 press: Press::Pushed,
                 tap: None,
+                tap_lift: TAP_LIFT_MS,
                 speed,
             }]);
             let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
@@ -1403,6 +1413,7 @@ mod tests {
             invert_y: false,
             press,
             tap,
+            tap_lift: TAP_LIFT_MS,
             mouse: false,
             mouse_speed: 1.0,
             free: None,
@@ -1578,7 +1589,7 @@ mod tests {
 
     #[test]
     fn a_look_tap_lifts_the_finger_taps_where_it_was_and_looks_on() {
-        let (gap, least) = (steps(TAP_GAP), steps(STICK_TAP));
+        let (gap, least) = (steps(lift(TAP_LIFT_MS)), steps(STICK_TAP));
         // Looking from step 0; a click on steps 10 and 11.
         let all = look_taps(|i| (10..12).contains(&i), 100);
         let (downs, ups) = downs_ups(&all);
@@ -1594,15 +1605,36 @@ mod tests {
     }
 
     #[test]
+    fn the_tap_lift_is_the_bindings_own() {
+        let mut p = look(Press::Pushed, Some(Input::Pad(PadButton::RightShoulder)));
+        if let Action::Look { tap_lift, .. } = &mut p.bindings[0].action {
+            *tap_lift = 120;
+        }
+        let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
+        let mut down_at = None;
+        for i in 0..40u64 {
+            let pad = stick_at(1.0, 0.0, if i == 10 { PadButton::RightShoulder.bit() } else { 0 });
+            let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(8 * i));
+            if i > 10 && phases(&out).contains(&DOWN) {
+                down_at.get_or_insert(i as usize);
+            }
+        }
+        assert_eq!(down_at, Some(10 + steps(Duration::from_millis(120))));
+        // Older presets have none, and get the usual one.
+        let json = serde_json::to_string(&look(Press::Pushed, None)).unwrap();
+        assert!(!json.contains("tap_lift"));
+    }
+
+    #[test]
     fn a_held_tap_stays_down_until_let_go() {
         let all = look_taps(|i| (10..60).contains(&i), 100);
         let (downs, ups) = downs_ups(&all);
-        assert_eq!((downs[1], ups[1]), (10 + steps(TAP_GAP), 60), "{all:?}");
+        assert_eq!((downs[1], ups[1]), (10 + steps(lift(TAP_LIFT_MS)), 60), "{all:?}");
     }
 
     #[test]
     fn fast_clicks_tap_once_more_at_most_and_none_is_lost_between_taps() {
-        let (gap, least) = (steps(TAP_GAP), steps(STICK_TAP));
+        let (gap, least) = (steps(lift(TAP_LIFT_MS)), steps(STICK_TAP));
         let first = 10 + gap;
         // Three clicks while the first tap is down make one more tap, not three.
         let clicks = [10, first + 1, first + 3, first + 5];

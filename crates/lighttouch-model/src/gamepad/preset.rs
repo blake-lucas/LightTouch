@@ -351,6 +351,9 @@ pub enum Action {
         /// A button that lifts the finger and taps the stick's centre (games that fire with a tap on the stick).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tap: Option<Input>,
+        /// How long (ms) the finger stays up before and after a tap, so the game sees it lift.
+        #[serde(default = "tap_lift", skip_serializing_if = "is_tap_lift")]
+        tap_lift: u32,
         /// How fast the finger follows the stick: at 1 it crosses a full reach in 50 ms; lower for games whose stick
         /// loses a finger dragged fast.
         #[serde(default = "one", skip_serializing_if = "is_one")]
@@ -372,6 +375,9 @@ pub enum Action {
         /// A button that taps where the finger is (games that fire with a tap on the look area).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tap: Option<Input>,
+        /// How long (ms) the finger stays up before and after a tap, so the game sees it lift.
+        #[serde(default = "tap_lift", skip_serializing_if = "is_tap_lift")]
+        tap_lift: u32,
         /// The mouse looks too, while it's locked to the game (a click on the screen locks it, Escape lets go).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         mouse: bool,
@@ -426,6 +432,18 @@ fn default_speed() -> f32 {
 
 fn one() -> f32 {
     1.0
+}
+
+/// A stick binding's tap lift, unless set: a game held to 30 frames a second that drops to 20 still sees each lift
+/// (Battle Bears Zombies missed 35 ms).
+pub const TAP_LIFT_MS: u32 = 70;
+
+fn tap_lift() -> u32 {
+    TAP_LIFT_MS
+}
+
+fn is_tap_lift(ms: &u32) -> bool {
+    *ms == TAP_LIFT_MS
 }
 
 fn is_one(v: &f32) -> bool {

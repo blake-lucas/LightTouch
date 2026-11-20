@@ -8,7 +8,7 @@ use eframe::egui::{
 use lighttouch_model::Model;
 use lighttouch_model::gamepad::mapper::View;
 use lighttouch_model::gamepad::preset::{
-    Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Press, Stick, TapMode,
+    Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Press, Stick, TAP_LIFT_MS, TapMode,
 };
 use lighttouch_model::gamepad::sdl::{Backend, Pad, PadKind, Sensors};
 use std::collections::HashSet;
@@ -1412,6 +1412,7 @@ fn templates() -> Vec<fn() -> Action> {
             radius: 0.15,
             press: Press::toggle_for(&Stick::Left),
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             speed: 1.0,
         },
         || Action::Look {
@@ -1422,6 +1423,7 @@ fn templates() -> Vec<fn() -> Action> {
             invert_y: false,
             press: Press::Pushed,
             tap: None,
+            tap_lift: TAP_LIFT_MS,
             mouse: false,
             mouse_speed: 1.0,
             free: None,
@@ -1715,7 +1717,7 @@ fn binding_settings(
                 number_slider(ui, SLIDER, egui::Slider::new(ms, 40..=800).suffix(" ms")).on_hover_text(tip);
             });
         }
-        Action::Joystick { stick, radius, press, tap, speed, .. } => {
+        Action::Joystick { stick, radius, press, tap, tap_lift, speed, .. } => {
             let was = stick.clone();
             if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
@@ -1745,9 +1747,12 @@ fn binding_settings(
                 kind,
                 &mut || *capture = Some((i, Slot::Tap)),
             );
+            if tap.is_some() {
+                more.push(More::TapLift(tap_lift));
+            }
             more.push(More::Shown);
         }
-        Action::Look { stick, half, center, speed, invert_y, press, tap, mouse, mouse_speed, free } => {
+        Action::Look { stick, half, center, speed, invert_y, press, tap, tap_lift, mouse, mouse_speed, free } => {
             let was = stick.clone();
             if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
@@ -1814,6 +1819,9 @@ fn binding_settings(
                     kind,
                     &mut || *capture = Some((i, Slot::Free)),
                 );
+            }
+            if tap.is_some() {
+                more.push(More::TapLift(tap_lift));
             }
             more.push(More::Area { half, center, whole: false });
             more.push(More::Shown);
@@ -1953,6 +1961,13 @@ fn binding_settings(
     if let Some(w) = &binding.with {
         set.push(format!("only while holding {}", w.label(kind)));
     }
+    for item in &more {
+        if let More::TapLift(ms) = item
+            && **ms != TAP_LIFT_MS
+        {
+            set.push(format!("tap lift {ms} ms"));
+        }
+    }
     if binding.hidden {
         set.push("not shown on screen".to_string());
     }
@@ -2009,6 +2024,21 @@ fn binding_settings(
                     ui.label(widgets::muted(p, "or drag its corners in Edit layout").size(12.0));
                 });
             }
+            More::TapLift(ms) => {
+                let tip = "How long the finger stays up before and after a tap, so the game sees it lift and land \
+                           again. Raise it if fast taps go missing (a game at 30 frames a second needs more than 33 \
+                           ms); lower it to tap faster";
+                row(ui, "Tap lift", tip, &mut |ui| {
+                    number_slider(ui, SLIDER, egui::Slider::new(ms, 20..=200).suffix(" ms")).on_hover_text(tip);
+                    if *ms != TAP_LIFT_MS
+                        && widgets::text_button(ui, p, "Reset")
+                            .on_hover_text(format!("Back to {TAP_LIFT_MS} ms"))
+                            .clicked()
+                    {
+                        *ms = TAP_LIFT_MS;
+                    }
+                });
+            }
             More::Shown => {
                 row(ui, "Show on screen", SHOWN_TIP, &mut |ui| {
                     let mut shown = !binding.hidden;
@@ -2032,6 +2062,8 @@ enum More<'a> {
     Area { half: &'a mut [f32; 2], center: &'a mut Point, whole: bool },
     /// Drawing the spot while playing.
     Shown,
+    /// How long a stick binding's finger stays up around its tap.
+    TapLift(&'a mut u32),
 }
 
 /// A stick binding's press setting: while pushed, while a button is held, or toggled by one (the stick's click unless
