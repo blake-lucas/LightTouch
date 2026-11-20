@@ -341,9 +341,13 @@ jobs:
       - name: Homebrew and Rust
         run: |
           brew install ninja meson jq pkg-config glib pixman libslirp nettle openssl@3 sdl2 python@3.13 > /dev/null
-          command -v rustup > /dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; }
+          # The macos step looks for cargo in ~/.cargo/bin, as on the development Mac.
+          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"; echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
+          export CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup"
+          [ -x "$HOME/.cargo/bin/rustup" ] || curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
           "$HOME/.cargo/bin/rustup" toolchain install "$RUST_VERSION" --profile minimal
           "$HOME/.cargo/bin/rustup" default "$RUST_VERSION"
+          "$HOME/.cargo/bin/cargo" --version
           xcodebuild -version
       - name: Engine subprojects
         working-directory: release-${{ env.VER }}/engine
