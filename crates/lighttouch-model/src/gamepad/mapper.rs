@@ -410,10 +410,14 @@ impl Mapper {
         let g = gyro.map(|g| g.map(|w| w as f64)).unwrap_or([0.0; 3]);
         let (roll, pitch) = lean_of(accel);
         self.lean = Some((roll, pitch));
-        // Its far edge up tips the device's top toward the player.
-        let (r, p) = ((roll - self.level.0) * sensitivity, (pitch - self.level.1) * sensitivity);
+        // Its far edge up tips the device's top away from the player, its screen turning up, as a board held flat
+        // would: the far edge raised rolls a Labyrinth ball toward the bottom. That mirrors the screen's z
+        // (lean(r, -p) = diag(1, 1, -1) lean(r, p)), so the gyro is mirrored to match (-x, -y, z) and the two keep
+        // agreeing (d(a)/dt = -w x a).
+        let (r, p) = ((roll - self.level.0) * sensitivity, -(pitch - self.level.1) * sensitivity);
         let (acceleration, _) = crate::tilt::lean(r, p, 0.0, 0.0);
-        (rotation.to_guest_axes(acceleration), rotation.to_guest_axes(g.map(|w| w * sensitivity)))
+        let w = [-g[0], -g[1], g[2]].map(|w| w * sensitivity);
+        (rotation.to_guest_axes(acceleration), rotation.to_guest_axes(w))
     }
 }
 
@@ -948,6 +952,17 @@ mod tests {
                 assert!(da.iter().zip(want).all(|(x, y)| (x - y).abs() < 0.05 * GRAVITY), "{r:?}: {da:?} vs {want:?}");
             }
         }
+    }
+
+    #[test]
+    fn raising_the_controllers_far_edge_turns_the_screen_up() {
+        // Flat, then its far edge (the triggers) raised 20 degrees: gravity's reaction leans toward its near edge (+z).
+        let t = 20f64.to_radians();
+        let raised = [0.0, (GRAVITY * t.cos()) as f32, (-GRAVITY * t.sin()) as f32];
+        let mut m = Mapper::default();
+        let (a, _) = m.motion_from_sensors(raised, None, 1.0, Rotation::Portrait);
+        // The device's top goes away from the player: its screen faces up a little (+z as shown), like a board.
+        assert!(a[2] > 0.3 * GRAVITY && a[1] > 0.9 * GRAVITY, "{a:?}");
     }
 
     #[test]
