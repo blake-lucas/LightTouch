@@ -153,13 +153,19 @@ packages on GitHub's runners, from the commit it runs on, an engine ref (`ci/rel
 `guest-tools` artifact of a Guest packages run (`guest-package.yml`; the newest successful one unless given). Each job
 lays out `release-VER/{app,engine}` as here and runs `build-release.sh`'s own steps:
 
-| Job | Runner | Steps | Artifact |
-| --- | --- | --- | --- |
-| `android` | ubuntu-24.04 | `android` (`LT_CHECK_VERSION=false`, `LT_GRADLE_OFFLINE=false`) | `LightTouch-vVER-android-arm64` |
-| `desktop` | ubuntu-24.04 | `windows`, `linux`, `desktop` | `LightTouch-vVER-Linux-x86_64`, `LightTouch-vVER-Windows-x86_64` |
-| `macos` | `xcode-27` (Apple Silicon) | `macos` with `LT_MAC=local` | `LightTouch-vVER-macOS-arm64` |
+| Job | Runner | Steps | Artifact | Time (no cache) |
+| --- | --- | --- | --- | --- |
+| `android` | ubuntu-24.04 | `android` (`LT_CHECK_VERSION=false`, `LT_GRADLE_OFFLINE=false`) | `LightTouch-vVER-android-arm64` | 12 min |
+| `desktop` | ubuntu-24.04 | `windows`, `linux`, `desktop` | `LightTouch-vVER-Linux-x86_64`, `LightTouch-vVER-Windows-x86_64` | 23 min |
+| `macos` | `xcode-27` (Apple Silicon) | `macos` with `LT_MAC=local` | `LightTouch-vVER-macOS-arm64` | 13 min |
 
-VER is Cargo.toml's version plus `-ci.RUN` unless given. For a release, download the artifacts into
+Checked against the v0.0.14 packages built here (app abf572d4, engine 33b4ecfe69, guest tools serial 46): the
+AppImage and the Windows `.exe` hold the same files, the APK the same entries with the same guest tools (the native
+libraries differ only as rebuilds do), and LightTouch.app the same files as v0.0.13's plus SDL2.
+
+GitHub offers Run workflow (and `gh workflow run`) only once the file is on the default branch (main); until then, and
+for work on the workflow, pushing to a `ci/**` branch runs it with the defaults. Caches belong to the branch that made
+them (and main's are shared with every branch). VER is Cargo.toml's version plus `-ci.RUN` unless given. For a release, download the artifacts into
 `release-X.Y.Z/out` (`gh run download RUN -D …`) and run `finish` (and `publish`) here as usual.
 
 Where the inputs come from:
