@@ -305,6 +305,7 @@ jobs:
           LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
           LT_CHECK_VERSION: "false"
           LT_GRADLE_OFFLINE: "false"
+          LT_SOURCE_REFERENCE: https://github.com/${{ github.repository }}/tree/${{ github.sha }}
           JOBS: "4"
         run: |
           bash release-$VER/app/scripts/build-release.sh "$VER" android || {

@@ -96,7 +96,7 @@ step_android() {
     fi
     for f in armv6.itpack armv7.itpack it_seal; do need "$LT_GUEST_TOOLS/$f" "guest tools"; done
     QEMU_IOS="$R/engine" LT_GUEST_TOOLS="$LT_GUEST_TOOLS" LT_DEBUGGABLE=false \
-        LT_SOURCE_REFERENCE="https://github.com/blake-lucas/LightTouch/tree/$V" \
+        LT_SOURCE_REFERENCE="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$V}" \
         bash "$R/app/scripts/build.sh" --clean android
     local apk=$OUTD/LightTouch-$V-android-arm64.apk aapt
     cp "$R/app/build/android/LightTouch-debug.apk" "$apk"
