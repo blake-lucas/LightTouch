@@ -1915,7 +1915,7 @@ fn binding_settings(
                 number_slider(ui, SLIDER, egui::Slider::new(sensitivity, 0.3..=3.0).max_decimals(2).suffix("×"))
                     .on_hover_text(tip);
             });
-            let tip = "Hold the controller the way you play, then click Set level: that's the device at rest, upright as the screen shows it";
+            let tip = "Hold the controller the way you play, then click Set level: held that way, the device lies flat on a table. Without it, the controller lying flat is level";
             row(ui, "Level", tip, &mut |ui| {
                 let can = lean.is_some();
                 if widgets::tonal_enabled(ui, p, "Set level", can).on_hover_text(tip).clicked() {

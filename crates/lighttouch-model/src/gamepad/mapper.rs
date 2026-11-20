@@ -256,13 +256,16 @@ pub struct Mapper {
     sensing: bool,
     /// Until when level goes on being sent after the sensors stop (one sample could fall between the session's).
     leveling: Option<Instant>,
+    /// A Motion binding has a controller with motion sensors: level is then the controller's own, the device lying
+    /// flat (FLAT), not the app's upright rest, while it is held or not.
+    motion_present: bool,
     last: Option<Instant>,
 }
 
 impl Mapper {
     /// A binding moves the device, or holds it where the controller's sensors left it: nothing else should level it.
     pub fn holds_motion(&self) -> bool {
-        self.tilting || self.sensing
+        self.tilting || self.sensing || self.motion_present
     }
 
     /// Where pointer `index` is, and whether it is touching, for drawing its bubble.
@@ -285,9 +288,10 @@ impl Mapper {
     /// device if its motion was leaning it.
     pub fn release(&mut self, preset: Option<&Preset>, view: &View) -> Output {
         let mut out = self.release_fingers(preset, view);
-        if self.tilting || self.sensing {
+        if self.tilting || self.sensing || self.motion_present {
             self.tilting = false;
             self.sensing = false;
+            self.motion_present = false;
             self.tilt = Tilt::default();
             out.motion = Some((crate::tilt::rest(view.rotation), [0.0; 3]));
         }
@@ -375,6 +379,10 @@ impl Mapper {
             _ => None,
         });
         let was_sensing = std::mem::replace(&mut self.sensing, false);
+        let present = preset.bindings.iter().any(|b| matches!(b.action, Action::Motion { .. }))
+            && (inputs.pad.accel.is_some() || inputs.pad.sensors_quiet);
+        let was_present = std::mem::replace(&mut self.motion_present, present);
+        let level = if present { FLAT } else { crate::tilt::rest(view.rotation) };
         if let (Some(sensitivity), Some(accel)) = (motion, inputs.pad.accel) {
             out.motion = Some(self.motion_from_sensors(accel, inputs.pad.gyro, sensitivity as f64, view.rotation));
             self.sensing = true;
@@ -387,17 +395,20 @@ impl Mapper {
             self.tilting = !self.tilt.at_rest() || tilt.is_some_and(|t| t != (0.0, 0.0));
             out.motion = Some(sample);
             out.busy |= self.tilting;
-        } else if was_sensing || self.leveling.is_some_and(|t| now < t) {
-            self.leveling = self.leveling.filter(|_| !was_sensing).or(Some(now + Duration::from_millis(100)));
-            out.motion = Some((crate::tilt::rest(view.rotation), [0.0; 3]));
+        } else if was_sensing || was_present != present || self.leveling.is_some_and(|t| now < t) {
+            let fresh = was_sensing || was_present != present;
+            self.leveling = self.leveling.filter(|_| !fresh).or(Some(now + Duration::from_millis(100)));
+            out.motion = Some((level, [0.0; 3]));
             out.busy = true;
         }
     }
 
-    /// The device's motion from the controller's: the controller held level (as when "level" was set) is the device
-    /// upright as shown, rolling the controller rocks the device side to side as shown (like a steering wheel), and
-    /// tipping its far edge down tips the device's top away. SDL's axes for the controller (x right, y up, z toward
-    /// the player) are then the screen's as shown (x right, y up, z toward the viewer), turned into the guest's.
+    /// The device's motion from the controller's: the controller held level (flat, or as when "level" was set) is the
+    /// device lying flat on a table, face up, whichever way the screen is shown; rolling the controller lowers the
+    /// device's side as shown, and raising its far edge raises the device's top, as a board held flat would (a
+    /// Labyrinth ball rolls toward the bottom). SDL's axes for the controller (x right, y up out of its face, z toward
+    /// the player) are the flat device's x, z and -y as shown: the same turn for the accelerometer and the gyroscope,
+    /// so the two agree (d(a)/dt = -w x a), then turned into the guest's axes.
     fn motion_from_sensors(
         &mut self,
         accel: [f32; 3],
@@ -405,20 +416,25 @@ impl Mapper {
         sensitivity: f64,
         rotation: Rotation,
     ) -> ([f64; 3], [f64; 3]) {
-        // The controller is held like the screen as shown: its lean and turn are in those axes, and the guest's
-        // differ when the device is turned (a landscape game steered by rolling the controller).
         let g = gyro.map(|g| g.map(|w| w as f64)).unwrap_or([0.0; 3]);
         let (roll, pitch) = lean_of(accel);
         self.lean = Some((roll, pitch));
-        // Its far edge up tips the device's top away from the player, its screen turning up, as a board held flat
-        // would: the far edge raised rolls a Labyrinth ball toward the bottom. That mirrors the screen's z
-        // (lean(r, -p) = diag(1, 1, -1) lean(r, p)), so the gyro is mirrored to match (-x, -y, z) and the two keep
-        // agreeing (d(a)/dt = -w x a).
-        let (r, p) = ((roll - self.level.0) * sensitivity, -(pitch - self.level.1) * sensitivity);
-        let (acceleration, _) = crate::tilt::lean(r, p, 0.0, 0.0);
-        let w = [-g[0], -g[1], g[2]].map(|w| w * sensitivity);
+        let (r, p) = ((roll - self.level.0) * sensitivity, (pitch - self.level.1) * sensitivity);
+        // tilt::lean leans from upright; the same lean from lying flat is it tipped back a quarter turn.
+        let (up, _) = crate::tilt::lean(r, p, 0.0, 0.0);
+        let acceleration = flat_axes(up);
+        let w = flat_axes(g).map(|w| w * sensitivity);
         (rotation.to_guest_axes(acceleration), rotation.to_guest_axes(w))
     }
+}
+
+/// The device lying flat, face up: gravity's reaction out of its screen, whichever way the screen is shown.
+pub const FLAT: [f64; 3] = [0.0, 0.0, crate::tilt::GRAVITY];
+
+/// A vector in the controller's axes (or tilt::lean's upright device's), in the flat device's: (x, -z, y), a quarter
+/// turn about x.
+fn flat_axes(v: [f64; 3]) -> [f64; 3] {
+    [v[0], -v[2], v[1]]
 }
 
 /// A controller's lean from its accelerometer (SDL's axes: x right, y up, z toward the player), as the device's
@@ -896,20 +912,20 @@ mod tests {
             let v = View { rotation, turned: false, aspect: 1.5 };
             Mapper::default().step(&p, &Inputs { pad: &right_down, keys: &keys }, &v, Instant::now()).motion.unwrap()
         };
-        // Upright in portrait, rocked 30° clockwise: its right edge goes down (gravity's reaction toward -x, the
-        // rest still up its long axis), turning clockwise as seen (about -z).
+        // Flat in portrait, its right side lowered 30°: gravity's reaction toward -x, the rest out of the screen,
+        // turning about the device's long axis (+y).
         let (a, w) = lean(Rotation::Portrait);
         let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-2);
-        let shown = [-GRAVITY * 0.5, GRAVITY * 0.866, 0.0];
+        let shown = [-GRAVITY * 0.5, 0.0, GRAVITY * 0.866];
         assert!(near(a, shown), "{a:?}");
-        assert_eq!(w, [0.0, 0.0, -1.0]);
+        assert_eq!(w, [0.0, 1.0, 0.0]);
         // Home on the right: up as shown is the device's right edge, right as shown its bottom; as the arrow keys do.
         let (a, w2) = lean(Rotation::HomeRight);
-        assert!(near(a, [shown[1], -shown[0], 0.0]) && a[1] > 4.0, "{a:?}");
+        assert!(near(a, [shown[1], -shown[0], shown[2]]) && a[1] > 4.0, "{a:?}");
         assert_eq!(w2, [w[1], -w[0], w[2]]);
         // Home on the left: right as shown is the device's top.
         let (a, _) = lean(Rotation::HomeLeft);
-        assert!(near(a, [-shown[1], shown[0], 0.0]) && a[1] < -4.0, "{a:?}");
+        assert!(near(a, [-shown[1], shown[0], shown[2]]) && a[1] < -4.0, "{a:?}");
         // Same as a stick Tilt to the right in that turn.
         let tilt = preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0 }]);
         let v = View { rotation: Rotation::HomeRight, turned: false, aspect: 1.5 };
@@ -955,14 +971,16 @@ mod tests {
     }
 
     #[test]
-    fn raising_the_controllers_far_edge_turns_the_screen_up() {
-        // Flat, then its far edge (the triggers) raised 20 degrees: gravity's reaction leans toward its near edge (+z).
+    fn the_controller_level_is_the_device_flat_and_its_far_edge_its_top() {
+        let mut m = Mapper::default();
+        let (a, _) = m.motion_from_sensors([0.0, GRAVITY as f32, 0.0], None, 1.0, Rotation::HomeRight);
+        assert!(a.iter().zip(FLAT).all(|(x, y)| (x - y).abs() < 1e-6), "flat in any rotation: {a:?}");
+        // Its far edge (the triggers) raised 20 degrees: gravity's reaction leans toward its near edge (+z).
         let t = 20f64.to_radians();
         let raised = [0.0, (GRAVITY * t.cos()) as f32, (-GRAVITY * t.sin()) as f32];
-        let mut m = Mapper::default();
         let (a, _) = m.motion_from_sensors(raised, None, 1.0, Rotation::Portrait);
-        // The device's top goes away from the player: its screen faces up a little (+z as shown), like a board.
-        assert!(a[2] > 0.3 * GRAVITY && a[1] > 0.9 * GRAVITY, "{a:?}");
+        // The device's top raised, as a board's: a ball on it rolls toward the bottom.
+        assert!((a[1] - GRAVITY * t.sin()).abs() < 1e-3 && (a[2] - GRAVITY * t.cos()).abs() < 1e-3, "{a:?}");
     }
 
     #[test]
@@ -979,11 +997,11 @@ mod tests {
             a = out.motion.expect("motion each step").0;
         }
         assert!(a[0] < -5.0, "leans right: {a:?}");
-        // With readings, the controller's own lean wins: lying flat (level) is the device at rest, upright.
+        // With readings, the controller's own lean wins: lying flat (level) is the device lying flat.
         let flat = Merged { accel: Some([0.0, GRAVITY as f32, 0.0]), gyro: Some([0.0; 3]), ..right };
         let out = m.step(&p, &Inputs { pad: &flat, keys: &keys }, &view(), start + Duration::from_secs(2));
         let a = out.motion.unwrap().0;
-        assert!(a.iter().zip(rest(Rotation::Portrait)).all(|(x, y)| (x - y).abs() < 1e-6), "{a:?}");
+        assert!(a.iter().zip(FLAT).all(|(x, y)| (x - y).abs() < 1e-6), "{a:?}");
     }
 
     #[test]
@@ -1111,13 +1129,15 @@ mod tests {
         let free = Merged { accel: Some(lean), ..Default::default() };
         let held = Merged { buttons: PadButton::LeftShoulder.bit(), ..free };
         let at = |ms| t0 + Duration::from_millis(ms);
-        assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(0)).motion.is_none());
+        // Not held: the device lies flat, the controller's level, while a controller with sensors is there.
+        assert_eq!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(0)).motion.unwrap().0, FLAT);
+        assert!(m.holds_motion());
         let (a, _) = m.step(&p, &Inputs { pad: &held, keys: &keys }, &v, at(10)).motion.unwrap();
         assert!(a[0] < -4.0, "{a:?}");
         // Let go: level, for a moment, then nothing more.
         for ms in [20, 60, 100] {
             let (a, _) = m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(ms)).motion.unwrap();
-            assert_eq!(a, rest(Rotation::Portrait));
+            assert_eq!(a, FLAT);
         }
         assert!(m.step(&p, &Inputs { pad: &free, keys: &keys }, &v, at(200)).motion.is_none());
     }
@@ -1143,8 +1163,8 @@ mod tests {
         m.step(&p, &Inputs { pad: &quiet, keys: &keys }, &v, at(1010));
         let released = Merged { sensors_quiet: true, ..Default::default() };
         let (a, _) = m.step(&p, &Inputs { pad: &released, keys: &keys }, &v, at(1020)).motion.unwrap();
-        assert_eq!(a, rest(Rotation::Portrait));
-        // The controller gone (no sensors at all) while engaged: level too.
+        assert_eq!(a, FLAT);
+        // The controller gone (no sensors at all) while engaged: the app's own rest, upright as shown.
         let mut m = Mapper::default();
         m.step(&p, &Inputs { pad: &live, keys: &keys }, &v, at(0));
         let gone = Merged { buttons: shoulder, ..Default::default() };
