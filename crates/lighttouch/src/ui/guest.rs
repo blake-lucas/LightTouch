@@ -524,9 +524,17 @@ impl GuestView {
         ];
         let down: Vec<&'static str> =
             buttons.iter().filter(|(b, _)| pointer.button_down(*b)).map(|(_, n)| *n).collect();
+        // A click pressed and let go since the last frame counts as held for this one, or it would never be seen
+        // (the click that locked it, this frame, aside).
+        let quick: Vec<&'static str> = buttons
+            .iter()
+            .filter(|(b, _)| self.armed && !locked_now && pointer.button_pressed(*b) && !pointer.button_down(*b))
+            .map(|(_, n)| *n)
+            .collect();
         // The click that locked it isn't a press: buttons count once it's let go. Freed, they're the pointer's.
         self.armed |= down.is_empty();
-        self.mouse_buttons = if self.armed && !self.free { down } else { Vec::new() };
+        self.mouse_buttons =
+            if self.armed && !self.free { down.into_iter().chain(quick).collect() } else { Vec::new() };
         // Confined, the hidden cursor still moves: back over the screen before it reaches anything else.
         if pointer.latest_pos().is_some_and(|p| p.distance(rect.center()) > rect.width().min(rect.height()) * 0.25) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CursorPosition(rect.center()));

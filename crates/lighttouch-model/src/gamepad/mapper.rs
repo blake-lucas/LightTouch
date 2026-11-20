@@ -34,8 +34,10 @@ const KEY_START: f32 = 0.3;
 const KEY_RAMP: Duration = Duration::from_millis(300);
 /// A centered pointer set to jump at once glides at this speed when keys steer it (screen widths a second).
 const KEY_FOLLOW: f32 = 4.0;
-/// A stick binding's tap: how long the finger stays down.
+/// A stick binding's tap: how long the finger stays down at least (a quick click still registers), and how long it
+/// stays up around the tap, so a game that reads its touches once a frame (30 a second, say) sees every lift.
 const STICK_TAP: Duration = Duration::from_millis(60);
+const TAP_GAP: Duration = Duration::from_millis(35);
 /// A joystick's finger glides to where the stick points at one reach in this long (a stick let go in a frame would
 /// otherwise jump the finger back to the centre, which some games' sticks don't settle from), at speed 1.
 const JOYSTICK_GLIDE: f32 = 0.05;
@@ -208,6 +210,19 @@ struct State {
     mouse_carry: (f32, f32),
     /// When a joystick's finger landed on its centre.
     landed_at: Option<Instant>,
+    /// A stick binding's tap under way, where it taps, and whether a click came while it was down (one more tap).
+    tap: Option<TapPhase>,
+    tap_at: (f32, f32),
+    tap_again: bool,
+}
+
+/// A stick binding's tap: the binding's finger is up and the tap lands then; it's down (since then); or it's lifted
+/// and the binding waits until then before its own finger lands again.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TapPhase {
+    Landing(Instant),
+    Down(Instant),
+    Resting(Instant),
 }
 
 impl State {
@@ -281,7 +296,7 @@ impl Mapper {
 
     /// Whether binding `index` is doing something now (for lighting its spot).
     pub fn active(&self, index: usize) -> bool {
-        self.states.get(index).is_some_and(|s| s.finger.is_some() || s.pressed || s.stroke.is_some())
+        self.states.get(index).is_some_and(|s| s.finger.is_some() || s.pressed || s.stroke.is_some() || s.tap.is_some())
     }
 
     /// Lift every finger and release every button the preset holds (it changed, or input stopped), and level the
@@ -355,10 +370,13 @@ impl Mapper {
         }
 
         self.motion(preset, inputs, view, tilt, now, &mut out);
-        out.busy |= self
-            .states
-            .iter()
-            .any(|s| s.stroke.is_some() || s.repeat_at.is_some() || s.rest_since.is_some() || s.regrip_at.is_some());
+        out.busy |= self.states.iter().any(|s| {
+            s.stroke.is_some()
+                || s.repeat_at.is_some()
+                || s.rest_since.is_some()
+                || s.regrip_at.is_some()
+                || s.tap.is_some()
+        });
         out
     }
 
@@ -736,9 +754,11 @@ fn key_ramp(s: &mut State, stick: &Stick, (x, y): (f32, f32), now: Instant) -> (
     (x * k, y * k)
 }
 
-/// A stick binding's tap button: on its press, lift the binding's finger, tap `at` (a second finger on a game's
-/// stick or look area would confuse it), then leave the finger to land again. True while the tap is under way: the
-/// binding does nothing else meanwhile.
+/// A stick binding's tap button, as a finger: its press lifts the binding's finger and, `TAP_GAP` later, puts one
+/// down on `at` (a second finger on a game's stick or look area would confuse it); letting go lifts it, though not
+/// before `STICK_TAP`, so a quick click still registers; `TAP_GAP` after that, the binding's own finger may land again.
+/// A click while the tap is down taps once more after it, however many came meanwhile, so fast clicks never queue up
+/// taps that go on after the clicking stops. True while the tap is under way: the binding does nothing else meanwhile.
 #[allow(clippy::too_many_arguments)]
 fn tapping(
     s: &mut State,
@@ -751,14 +771,45 @@ fn tapping(
     out: &mut Output,
 ) -> bool {
     let held = enabled && tap.as_ref().is_some_and(|t| inputs.held(t));
-    if held && !s.pressed && s.stroke.is_none() {
-        put(s, None, out);
-        s.stroke = Some((at, at, now + REGRIP, STICK_TAP));
-    }
+    let rising = held && !s.pressed;
     s.pressed = held;
-    let Some((_, _, start, _)) = s.stroke else { return false };
-    if now >= start {
-        stroke(s, now, put, out);
+    if rising {
+        match s.tap {
+            None => {
+                put(s, None, out);
+                s.tap_at = at;
+                s.tap = Some(TapPhase::Landing(now + TAP_GAP));
+            }
+            // Lifted a moment ago: down again once the lift has registered, where it was.
+            Some(TapPhase::Resting(until)) => s.tap = Some(TapPhase::Landing(until)),
+            Some(TapPhase::Down(_)) => s.tap_again = true,
+            Some(TapPhase::Landing(_)) => {}
+        }
+    }
+    match s.tap {
+        None => return false,
+        Some(TapPhase::Landing(when)) if now >= when => {
+            let spot = s.tap_at;
+            put(s, Some(spot), out);
+            // Every finger busy: tries again next step.
+            if s.finger.is_some() {
+                s.tap = Some(TapPhase::Down(now));
+            }
+        }
+        Some(TapPhase::Down(since)) if now.saturating_duration_since(since) >= STICK_TAP && (!held || s.tap_again) => {
+            put(s, None, out);
+            // A click that came while it was down taps once more (if it's still held, that tap lasts while it is).
+            s.tap = Some(if std::mem::take(&mut s.tap_again) {
+                TapPhase::Landing(now + TAP_GAP)
+            } else {
+                TapPhase::Resting(now + TAP_GAP)
+            });
+        }
+        Some(TapPhase::Resting(until)) if now >= until => {
+            s.tap = None;
+            return false;
+        }
+        Some(_) => {}
     }
     true
 }
@@ -1327,13 +1378,16 @@ mod tests {
         };
         step(stick_at(1.0, 0.0, 0), 0);
         step(stick_at(1.0, 0.0, 0), 100);
-        // Fire while aiming right: the finger lifts where it was, then taps the centre.
+        // Fire while aiming right: the finger lifts where it was, then taps the centre while the button is held.
         assert_eq!(step(stick_at(1.0, 0.0, fire), 110), [(UP, 0.6f32 as f64)]);
-        assert_eq!(step(stick_at(1.0, 0.0, fire), 140), [(DOWN, 0.5)]);
-        assert_eq!(step(stick_at(1.0, 0.0, fire), 210), [(UP, 0.5)]);
-        // Still aiming: it lands on the centre and glides back out; holding the button doesn't tap again.
-        assert_eq!(step(stick_at(1.0, 0.0, fire), 230), [(DOWN, 0.5)]);
-        let out = step(stick_at(1.0, 0.0, fire), 300);
+        assert_eq!(step(stick_at(1.0, 0.0, fire), 140), []);
+        assert_eq!(step(stick_at(1.0, 0.0, fire), 150), [(DOWN, 0.5)]);
+        assert_eq!(step(stick_at(1.0, 0.0, fire), 300), []);
+        assert_eq!(step(stick_at(1.0, 0.0, 0), 320), [(UP, 0.5)]);
+        // Still aiming: a moment later it lands on the centre and glides back out.
+        assert_eq!(step(stick_at(1.0, 0.0, 0), 340), []);
+        assert_eq!(step(stick_at(1.0, 0.0, 0), 360), [(DOWN, 0.5)]);
+        let out = step(stick_at(1.0, 0.0, 0), 430);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, MOVE);
         assert!((out[0].1 - 0.6).abs() < 1e-5);
@@ -1497,23 +1551,60 @@ mod tests {
         assert_eq!(phases(&m.step(&p, &Inputs { pad: &rest, keys: &keys }, &v, at(400))), [UP]);
     }
 
-    #[test]
-    fn a_look_tap_lifts_the_finger_taps_where_it_was_and_looks_on() {
+    /// Steps a look binding with the stick pushed right, its tap (RightShoulder) held on the given 8 ms steps, and
+    /// returns each step's contacts.
+    fn look_taps(held: impl Fn(u64) -> bool, steps: u64) -> Vec<Vec<u32>> {
         let p = look(Press::Pushed, Some(Input::Pad(PadButton::RightShoulder)));
         let (mut m, keys, v, t0) = (Mapper::default(), HashSet::new(), view(), Instant::now());
-        let r1 = PadButton::RightShoulder.bit();
-        let mut all = Vec::new();
-        for i in 0..20u64 {
-            let pad = stick_at(1.0, 0.0, if (3..5).contains(&i) { r1 } else { 0 });
-            let out = m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(16 * i));
-            all.push(phases(&out));
-        }
-        // Looking (down, moves), the tap's lift, its down and up, then the look lands again.
-        let flat: Vec<u32> = all.concat();
-        let ups = flat.iter().filter(|&&ph| ph == UP).count();
-        let downs = flat.iter().filter(|&&ph| ph == DOWN).count();
-        assert!(ups >= 2 && downs >= 3, "{all:?}");
-        assert_eq!(all[3], [UP]);
+        (0..steps)
+            .map(|i| {
+                let pad = stick_at(1.0, 0.0, if held(i) { PadButton::RightShoulder.bit() } else { 0 });
+                phases(&m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(8 * i)))
+            })
+            .collect()
+    }
+
+    /// The steps where the binding's finger goes down and up.
+    fn downs_ups(all: &[Vec<u32>]) -> (Vec<usize>, Vec<usize>) {
+        let at = |ph| all.iter().enumerate().filter(|(_, c)| c.contains(&ph)).map(|(i, _)| i).collect();
+        (at(DOWN), at(UP))
+    }
+
+    #[test]
+    fn a_look_tap_lifts_the_finger_taps_where_it_was_and_looks_on() {
+        // Looking from step 0; a click on steps 10 and 11.
+        let all = look_taps(|i| (10..12).contains(&i), 60);
+        let (downs, ups) = downs_ups(&all);
+        // The look's finger lifts on the click, the tap lands a gap later and stays down its least, lifts, and the
+        // look lands again a gap after that.
+        assert_eq!(ups[0], 10, "{all:?}");
+        assert_eq!(downs[1], 10 + 5, "{all:?}");
+        assert_eq!(ups[1], 15 + 8, "{all:?}");
+        assert_eq!(downs[2], 23 + 5, "{all:?}");
+        assert_eq!((downs.len(), ups.len()), (3, 2), "{all:?}");
+    }
+
+    #[test]
+    fn a_held_tap_stays_down_until_let_go() {
+        let all = look_taps(|i| (10..40).contains(&i), 60);
+        let (downs, ups) = downs_ups(&all);
+        assert_eq!((downs[1], ups[1]), (15, 40), "{all:?}");
+    }
+
+    #[test]
+    fn fast_clicks_tap_once_more_at_most_and_none_is_lost_between_taps() {
+        // Three clicks while the first tap is down make one more tap, not three.
+        let all = look_taps(|i| [10, 17, 19, 21].contains(&i), 80);
+        let (downs, ups) = downs_ups(&all);
+        let taps: Vec<usize> = downs[1..].iter().copied().filter(|&d| d < 40).collect();
+        assert_eq!(taps, [15, 23 + 5], "{all:?}");
+        // Then the look lands again, and nothing else.
+        let before = |v: &[usize]| v.iter().filter(|&&i| i < 60).count();
+        assert_eq!((before(&downs), before(&ups)), (4, 3), "{all:?}");
+        // A click just after a tap lifted (while it waits to look again) still taps.
+        let all = look_taps(|i| i == 10 || i == 24, 80);
+        let (downs, _) = downs_ups(&all);
+        assert_eq!(&downs[1..3], [15, 23 + 5], "{all:?}");
     }
 
     #[test]

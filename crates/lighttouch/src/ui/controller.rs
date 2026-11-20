@@ -1739,8 +1739,8 @@ fn binding_settings(
                 p,
                 &row,
                 "Tap with",
-                "For games that fire with a tap on the stick: lifts the finger, taps the stick's center, then lands \
-                 again",
+                "For games that fire with a tap on the stick: lifts the finger and touches the stick's center while \
+                 held, then lands again",
                 tap,
                 kind,
                 &mut || *capture = Some((i, Slot::Tap)),
@@ -1774,7 +1774,7 @@ fn binding_settings(
                 p,
                 &row,
                 "Tap with",
-                "For games that fire with a tap: lifts the look finger and taps the area",
+                "For games that fire with a tap: lifts the look finger and touches the area while held",
                 tap,
                 kind,
                 &mut || *capture = Some((i, Slot::Tap)),
