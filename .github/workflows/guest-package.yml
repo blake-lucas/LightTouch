@@ -34,7 +34,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Pick the engine commit
         env:
@@ -44,7 +44,7 @@ jobs:
           [ -n "$ref" ] || ref=$(tr -d ' \n' < ci/guest-package-engine)
           echo "ENGINE_REF=$ref" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: blake-lucas/qemu-ios
           ref: ${{ env.ENGINE_REF }}
@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 1
 
       - name: Restore the iOS 3.1.3 and 3.2 SDK archives
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/guest-sdk-archives
           key: guest-sdk-archives-7ccc15923bc9be1a-2098e67e2a026abf
@@ -112,13 +112,13 @@ jobs:
           cp "$OUT/manifest.json" "$T/manifest.json"
           ls -la "$T"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: guest-tools
           path: ${{ runner.temp }}/guest-export/ipad-guest-tools
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: guest-packages
           path: |
@@ -131,7 +131,7 @@ jobs:
           retention-days: 90
 
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: guest-package-log
           path: |

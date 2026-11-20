@@ -63,7 +63,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: pick
         env:
           IN_ENGINE: ${{ inputs.engine_ref }}
@@ -100,10 +100,10 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc /usr/local/lib/android \
             /usr/local/share/chromium /usr/local/share/powershell /opt/hostedtoolcache/CodeQL || true
           df -h / | tail -1
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: release-${{ env.VER }}/app
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: blake-lucas/qemu-ios
           ref: ${{ needs.setup.outputs.engine }}
@@ -137,7 +137,7 @@ jobs:
                     release-$VER/app/Linux/packaging/patches/* release-$VER/app/scripts/release/linux-build.Dockerfile \
                     release-$VER/app/scripts/release/build-linux-inputs.sh | sha256sum | cut -c1-24)
           echo "key=$key" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         id: linux-deps
         with:
           path: ci-inputs/builds/linux-desktop/bullseye-build01
@@ -170,14 +170,14 @@ jobs:
             df -h / | tail -1
           done
           ls -la release-$VER/out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: LightTouch-v${{ env.VER }}-Linux-x86_64
           path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-Linux-x86_64.AppImage
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: LightTouch-v${{ env.VER }}-Windows-x86_64
           path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-Windows-x86_64.exe
@@ -185,7 +185,7 @@ jobs:
           retention-days: 14
           compression-level: 0
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-logs
           path: release-${{ env.VER }}/*.log
@@ -209,15 +209,15 @@ jobs:
             /usr/local/share/powershell /opt/hostedtoolcache/CodeQL /usr/local/lib/android/sdk/system-images \
             /usr/local/lib/android/sdk/emulator || true
           df -h / | tail -1
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: release-${{ env.VER }}/app
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: blake-lucas/qemu-ios
           ref: ${{ needs.setup.outputs.engine }}
           path: release-${{ env.VER }}/engine
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -251,7 +251,7 @@ jobs:
                     release-$VER/app/build-support/patches/* release-$VER/app/Android/packaging/build-mobile-android.py \
                     release-$VER/app/Android/native-services/* release-$VER/app/Linux/packaging/patches/*; } | sha256sum | cut -c1-24)
           echo "key=$key" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         id: android-deps
         with:
           path: |
@@ -306,7 +306,7 @@ jobs:
             g=release-$VER/app/build/obj/android-gradle.out
             [ -f "$g" ] && { echo "::group::android-gradle.out"; tail -200 "$g"; echo "::endgroup::"; }
             exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: LightTouch-v${{ env.VER }}-android-arm64
           path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-android-arm64.apk
@@ -325,10 +325,10 @@ jobs:
       VER: ${{ needs.setup.outputs.version }}
       CI_ROOT: ${{ github.workspace }}/ci-inputs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: release-${{ env.VER }}/app
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: blake-lucas/qemu-ios
           ref: ${{ needs.setup.outputs.engine }}
@@ -369,7 +369,7 @@ jobs:
         run: |
           export LT_MAC_PYTHON="$(brew --prefix python@3.13)/bin/python3.13" LT_MAC_OPENSSL="$(brew --prefix openssl@3)"
           bash release-$VER/app/scripts/build-release.sh "$VER" macos
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: LightTouch-v${{ env.VER }}-macOS-arm64
           path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-macOS-arm64.zip
@@ -377,7 +377,7 @@ jobs:
           retention-days: 14
           compression-level: 0
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-logs
           path: ~/mac-build/LightTouch-Release-${{ env.VER }}/*.log
