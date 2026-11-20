@@ -11,7 +11,8 @@
 #   linux     the engine in the Debian 11 image (Docker), with the USB bridge and the libraries both load
 #   desktop   the desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows .exe, from the linux and windows
 #             steps' engines
-#   macos     the engine and the desktop app on the Mac ($LT_MAC) over ssh, from the pushed commits
+#   macos     the engine and the desktop app on the Mac ($LT_MAC) over ssh, from the pushed commits (LT_MAC=local: on
+#             this Mac, as CI does)
 #   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json (status from
 #             LT_PRERELEASE), NOTES.md checksums
 #   publish   push both tags and create the GitHub release from out/NOTES.md (a pre-release unless
@@ -37,7 +38,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_WIN_DEPS:=$D/release-0.0.10/win-deps}"                       # MinGW sysroot (copied; FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (the USB bridge)
 : "${LT_FFMPEG_ARCHIVE:=$LT_INPUTS/backend/deps-linux/ffmpeg-9.0.1.tar.xz}"   # checked by its SHA-256
-: "${LT_MAC:=}"                                                      # user@host of the Mac
+: "${LT_MAC:=}"                                                      # user@host of the Mac; local: this machine is one
 : "${LT_MAC_ROOT:=Documents}"                                        # on the Mac, relative to home
 : "${LT_MAC_PYTHON:=/opt/homebrew/bin/python3.13}"
 : "${LT_MAC_OPENSSL:=/opt/homebrew/opt/openssl@3}"
@@ -47,8 +48,8 @@ D=$HOME/Documents/LightTouch-Development
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 export QEMU_IOS LT_INPUTS ANDROID_HOME LT_PRERELEASE
 
-[ $# -ge 1 ] || { sed -n 2,22p "$0"; exit 2; }
-case "$1" in -h|--help) sed -n 2,22p "$0"; exit 0 ;; esac
+[ $# -ge 1 ] || { sed -n 2,23p "$0"; exit 2; }
+case "$1" in -h|--help) sed -n 2,23p "$0"; exit 0 ;; esac
 VER=${1#v}; V=v$VER; shift
 R=$LT_RELEASE_ROOT/release-$VER
 OUTD=$R/out
@@ -103,8 +104,11 @@ step_android() {
     if "$aapt" dump xmltree "$apk" AndroidManifest.xml | grep -q 'android:debuggable.*0xffffffff'; then
         echo "$apk is debuggable" >&2; exit 1
     fi
-    "$aapt" dump badging "$apk" | grep -E "^package:" | grep -q "versionName='$VER'" ||
-        { echo "$apk is not versionName $VER" >&2; exit 1; }
+    # CI builds of a commit between releases carry a version label of their own (LT_CHECK_VERSION=false).
+    if [ "${LT_CHECK_VERSION:-true}" != false ]; then
+        "$aapt" dump badging "$apk" | grep -E "^package:" | grep -q "versionName='$VER'" ||
+            { echo "$apk is not versionName $VER" >&2; exit 1; }
+    fi
     echo "$apk"
 }
 
@@ -188,24 +192,29 @@ step_desktop() {
     ls -1 "$OUTD"/*.AppImage "$OUTD"/*Windows*.exe
 }
 
+# The Mac's shell over ssh, or this machine's when LT_MAC=local (a macOS CI runner); paths are relative to its home.
+mac_sh() { if [ "$LT_MAC" = local ]; then (cd && bash -c "$1"); else ssh "$LT_MAC" "$1"; fi; }
+mac_put() { if [ "$LT_MAC" = local ]; then rsync -a "$1" "$HOME/$2"; else rsync -a "$1" "$LT_MAC:$2"; fi; }
+mac_get() { if [ "$LT_MAC" = local ]; then cp "$HOME/$1" "$2"; else scp -q "$LT_MAC:$1" "$2"; fi; }
+
 step_macos() {
-    [ -n "$LT_MAC" ] || { echo "the macOS build runs on a Mac: set LT_MAC=user@host" >&2; exit 1; }
+    [ -n "$LT_MAC" ] || { echo "the macOS build runs on a Mac: set LT_MAC=user@host (or local on one)" >&2; exit 1; }
     local m="$LT_MAC_ROOT/LightTouch-Release-$VER" out=LightTouch-$V-macOS-arm64 app_rev engine_rev
     local tools=${LT_GUEST_TOOLS:-$R/app/build/firmware-tools} n=$LT_DESKTOP_NOTICES ff
     need "$tools" "guest tools"; need "$LT_FFMPEG_ARCHIVE" "FFmpeg 9.0.1 archive"
     need "$n/linux/engine/qemu-ios" "engine notices"; need "$n/linux/usb" "USB bridge notices"
     app_rev=$(rev "$R/app"); engine_rev=$(rev "$R/engine"); ff=$(basename "$LT_FFMPEG_ARCHIVE")
-    ssh "$LT_MAC" "set -e; rm -rf $m; mkdir -p $m/notices/engine; cd $m
+    mac_sh "set -e; rm -rf $m; mkdir -p $m/notices/engine; cd $m
         git init -q app; git -C app fetch -q --depth 1 $GH_APP $app_rev; git -C app checkout -q --detach FETCH_HEAD
         git init -q qemu; git -C qemu fetch -q --depth 1 $GH_ENGINE $engine_rev; git -C qemu checkout -q --detach FETCH_HEAD"
-    for p in $SUBPROJECTS; do rsync -a "$R/engine/subprojects/$p" "$LT_MAC:$m/qemu/subprojects/"; done
-    rsync -a "$tools/" "$LT_MAC:$m/guest-tools/"
-    rsync -a "$n/linux/engine/qemu-ios" "$LT_MAC:$m/notices/engine/"
-    rsync -a "$n/linux/usb/" "$LT_MAC:$m/notices/usb/"
-    rsync -a "$LT_FFMPEG_ARCHIVE" "$LT_MAC:$m/"
+    for p in $SUBPROJECTS; do mac_put "$R/engine/subprojects/$p" "$m/qemu/subprojects/"; done
+    mac_put "$tools/" "$m/guest-tools/"
+    mac_put "$n/linux/engine/qemu-ios" "$m/notices/engine/"
+    mac_put "$n/linux/usb/" "$m/notices/usb/"
+    mac_put "$LT_FFMPEG_ARCHIVE" "$m/"
     # The engine links an FFmpeg with only the codecs it uses; the USB bridge is the LightTouchMac app's ($LT_MAC_VENDOR). The
     # packager bundles the Homebrew libraries both load, with their licence files, and signs the app ad hoc.
-    ssh "$LT_MAC" "export PATH=\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
+    mac_sh "export PATH=\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
         caffeinate -s $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
             --openssl-prefix $LT_MAC_OPENSSL --ffmpeg-archive \$PWD/$ff > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
         brew list sdl2 > /dev/null 2>&1 || brew install sdl2 > /dev/null
@@ -218,7 +227,7 @@ step_macos() {
             --group-source engine=$GH_ENGINE > package.log 2>&1 || { tail -30 package.log; exit 1; }
         codesign --verify --deep --strict LightTouch.app
         ditto -c -k --keepParent LightTouch.app $out.zip"
-    scp -q "$LT_MAC:$m/$out.zip" "$OUTD/"
+    mac_get "$m/$out.zip" "$OUTD/"
     echo "$OUTD/$out.zip"
 }
 

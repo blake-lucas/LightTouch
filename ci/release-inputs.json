@@ -1,0 +1,69 @@
+{
+  "comment": "Prebuilt release inputs CI fetches (scripts/release/fetch-inputs.py), each checked by its SHA-256. The ci-inputs-1 assets are the development machine's port-workspace/builds inputs and desktop notices, packed as they were used for v0.0.14; the rest come from their upstream. docs/BUILDING.md, 'CI builds', says what each is and how to replace it.",
+  "files": {
+    "ffmpeg": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
+      "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+      "save": "builds/backend/deps-linux/ffmpeg-9.0.1.tar.xz"
+    },
+    "appimagetool": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/appimagetool-pinned01.tar.gz",
+      "sha256": "483579efe8961d6d07cfb4de8533628eb1c5d860b1360423a51c0d529bb012d7",
+      "extract": true
+    },
+    "desktop-notices": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/desktop-notices.tar.gz",
+      "sha256": "a6d53d3df669234ef1c7faad4ff9e8e55d394382cce190ebc61eff3e9d7e2060",
+      "extract": true
+    },
+    "windows-usb-bridge": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/windows-usb-bridge-services-mobile01.tar.gz",
+      "sha256": "cbc725deb4d51bed031a0155bae0aaadcbd619fadc992328753f69a9b8034610",
+      "extract": true
+    },
+    "android-angle": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/angle-android-arm64-candidate-01.tar.gz",
+      "sha256": "58f164c30529d3ee1e9759dc07ef042b6197af1ee56c25554c2cdc4b32008c17",
+      "extract": true
+    },
+    "android-frontend-notices": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/frontend-inputs-15.tar.gz",
+      "sha256": "6434412e8993d70f16743d07336d7f154ccd7bfbc17bf49f458015d45b5937ac",
+      "extract": true
+    },
+    "android-engine-pgo": {
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/engine-arm64-pgo.tar.gz",
+      "sha256": "0c3cbb3f010acab8d608b10856539a5fc0e9bfda1ca99b88266cb77762beaf9f",
+      "extract": true
+    },
+    "macos-usb-bridge": {
+      "comment": "The LightTouchMac app, whose usbmuxd (Contents/MacOS/usbmuxd) and the libraries it loads LightTouch.app carries",
+      "url": "https://github.com/samhenrigold/LightTouchMac/releases/download/v1.0-2026.11.16/LightTouchMac-universal.zip",
+      "sha256": "35bcf3be007711c113ae6c704acec66efcebe9272092bf18f10050942dc86cbf",
+      "save": "LightTouchMac-universal.zip"
+    }
+  },
+  "msys2": {
+    "comment": "The MinGW sysroot the Windows engine builds against (the win-deps input): these MSYS2 packages extracted into win-deps/sysroot",
+    "mirror": "https://repo.msys2.org/mingw/mingw64/",
+    "packages": [
+      {"file": "mingw-w64-x86_64-SDL2-2.32.10-1-any.pkg.tar.zst", "sha256": "5991afbcfeb2f8b838ab80b2270d713a727199ca392715677a7c1931a0d9ecef"},
+      {"file": "mingw-w64-x86_64-cc-libs-16.2.0-6-any.pkg.tar.zst", "sha256": "0128c6f7fc227e5862351e970e52d42370c72c896db87b8413c2699c6337a13a"},
+      {"file": "mingw-w64-x86_64-gettext-runtime-1.0-1-any.pkg.tar.zst", "sha256": "be68d7f260633284b910c588c6d82ee304a81c8817a686d2cd9df83f872c27af"},
+      {"file": "mingw-w64-x86_64-glew-2.3.1-4-any.pkg.tar.zst", "sha256": "76de8e4e0277fd06837a7de1d01167b26e334056908a3a1f4374df7e4b5f23db"},
+      {"file": "mingw-w64-x86_64-glib2-2.90.1-1-any.pkg.tar.zst", "sha256": "152ba3b2cfb35feebc0fcb690889b16a6f0c2b89ced52e65aea45d089f86d219"},
+      {"file": "mingw-w64-x86_64-libffi-3.8.0-1-any.pkg.tar.zst", "sha256": "6dad7f3c6c900d3c64a4fe0c2764b405e678b22df3521d2284ffaeff0198b84b"},
+      {"file": "mingw-w64-x86_64-libgcc-16.2.0-6-any.pkg.tar.zst", "sha256": "e0815432c4225892b0eef57055fe507fa0b9a036436f046605f6629696bd1b88"},
+      {"file": "mingw-w64-x86_64-libgcrypt-1.12.4-1-any.pkg.tar.zst", "sha256": "e8a245cf4c678718e1dc23004d37b524abb53bf28307ed98fb66d6cf84b7544a"},
+      {"file": "mingw-w64-x86_64-libgpg-error-1.61-1-any.pkg.tar.zst", "sha256": "b6933a26d865e980abf259bb2546f9462fb9700c2a54dc91b1585c04a9794cba"},
+      {"file": "mingw-w64-x86_64-libiconv-1.19-1-any.pkg.tar.zst", "sha256": "21e334d0911f25de75d3e18e0697648bcecfa9658256d600cad0827d719c2f35"},
+      {"file": "mingw-w64-x86_64-libstdc++-16.2.0-6-any.pkg.tar.zst", "sha256": "924b47e8c3e20b6448e29d3333acc638a4f4783c1c45230e09673532f9c4f198"},
+      {"file": "mingw-w64-x86_64-libwinpthread-14.0.0.r426.g4564ee4b5-2-any.pkg.tar.zst", "sha256": "ac791deaf730ef7aa6fa66f31ce6ec53a02c43fa85562233a981c84c93456760"},
+      {"file": "mingw-w64-x86_64-openssl-3.6.5-1-any.pkg.tar.zst", "sha256": "389d1af21e99223d9e2cd32d4c073131b276da85be7636bd8d23571f6938864f"},
+      {"file": "mingw-w64-x86_64-pcre2-10.49-1-any.pkg.tar.zst", "sha256": "0abc5313085a0f9b4a77a1580d92b09761371cb3a1f31d01051a94a289fb9413"},
+      {"file": "mingw-w64-x86_64-pixman-0.46.4-3-any.pkg.tar.zst", "sha256": "435715dd1ca4c55873cf3c38d644615196bc2d238e3366f8ff81cc0811260eb2"},
+      {"file": "mingw-w64-x86_64-winpthreads-14.0.0.r426.g4564ee4b5-2-any.pkg.tar.zst", "sha256": "c19924c9a353cbbca5d209cb95f0fc1c3a2051dd788f4b1a109ba4df97bbbe0f"},
+      {"file": "mingw-w64-x86_64-zlib-1.3.2-2-any.pkg.tar.zst", "sha256": "9e75842a070ba648e986e12424e1c92c9d7d77200e85f6a34eeb600819f2e694"}
+    ]
+  }
+}

@@ -164,9 +164,10 @@ build_android() {
     if [ -f "$tools/armv6.itpack" ] && [ -f "$tools/armv7.itpack" ] && [ -f "$tools/it_seal" ]; then guest=(-PguestToolsDir="$tools")
     else echo "warning: no guest packages and helpers in $tools (scripts/build.sh firmware-tools, or set LT_GUEST_TOOLS); the APK will carry no guest tools" >&2; fi
     # A non-debuggable build runs lint-vital, which needs an artifact the offline Gradle cache lacks.
-    local lint=()
+    local lint=() offline=(--offline)
+    [ "${LT_GRADLE_OFFLINE:-true}" = false ] && offline=()   # CI: Gradle downloads what it needs
     [ "$LT_DEBUGGABLE" = false ] && lint=(-x lintVitalAnalyzeDebug -x lintVitalReportDebug -x lintVitalDebug)
-    (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
+    (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew "${offline[@]}" --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
         -PnetworkDeps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" \

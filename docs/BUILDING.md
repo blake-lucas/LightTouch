@@ -145,3 +145,44 @@ sysroot, the Windows USB bridge, the notices, the Mac's LightTouchMac app for it
 of the script, settable in `scripts/build.env`. The `android` step builds the guest tools from the release's engine on
 `$LT_MAC` (`firmware-tools`) unless `LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the Rust Android
 target and the NDK. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.
+
+## CI builds
+
+`.github/workflows/release-build.yml` (Actions › Release builds, or `gh workflow run release-build.yml`) builds the same
+packages on GitHub's runners, from the commit it runs on, an engine ref (`ci/release-engine` unless given) and the
+`guest-tools` artifact of a Guest packages run (`guest-package.yml`; the newest successful one unless given). Each job
+lays out `release-VER/{app,engine}` as here and runs `build-release.sh`'s own steps:
+
+| Job | Runner | Steps | Artifact |
+| --- | --- | --- | --- |
+| `android` | ubuntu-24.04 | `android` (`LT_CHECK_VERSION=false`, `LT_GRADLE_OFFLINE=false`) | `LightTouch-vVER-android-arm64` |
+| `desktop` | ubuntu-24.04 | `windows`, `linux`, `desktop` | `LightTouch-vVER-Linux-x86_64`, `LightTouch-vVER-Windows-x86_64` |
+| `macos` | `xcode-27` (Apple Silicon) | `macos` with `LT_MAC=local` | `LightTouch-vVER-macOS-arm64` |
+
+VER is Cargo.toml's version plus `-ci.RUN` unless given. For a release, download the artifacts into
+`release-X.Y.Z/out` (`gh run download RUN -D …`) and run `finish` (and `publish`) here as usual.
+
+Where the inputs come from:
+
+- **Built in the run, cached by their recipes.** The Linux prefixes (`deps-full`, `crypto`,
+  `mobile-private-runtime-ui15`: `scripts/release/build-linux-inputs.sh`, in the Debian 11 image
+  `scripts/release/linux-build.Dockerfile`, which replaces the local `lighttouch-bullseye-collector08`), the Android
+  prefixes (`build-deps.py`/`build-crypto-deps.py --abi arm64-v8a`) and Android USB bridge
+  (`Android/packaging/build-mobile-android.py`), and on the Mac, Homebrew's libraries. A changed recipe makes a new
+  cache; the first run after one takes longer.
+- **Upstream, pinned by SHA-256** (`ci/release-inputs.json`, fetched by `scripts/release/fetch-inputs.py`): FFmpeg 9.0.1,
+  the MSYS2 packages that make the MinGW sysroot (identical to `release-0.0.10/win-deps`), and the LightTouchMac app
+  whose `usbmuxd` LightTouch.app carries (as `LT_MAC_VENDOR` is locally).
+- **Pinned copies of this machine's inputs**, in the `ci-inputs-1` pre-release: the AppImage tool and runtime
+  (upstream publishes them only as "continuous"), the desktop notices, the Windows USB bridge (`services-mobile01/bin`;
+  `Windows/usbmux` records how it was built but isn't a script yet), and for Android the ANGLE libraries, the frontend
+  notices and the engine PGO profile. To change one, upload a new `ci-inputs-N` release and update the manifest.
+
+The APK is signed with the `ANDROID_DEBUG_KEYSTORE` repository secret (base64 of the keystore the releases are signed
+with) if set; otherwise with a key made for the run, and that APK doesn't install over a published one.
+
+macOS isn't cross-compiled from Linux: that would need Apple's SDK outside a Mac (Xcode's licence allows it only on
+Apple hardware), arm64 macOS builds of every Homebrew library the engine and app link (glib, pixman, libslirp,
+nettle, OpenSSL, SDL2, gettext/pcre2 under glib) made with osxcross, and the LightTouchMac usbmuxd anyway; ad-hoc
+signing (`rcodesign`) would be the easy part. GitHub's macOS runners are free for this public repository, so the job
+builds there.

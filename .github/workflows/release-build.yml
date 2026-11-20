@@ -1,0 +1,386 @@
+name: Release builds
+
+# Builds the packages scripts/build-release.sh makes, on GitHub's runners, from this commit, an engine commit of
+# blake-lucas/qemu-ios and the guest tools of a "Guest packages" run (guest-package.yml):
+#
+#   android  LightTouch-vVER-android-arm64.apk (non-debuggable)          ubuntu-24.04, the android step
+#   desktop  LightTouch-vVER-Linux-x86_64.AppImage, -Windows-x86_64.exe   ubuntu-24.04, the windows, linux, desktop steps
+#   macos    LightTouch-vVER-macOS-arm64.zip                              macOS (xcode-27), the macos step with LT_MAC=local
+#
+# Each job runs build-release.sh's own steps in a workspace laid out as on the development machine
+# (release-VER/{app,engine}). The dependency prefixes are built here from their pinned recipes (engine
+# contrib/portable/build-deps.py and build-crypto-deps.py, Linux/packaging/build-mobile-deps.py,
+# Android/packaging/build-mobile-android.py) and cached by those recipes; the inputs with no recipe here yet are
+# fetched by SHA-256 from ci/release-inputs.json (scripts/release/fetch-inputs.py). docs/BUILDING.md, "CI builds".
+#
+# The APK is signed with the ANDROID_DEBUG_KEYSTORE secret (base64 of the keystore the published releases are
+# signed with, alias androiddebugkey, password android) when the repository has it; without it the run signs with
+# a key of its own, and that APK doesn't install over a published one.
+#
+# Run it from Actions › Release builds (or `gh workflow run release-build.yml -f ...`). Pushing to a ci/** branch
+# also runs it with the defaults, for working on this file. Artifacts are kept 14 days; for a release, download them
+# into release-VER/out and run build-release.sh's finish step there.
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_ref:
+        description: Engine (blake-lucas/qemu-ios) commit, branch or tag (blank - ci/release-engine)
+        required: false
+      guest_tools_run:
+        description: Guest packages run whose guest-tools artifact to bundle (blank - the newest successful run)
+        required: false
+      version:
+        description: Version in the file names (blank - Cargo.toml's version, plus -ci.RUN_NUMBER)
+        required: false
+      platforms:
+        description: Comma-separated - android, desktop (Linux and Windows), macos
+        required: false
+        default: android,desktop,macos
+  push:
+    branches: ['ci/**']
+    paths:
+      - .github/workflows/release-build.yml
+      - ci/release-inputs.json
+      - ci/release-engine
+      - scripts/build-release.sh
+      - scripts/build.sh
+      - scripts/release/**
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.99.1"
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      engine: ${{ steps.pick.outputs.engine }}
+      guest_run: ${{ steps.pick.outputs.guest_run }}
+      platforms: ${{ steps.pick.outputs.platforms }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        env:
+          IN_ENGINE: ${{ inputs.engine_ref }}
+          IN_GUEST: ${{ inputs.guest_tools_run }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          ref="$IN_ENGINE"; [ -n "$ref" ] || ref=$(tr -d ' \n' < ci/release-engine)
+          engine=$(gh api "repos/blake-lucas/qemu-ios/commits/$ref" --jq .sha)
+          guest="$IN_GUEST"
+          [ -n "$guest" ] || guest=$(gh run list -R "$GITHUB_REPOSITORY" -w guest-package.yml --status success -L 1 \
+              --json databaseId --jq '.[0].databaseId')
+          [ -n "$guest" ] || { echo '::error::no successful Guest packages run'; exit 1; }
+          version="$IN_VERSION"
+          [ -n "$version" ] || version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-ci.$GITHUB_RUN_NUMBER"
+          platforms="${IN_PLATFORMS:-android,desktop,macos}"
+          { echo "version=$version"; echo "engine=$engine"; echo "guest_run=$guest"; echo "platforms=$platforms"; } >> "$GITHUB_OUTPUT"
+          echo "### LightTouch $version" >> "$GITHUB_STEP_SUMMARY"
+          echo "app \`$GITHUB_SHA\`, engine \`$engine\` ($ref), guest tools from run $guest, platforms $platforms" >> "$GITHUB_STEP_SUMMARY"
+
+  desktop:
+    needs: setup
+    if: contains(needs.setup.outputs.platforms, 'desktop')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VER: ${{ needs.setup.outputs.version }}
+      CI_ROOT: ${{ github.workspace }}/ci-inputs
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc /usr/local/lib/android \
+            /usr/local/share/chromium /usr/local/share/powershell /opt/hostedtoolcache/CodeQL || true
+          df -h / | tail -1
+      - uses: actions/checkout@v4
+        with:
+          path: release-${{ env.VER }}/app
+      - uses: actions/checkout@v4
+        with:
+          repository: blake-lucas/qemu-ios
+          ref: ${{ needs.setup.outputs.engine }}
+          path: release-${{ env.VER }}/engine
+      - name: Host tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix \
+            binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ninja-build pkg-config python3-venv zstd patchelf > /dev/null
+          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target x86_64-pc-windows-gnu
+          rustup default "$RUST_VERSION"
+      - name: Engine subprojects
+        working-directory: release-${{ env.VER }}/engine
+        run: |
+          "$RUNNER_TEMP/meson/bin/meson" subprojects download berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb dtc slirp
+          grep -q udp_refuse_dns subprojects/slirp/src/udp.c
+      - name: Pinned inputs
+        run: |
+          python3 release-$VER/app/scripts/release/fetch-inputs.py "$CI_ROOT" ffmpeg appimagetool desktop-notices windows-usb-bridge msys2
+          gh run download "${{ needs.setup.outputs.guest_run }}" -R "$GITHUB_REPOSITORY" -n guest-tools -D "$CI_ROOT/guest-tools"
+          cat "$CI_ROOT/guest-tools/VERSION"
+      - name: Linux build image
+        run: docker build -q -t lighttouch-linux-build -f release-$VER/app/scripts/release/linux-build.Dockerfile release-$VER/app/scripts/release
+      - name: Linux dependency recipes
+        id: linux-recipes
+        run: |
+          key=$(cat release-$VER/engine/contrib/portable/{dependencies.json,crypto-dependencies.json,build-deps.py,build-crypto-deps.py,cache.py} \
+                    release-$VER/engine/contrib/ffmpeg/*.patch release-$VER/app/build-support/dependencies.json \
+                    release-$VER/app/build-support/patches/* release-$VER/app/Linux/packaging/build-mobile-deps.py \
+                    release-$VER/app/Linux/packaging/patches/* release-$VER/app/scripts/release/linux-build.Dockerfile \
+                    release-$VER/app/scripts/release/build-linux-inputs.sh | sha256sum | cut -c1-24)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: linux-deps
+        with:
+          path: ci-inputs/builds/linux-desktop/bullseye-build01
+          key: lt-linux-deps-${{ steps.linux-recipes.outputs.key }}
+      - name: Build the Linux dependency prefixes
+        if: steps.linux-deps.outputs.cache-hit != 'true'
+        run: |
+          LT_TRIM=1 bash release-$VER/app/scripts/release/build-linux-inputs.sh release-$VER/engine \
+            "$CI_ROOT/builds/linux-desktop/bullseye-build01" lighttouch-linux-build
+          du -sh "$CI_ROOT/builds/linux-desktop/bullseye-build01"
+      - name: Windows, Linux and desktop steps
+        env:
+          LT_RELEASE_ROOT: ${{ github.workspace }}
+          QEMU_IOS: ${{ github.workspace }}/release-${{ needs.setup.outputs.version }}/engine
+          LT_INPUTS: ${{ github.workspace }}/ci-inputs/builds
+          LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
+          LT_WIN_DEPS: ${{ github.workspace }}/ci-inputs/win-deps
+          LT_DESKTOP_NOTICES: ${{ github.workspace }}/ci-inputs/notices
+          LT_LINUX_IMAGE: lighttouch-linux-build
+          LT_JOBS: "4"
+        run: |
+          set -o pipefail
+          app=release-$VER/app
+          for s in windows linux desktop; do
+            bash "$app/scripts/build-release.sh" "$VER" $s || {
+              for l in windows-engine linux desktop-linux desktop-linux-package desktop-windows desktop-windows-package; do
+                [ -f "release-$VER/$l.log" ] && { echo "::group::$l.log"; tail -150 "release-$VER/$l.log"; echo "::endgroup::"; }
+              done
+              exit 1; }
+            df -h / | tail -1
+          done
+          ls -la release-$VER/out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightTouch-v${{ env.VER }}-Linux-x86_64
+          path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-Linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightTouch-v${{ env.VER }}-Windows-x86_64
+          path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-Windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-logs
+          path: release-${{ env.VER }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android:
+    needs: setup
+    if: contains(needs.setup.outputs.platforms, 'android')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VER: ${{ needs.setup.outputs.version }}
+      CI_ROOT: ${{ github.workspace }}/ci-inputs
+      ANDROID_NDK_VERSION: 28.2.13676358
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc /usr/local/share/chromium \
+            /usr/local/share/powershell /opt/hostedtoolcache/CodeQL /usr/local/lib/android/sdk/system-images \
+            /usr/local/lib/android/sdk/emulator || true
+          df -h / | tail -1
+      - uses: actions/checkout@v4
+        with:
+          path: release-${{ env.VER }}/app
+      - uses: actions/checkout@v4
+        with:
+          repository: blake-lucas/qemu-ios
+          ref: ${{ needs.setup.outputs.engine }}
+          path: release-${{ env.VER }}/engine
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Host tools, NDK and SDK packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ninja-build pkg-config python3-venv autoconf automake libtool \
+            gettext autopoint > /dev/null
+          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0
+          echo "$RUNNER_TEMP/meson/bin" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" "cmake;3.22.1" \
+            "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target aarch64-linux-android
+          rustup default "$RUST_VERSION"
+      - name: Engine subprojects
+        working-directory: release-${{ env.VER }}/engine
+        run: |
+          meson subprojects download berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb dtc slirp
+          grep -q udp_refuse_dns subprojects/slirp/src/udp.c
+      - name: Pinned inputs
+        run: |
+          python3 release-$VER/app/scripts/release/fetch-inputs.py "$CI_ROOT" android-angle android-frontend-notices android-engine-pgo
+          gh run download "${{ needs.setup.outputs.guest_run }}" -R "$GITHUB_REPOSITORY" -n guest-tools -D "$CI_ROOT/guest-tools"
+          cat "$CI_ROOT/guest-tools/VERSION"
+      - name: Android dependency recipes
+        id: android-recipes
+        run: |
+          key=$( { echo "$ANDROID_NDK_VERSION"; cat release-$VER/engine/contrib/portable/{dependencies.json,crypto-dependencies.json,build-deps.py,build-crypto-deps.py,cache.py,libgpg-error-android-lock.patch} \
+                    release-$VER/engine/contrib/ffmpeg/*.patch release-$VER/app/build-support/dependencies.json \
+                    release-$VER/app/build-support/patches/* release-$VER/app/Android/packaging/build-mobile-android.py \
+                    release-$VER/app/Android/native-services/* release-$VER/app/Linux/packaging/patches/*; } | sha256sum | cut -c1-24)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: android-deps
+        with:
+          path: |
+            ci-inputs/builds/backend/deps/arm64-v8a
+            ci-inputs/builds/backend/crypto/arm64-v8a
+            ci-inputs/builds/mobile-android/arm64-v8a
+          key: lt-android-deps-${{ steps.android-recipes.outputs.key }}
+      - name: Build the Android dependency prefixes and the USB bridge
+        if: steps.android-deps.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          mkdir -p ci/bin
+          for t in make ninja; do
+            printf '#!/bin/bash\nargs=(); for a in "$@"; do case "$a" in -j2) args+=(-j4) ;; *) args+=("$a") ;; esac; done\nexec %s "${args[@]}"\n' \
+              "$(command -v $t)" > ci/bin/$t
+            chmod +x ci/bin/$t
+          done
+          export PATH="$PWD/ci/bin:$PATH"
+          B="$CI_ROOT/builds"
+          python3 release-$VER/engine/contrib/portable/build-deps.py "$B/backend/deps/arm64-v8a" --abi arm64-v8a --ndk "$NDK" --meson meson
+          python3 release-$VER/engine/contrib/portable/build-crypto-deps.py "$B/backend/crypto/arm64-v8a" --abi arm64-v8a --ndk "$NDK"
+          python3 release-$VER/app/Android/packaging/build-mobile-android.py "$RUNNER_TEMP/mobile-android" --ndk "$NDK" --jobs 4
+          mkdir -p "$B/mobile-android"
+          cp -a "$RUNNER_TEMP/mobile-android/arm64-v8a" "$B/mobile-android/"
+          ls -la "$B/mobile-android/arm64-v8a"
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
+          else
+            echo "::warning::no ANDROID_DEBUG_KEYSTORE secret: this APK is signed with a key of its own and won't install over a published release"
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storetype PKCS12 -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep -m1 SHA256
+      - name: Android step
+        env:
+          LT_RELEASE_ROOT: ${{ github.workspace }}
+          QEMU_IOS: ${{ github.workspace }}/release-${{ needs.setup.outputs.version }}/engine
+          LT_INPUTS: ${{ github.workspace }}/ci-inputs/builds
+          LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
+          LT_CHECK_VERSION: "false"
+          LT_GRADLE_OFFLINE: "false"
+          JOBS: "4"
+        run: |
+          bash release-$VER/app/scripts/build-release.sh "$VER" android || {
+            g=release-$VER/app/build/obj/android-gradle.out
+            [ -f "$g" ] && { echo "::group::android-gradle.out"; tail -200 "$g"; echo "::endgroup::"; }
+            exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightTouch-v${{ env.VER }}-android-arm64
+          path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-android-arm64.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  macos:
+    needs: setup
+    if: contains(needs.setup.outputs.platforms, 'macos')
+    # The image guest-package.yml builds on: Apple Silicon, Xcode 27.
+    runs-on: xcode-27
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VER: ${{ needs.setup.outputs.version }}
+      CI_ROOT: ${{ github.workspace }}/ci-inputs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: release-${{ env.VER }}/app
+      - uses: actions/checkout@v4
+        with:
+          repository: blake-lucas/qemu-ios
+          ref: ${{ needs.setup.outputs.engine }}
+          path: release-${{ env.VER }}/engine
+      - name: Homebrew and Rust
+        run: |
+          brew install ninja meson jq pkg-config glib pixman libslirp nettle openssl@3 sdl2 python@3.13 > /dev/null
+          command -v rustup > /dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; }
+          "$HOME/.cargo/bin/rustup" toolchain install "$RUST_VERSION" --profile minimal
+          "$HOME/.cargo/bin/rustup" default "$RUST_VERSION"
+          xcodebuild -version
+      - name: Engine subprojects
+        working-directory: release-${{ env.VER }}/engine
+        run: |
+          meson subprojects download berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb dtc slirp
+          grep -q udp_refuse_dns subprojects/slirp/src/udp.c
+      - name: Pinned inputs
+        run: |
+          python3 release-$VER/app/scripts/release/fetch-inputs.py "$CI_ROOT" ffmpeg desktop-notices macos-usb-bridge
+          gh run download "${{ needs.setup.outputs.guest_run }}" -R "$GITHUB_REPOSITORY" -n guest-tools -D "$CI_ROOT/guest-tools"
+          mkdir -p "$CI_ROOT/ltm" && ditto -x -k "$CI_ROOT/LightTouchMac-universal.zip" "$CI_ROOT/ltm"
+          usb=$(find "$CI_ROOT/ltm" -path '*/Contents/MacOS/usbmuxd' -type f | head -1)
+          [ -n "$usb" ] || { echo '::error::no Contents/MacOS/usbmuxd in the LightTouchMac app'; exit 1; }
+          echo "LT_MAC_VENDOR=$(dirname "$(dirname "$usb")")" >> "$GITHUB_ENV"
+          file "$usb"
+      - name: macOS step
+        env:
+          LT_RELEASE_ROOT: ${{ github.workspace }}
+          LT_MAC: local
+          LT_MAC_ROOT: mac-build
+          LT_INPUTS: ${{ github.workspace }}/ci-inputs/builds
+          LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
+          LT_DESKTOP_NOTICES: ${{ github.workspace }}/ci-inputs/notices
+        run: |
+          export LT_MAC_PYTHON="$(brew --prefix python@3.13)/bin/python3.13" LT_MAC_OPENSSL="$(brew --prefix openssl@3)"
+          bash release-$VER/app/scripts/build-release.sh "$VER" macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightTouch-v${{ env.VER }}-macOS-arm64
+          path: release-${{ env.VER }}/out/LightTouch-v${{ env.VER }}-macOS-arm64.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-logs
+          path: ~/mac-build/LightTouch-Release-${{ env.VER }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7
