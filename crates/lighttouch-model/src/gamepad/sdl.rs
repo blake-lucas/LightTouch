@@ -288,8 +288,9 @@ pub fn start(
         };
         // Controllers keep working while another window has the focus: LightTouch decides when to listen.
         hint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
-        // The PlayStation and Switch drivers that read the motion sensors (the default where SDL has HIDAPI).
-        hint("SDL_JOYSTICK_HIDAPI_PS4_RUMBLE", "0");
+        // No SDL_JOYSTICK_HIDAPI_PS4_RUMBLE: sdl2-compat (Fedora's and Homebrew's SDL2) maps it onto SDL 3's
+        // SDL_JOYSTICK_ENHANCED_REPORTS, whose "0" keeps every Switch and PlayStation controller in its plain reports,
+        // without motion. Left alone, SDL turns enhanced reports on when its sensors are asked for.
         // SAFETY: SDL_Init from the thread that will make every other SDL call.
         let ok = unsafe { (sdl.SDL_Init)(SDL_INIT_GAMECONTROLLER | SDL_INIT_SENSOR) } == 0
             // SAFETY: as above.
@@ -350,7 +351,15 @@ impl Virtual {
         let index = unsafe { attach(1, 6, BUTTONS, 0) };
         let joystick = if index >= 0 { unsafe { open(index) } } else { std::ptr::null_mut() };
         let id = unsafe { (sdl.SDL_JoystickGetDeviceInstanceID)(index) };
-        (!joystick.is_null()).then_some(Virtual { file, joystick, id, seen: None, accel: None, gyro: None, blocked: false })
+        (!joystick.is_null()).then_some(Virtual {
+            file,
+            joystick,
+            id,
+            seen: None,
+            accel: None,
+            gyro: None,
+            blocked: false,
+        })
     }
 
     fn update(&mut self, sdl: &Sdl) {
@@ -431,7 +440,31 @@ fn poll(sdl: &Sdl, shared: &Mutex<Pads>, woke: &dyn Fn(), log: &mut Log) {
     }
 }
 
+/// Turn a controller's gyroscope and accelerometer on, where SDL has them: (gyro, accelerometer).
+///
+/// SAFETY: `handle` is an open controller, on SDL's thread.
+unsafe fn enable_sensors(sdl: &Sdl, handle: *mut c_void) -> (bool, bool) {
+    let sensor = |kind: c_int| {
+        // SAFETY: as the function's.
+        let has = sdl.SDL_GameControllerHasSensor.is_some_and(|f| unsafe { f(handle, kind) } != 0);
+        // SAFETY: as above.
+        has && sdl.SDL_GameControllerSetSensorEnabled.is_some_and(|f| unsafe { f(handle, kind, 1) } == 0)
+    };
+    (sensor(SDL_SENSOR_GYRO), sensor(SDL_SENSOR_ACCEL))
+}
+
 fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
+    // A driver may add a controller's sensors after it opens (SDL 3's, once the controller sends its full reports):
+    // look again at each one without them.
+    for o in open.iter_mut().filter(|o| !o.accel) {
+        // SAFETY: as in poll; the handle is still open.
+        let (gyro, accel) = unsafe { enable_sensors(sdl, o.handle) };
+        if accel {
+            log.line(&format!("{}: motion sensors appeared (gyro {})", o.name, if gyro { "on" } else { "none" }));
+            (o.gyro, o.accel, o.motion_note, o.motion_fix) = (gyro, accel, None, false);
+            o.enabled_at = Instant::now();
+        }
+    }
     // SAFETY: as in poll.
     unsafe {
         open.retain(|o| {
@@ -463,11 +496,7 @@ fn rescan(sdl: &Sdl, open: &mut Vec<Open>, log: &mut Log) {
                 Some(5 | 11 | 12 | 13) => PadKind::Nintendo,
                 _ => PadKind::Xbox,
             };
-            let sensor = |kind: c_int| {
-                let has = sdl.SDL_GameControllerHasSensor.is_some_and(|f| f(handle, kind) != 0);
-                has && sdl.SDL_GameControllerSetSensorEnabled.is_some_and(|f| f(handle, kind, 1) == 0)
-            };
-            let (gyro, accel) = (sensor(SDL_SENSOR_GYRO), sensor(SDL_SENSOR_ACCEL));
+            let (gyro, accel) = enable_sensors(sdl, handle);
             let rate = |kind: c_int| sdl.SDL_GameControllerGetSensorDataRate.map_or(0.0, |f| f(handle, kind));
             let vendor = sdl.SDL_GameControllerGetVendor.map_or(0, |f| f(handle));
             let (motion_note, motion_fix) = match if accel { None } else { motion_blocked(sdl, pad_type, vendor) } {
@@ -587,12 +616,18 @@ fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<(St
     }
     if hidraw.iter().any(|p| can(p, libc::R_OK | libc::W_OK)) {
         let old = if (version[0], version[1]) < (2, 26) {
-            format!(", or SDL {}.{}.{} is too old for this controller and the kernel's driver", version[0], version[1], version[2])
+            format!(
+                ", or SDL {}.{}.{} is too old for this controller and the kernel's driver",
+                version[0], version[1], version[2]
+            )
         } else {
             String::new()
         };
         return Some((
-            format!("SDL can open the controller but gets no motion from it: Steam Input may be holding it{old}"),
+            format!(
+                "SDL opens the controller but reports no motion sensors. If Steam is running, close it and reconnect the \
+                 controller{old}"
+            ),
             false,
         ));
     }
@@ -610,7 +645,8 @@ fn motion_blocked(sdl: &Sdl, pad_type: Option<c_int>, vendor: u16) -> Option<(St
     if reads_imu && imu.iter().any(|p| can(p, libc::R_OK)) {
         return None;
     }
-    let blocked: Vec<&str> = hidraw.iter().chain(if reads_imu { imu.iter() } else { [].iter() }).map(|s| s.as_str()).collect();
+    let blocked: Vec<&str> =
+        hidraw.iter().chain(if reads_imu { imu.iter() } else { [].iter() }).map(|s| s.as_str()).collect();
     if blocked.is_empty() {
         return None;
     }

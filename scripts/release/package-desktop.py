@@ -153,6 +153,11 @@ def main():
         given = sorted(libs.iterdir()) if libs.is_dir() else []
         kegs = bundle_dylibs({res / engine: args.engine, res / "usbmuxd-qemu": args.usbmuxd,
                               **{f: given_from.get(f.name.lower(), f) for f in given}}, libs)
+        # The given libraries' own licence files too (SDL2 and SDL3 from Homebrew), not only those of what they load.
+        for real in given_from.values():
+            if "Cellar" in real.parts:
+                i = real.parts.index("Cellar")
+                kegs = sorted(set(kegs) | {(real.parts[i + 1], Path(*real.parts[: i + 3]))})
     elif windows:
         check_imports([args.out / "lighttouch.exe", *res.glob("*.exe"), *res.glob("*.dll")])
     else:

@@ -335,7 +335,7 @@ jobs:
           path: release-${{ env.VER }}/engine
       - name: Homebrew and Rust
         run: |
-          brew install ninja meson jq pkg-config glib pixman libslirp nettle openssl@3 sdl2 python@3.13 > /dev/null
+          brew install ninja meson jq pkg-config glib pixman libslirp nettle openssl@3 sdl2 sdl3 python@3.13 > /dev/null
           # The macos step looks for cargo in ~/.cargo/bin, as on the development Mac.
           echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"; echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
           export CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup"

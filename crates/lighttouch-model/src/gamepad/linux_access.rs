@@ -19,6 +19,8 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="054c", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*054C:*", TAG+="uaccess"
 # The motion devices of the kernel's hid-nintendo and hid-playstation drivers.
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Nintendo Switch*IMU", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*Pro Controller (IMU)", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Joy-Con*(IMU)", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Sony*Motion Sensors", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*Wireless Controller Motion Sensors", TAG+="uaccess"
 "#;
@@ -119,9 +121,13 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        assert!(std::process::Command::new("/bin/sh").args(["-c", &typed(install_commands())]).status().unwrap().success());
+        assert!(
+            std::process::Command::new("/bin/sh").args(["-c", &typed(install_commands())]).status().unwrap().success()
+        );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), RULES);
-        assert!(std::process::Command::new("/bin/sh").args(["-c", &typed(remove_commands())]).status().unwrap().success());
+        assert!(
+            std::process::Command::new("/bin/sh").args(["-c", &typed(remove_commands())]).status().unwrap().success()
+        );
         assert!(!target.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }

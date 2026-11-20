@@ -218,14 +218,18 @@ step_macos() {
         caffeinate -s $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
             --openssl-prefix $LT_MAC_OPENSSL --ffmpeg-archive \$PWD/$ff > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
         brew list sdl2 > /dev/null 2>&1 || brew install sdl2 > /dev/null
+        brew list sdl3 > /dev/null 2>&1 || brew install sdl3 > /dev/null
         (cd app && caffeinate -s cargo build --release --locked -p lighttouch -p lighttouch-firmware \
             --features lighttouch-services/vendored-openssl) > app.log 2>&1 || { tail -30 app.log; exit 1; }
         $LT_MAC_PYTHON -B app/scripts/release/package-desktop.py \$PWD/LightTouch.app --os macos --app app/target/release/lighttouch \
             --firmwarekit app/target/release/firmwarekit --engine engine/libqemu-arm.dylib --usbmuxd '$LT_MAC_VENDOR/MacOS/usbmuxd' \
-            --guest-tools guest-tools --lib \$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib \
+            --guest-tools guest-tools --lib \$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib --lib \$(brew --prefix sdl3)/lib/libSDL3.dylib \
             --notices engine=\$PWD/notices/engine --notices usb=\$PWD/notices/usb \
             --group-source engine=$GH_ENGINE > package.log 2>&1 || { tail -30 package.log; exit 1; }
         codesign --verify --deep --strict LightTouch.app
+        # Homebrew's SDL2 is sdl2-compat, which loads SDL 3 as it loads, from beside it (@loader_path/libSDL3.dylib), and
+        # aborts without it: the app quit as the Controls window opened. Load the bundled one as the app would.
+        $LT_MAC_PYTHON -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' LightTouch.app/Contents/Frameworks/libSDL2-2.0.0.dylib
         ditto -c -k --keepParent LightTouch.app $out.zip"
     mac_get "$m/$out.zip" "$OUTD/"
     echo "$OUTD/$out.zip"
