@@ -34,7 +34,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_INPUTS:=$LT_INPUTS/linux-desktop/bullseye-build01}"    # deps-full/ crypto/ mobile-private-runtime-ui15/
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
-: "${LT_LINUX_CPUS:=$(nproc)}"                                       # the Linux build container's CPUs and jobs"
+: "${LT_LINUX_CPUS:=$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"     # the Linux build container's CPUs and jobs
 : "${LT_WIN_DEPS:=$D/release-0.0.10/win-deps}"                       # MinGW sysroot (copied; FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (the USB bridge)
 : "${LT_FFMPEG_ARCHIVE:=$LT_INPUTS/backend/deps-linux/ffmpeg-9.0.1.tar.xz}"   # checked by its SHA-256
@@ -258,7 +258,7 @@ if [ ${#steps[@]} = 0 ]; then steps=(prepare android windows linux desktop macos
 for s in "${steps[@]}"; do
     case "$s" in prepare|android|windows|linux|desktop|macos|finish|publish) ;; *) echo "unknown step: $s" >&2; exit 2 ;; esac
 done
-mkdir -p "$R"
+mkdir -p "$R" "$OUTD"
 for s in "${steps[@]}"; do
     if [ $auto = 1 ] && [ -f "$R/.done-$s" ]; then log "$s already done"; continue; fi
     log "$s"; rm -f "$R/.done-$s"
