@@ -35,9 +35,10 @@ const KEY_RAMP: Duration = Duration::from_millis(300);
 /// A centered pointer set to jump at once glides at this speed when keys steer it (screen widths a second).
 const KEY_FOLLOW: f32 = 4.0;
 /// A stick binding's tap: how long the finger stays down at least (a quick click still registers), and how long it
-/// stays up around the tap, so a game that reads its touches once a frame (30 a second, say) sees every lift.
+/// stays up around the tap, so a game that reads its touches once a frame sees every lift, even one held to 30 frames
+/// a second that drops to 20 (Battle Bears Zombies missed 35 ms).
 const STICK_TAP: Duration = Duration::from_millis(60);
-const TAP_GAP: Duration = Duration::from_millis(35);
+const TAP_GAP: Duration = Duration::from_millis(70);
 /// A joystick's finger glides to where the stick points at one reach in this long (a stick let go in a frame would
 /// otherwise jump the finger back to the centre, which some games' sticks don't settle from), at speed 1.
 const JOYSTICK_GLIDE: f32 = 0.05;
@@ -1380,14 +1381,14 @@ mod tests {
         step(stick_at(1.0, 0.0, 0), 100);
         // Fire while aiming right: the finger lifts where it was, then taps the centre while the button is held.
         assert_eq!(step(stick_at(1.0, 0.0, fire), 110), [(UP, 0.6f32 as f64)]);
-        assert_eq!(step(stick_at(1.0, 0.0, fire), 140), []);
-        assert_eq!(step(stick_at(1.0, 0.0, fire), 150), [(DOWN, 0.5)]);
+        assert_eq!(step(stick_at(1.0, 0.0, fire), 170), []);
+        assert_eq!(step(stick_at(1.0, 0.0, fire), 180), [(DOWN, 0.5)]);
         assert_eq!(step(stick_at(1.0, 0.0, fire), 300), []);
         assert_eq!(step(stick_at(1.0, 0.0, 0), 320), [(UP, 0.5)]);
         // Still aiming: a moment later it lands on the centre and glides back out.
-        assert_eq!(step(stick_at(1.0, 0.0, 0), 340), []);
-        assert_eq!(step(stick_at(1.0, 0.0, 0), 360), [(DOWN, 0.5)]);
-        let out = step(stick_at(1.0, 0.0, 0), 430);
+        assert_eq!(step(stick_at(1.0, 0.0, 0), 380), []);
+        assert_eq!(step(stick_at(1.0, 0.0, 0), 390), [(DOWN, 0.5)]);
+        let out = step(stick_at(1.0, 0.0, 0), 460);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, MOVE);
         assert!((out[0].1 - 0.6).abs() < 1e-5);
@@ -1570,41 +1571,52 @@ mod tests {
         (at(DOWN), at(UP))
     }
 
+    /// How many 8 ms steps `d` takes.
+    fn steps(d: Duration) -> usize {
+        (d.as_millis() as usize).div_ceil(8)
+    }
+
     #[test]
     fn a_look_tap_lifts_the_finger_taps_where_it_was_and_looks_on() {
+        let (gap, least) = (steps(TAP_GAP), steps(STICK_TAP));
         // Looking from step 0; a click on steps 10 and 11.
-        let all = look_taps(|i| (10..12).contains(&i), 60);
+        let all = look_taps(|i| (10..12).contains(&i), 100);
         let (downs, ups) = downs_ups(&all);
         // The look's finger lifts on the click, the tap lands a gap later and stays down its least, lifts, and the
         // look lands again a gap after that.
         assert_eq!(ups[0], 10, "{all:?}");
-        assert_eq!(downs[1], 10 + 5, "{all:?}");
-        assert_eq!(ups[1], 15 + 8, "{all:?}");
-        assert_eq!(downs[2], 23 + 5, "{all:?}");
-        assert_eq!((downs.len(), ups.len()), (3, 2), "{all:?}");
+        assert_eq!(downs[1], 10 + gap, "{all:?}");
+        assert_eq!(ups[1], 10 + gap + least, "{all:?}");
+        assert_eq!(downs[2], 10 + gap + least + gap, "{all:?}");
+        // Nothing else until the look nears its area's edge.
+        assert!(downs.len() == 3 || downs[3] > 50, "{all:?}");
+        assert!(ups.len() == 2 || ups[2] > 50, "{all:?}");
     }
 
     #[test]
     fn a_held_tap_stays_down_until_let_go() {
-        let all = look_taps(|i| (10..40).contains(&i), 60);
+        let all = look_taps(|i| (10..60).contains(&i), 100);
         let (downs, ups) = downs_ups(&all);
-        assert_eq!((downs[1], ups[1]), (15, 40), "{all:?}");
+        assert_eq!((downs[1], ups[1]), (10 + steps(TAP_GAP), 60), "{all:?}");
     }
 
     #[test]
     fn fast_clicks_tap_once_more_at_most_and_none_is_lost_between_taps() {
+        let (gap, least) = (steps(TAP_GAP), steps(STICK_TAP));
+        let first = 10 + gap;
         // Three clicks while the first tap is down make one more tap, not three.
-        let all = look_taps(|i| [10, 17, 19, 21].contains(&i), 80);
+        let clicks = [10, first + 1, first + 3, first + 5];
+        let all = look_taps(|i| clicks.contains(&(i as usize)), 140);
         let (downs, ups) = downs_ups(&all);
-        let taps: Vec<usize> = downs[1..].iter().copied().filter(|&d| d < 40).collect();
-        assert_eq!(taps, [15, 23 + 5], "{all:?}");
+        let second = first + least + gap;
+        assert_eq!(downs[1..3], [first, second], "{all:?}");
         // Then the look lands again, and nothing else.
-        let before = |v: &[usize]| v.iter().filter(|&&i| i < 60).count();
+        let before = |v: &[usize]| v.iter().filter(|&&i| i < second + least + gap + 20).count();
         assert_eq!((before(&downs), before(&ups)), (4, 3), "{all:?}");
-        // A click just after a tap lifted (while it waits to look again) still taps.
-        let all = look_taps(|i| i == 10 || i == 24, 80);
+        // A click just after a tap lifted (while it waits to look again) still taps, once the lift has shown.
+        let all = look_taps(|i| i == 10 || i as usize == first + least + 2, 140);
         let (downs, _) = downs_ups(&all);
-        assert_eq!(&downs[1..3], [15, 23 + 5], "{all:?}");
+        assert_eq!(downs[1..3], [first, second], "{all:?}");
     }
 
     #[test]
