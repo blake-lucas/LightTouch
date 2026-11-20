@@ -119,7 +119,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix \
             binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ninja-build pkg-config python3-venv zstd patchelf > /dev/null
-          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0
+          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0 packaging==24.0
           rustup toolchain install "$RUST_VERSION" --profile minimal --target x86_64-pc-windows-gnu
           rustup default "$RUST_VERSION"
       - name: Engine subprojects
@@ -232,7 +232,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends ninja-build pkg-config python3-venv autoconf automake libtool \
             gettext autopoint > /dev/null
-          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0
+          python3 -m venv "$RUNNER_TEMP/meson" && "$RUNNER_TEMP/meson/bin/pip" install -q meson==1.10.0 packaging==24.0
           echo "$RUNNER_TEMP/meson/bin" >> "$GITHUB_PATH"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" "cmake;3.22.1" \
