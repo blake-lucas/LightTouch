@@ -801,6 +801,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     }
                 }
             } catch (e: Exception) { e.message ?: "Device worker exited during import" }
+            if (result.isEmpty()) AppLog.i("Added \"$name\" ($board $build) in ${(SystemClock.elapsedRealtime() - started) / 1000} s")
+            else AppLog.w("Adding the prepared $board $build failed: $result")
             if (result.isEmpty()) {
                 // The device holds its own copy now; the prepared output and the IPSW only take space.
                 File(destination).deleteRecursively(); File("$destination.native.log").delete()

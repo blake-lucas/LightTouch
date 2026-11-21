@@ -25,6 +25,7 @@ docs/*
 !docs/DESKTOP.md
 !docs/NETWORK.md
 !docs/BUILD-PLAN.md
+!docs/LOGS.md
 scripts/build.env
 *.profraw
 
