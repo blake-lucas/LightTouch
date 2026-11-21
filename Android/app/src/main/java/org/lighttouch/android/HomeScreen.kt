@@ -160,7 +160,7 @@ private fun Dock(host: GuestHost, onStop: () -> Unit) {
             if (host.settings.hitchButton) DockButton(LtIcons.Timeline, "Inspect", host::openHitch, Modifier.weight(1f), enabled = canControl, tag = "hitch_button")
             // While a shutdown is under way the same button forces it.
             DockButton(LtIcons.Stop, if (host.status == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
-                enabled = host.sessionOwned && !host.storeInstalling, tint = LtColors.Danger, tag = "stop_guest")
+                enabled = host.sessionOwned, tint = LtColors.Danger, tag = "stop_guest")
         }
     }
 }
@@ -168,7 +168,7 @@ private fun Dock(host: GuestHost, onStop: () -> Unit) {
 /** Shutting down is slow and closes every app, so it is confirmed; Save & Stop keeps the session. */
 @Composable
 internal fun StopDialog(host: GuestHost, onDismiss: () -> Unit) {
-    if (host.status == "stopping") return ForceStopDialog(host, onDismiss)
+    if (host.status == "stopping" || host.storeInstalling) return ForceStopDialog(host, onDismiss)
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Power, null) },
         title = { Text("Stop ${host.selected?.name ?: "device"}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
@@ -192,17 +192,19 @@ internal fun StopDialog(host: GuestHost, onDismiss: () -> Unit) {
         })
 }
 
-/** Stop has been asked for and iOS hasn't finished: end it now instead of waiting out the deadline. */
+/** Stop has been asked for and iOS hasn't finished, or an app install would hold the shutdown up: end it now. */
 @Composable
 private fun ForceStopDialog(host: GuestHost, onDismiss: () -> Unit) {
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Stop, null) },
         title = { Text("Force stop ${host.selected?.name ?: "device"}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
-        text = { Text("iOS hasn't finished shutting down. Force stop ends it now, like pulling the battery: anything it hadn't saved is lost, and the next start checks the device's storage first.",
+        text = { Text(if (host.status != "stopping" && host.storeInstalling)
+                "An app is being installed, so iOS can't shut down until that finishes. Force stop ends it now, like pulling the battery: the app being installed is lost, along with anything else iOS hadn't saved, and the next start checks the device's storage first."
+                else "iOS hasn't finished shutting down. Force stop ends it now, like pulling the battery: anything it hadn't saved is lost, and the next start checks the device's storage first.",
             style = MaterialTheme.typography.bodyMedium) },
         confirmButton = { Button(onClick = { onDismiss(); host.forceStop() }, modifier = Modifier.testTag("confirm_force_stop"),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Force stop") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep waiting") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (host.status != "stopping" && host.storeInstalling) "Keep installing" else "Keep waiting") } })
 }
 
 internal fun Color.luminance() = 0.2126f * red + 0.7152f * green + 0.0722f * blue

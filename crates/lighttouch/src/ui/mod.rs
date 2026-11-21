@@ -498,6 +498,28 @@ impl App {
                         }
                     });
                 }
+                // iOS is installing an app: a shutdown would wait for it, so the only way out now is Force stop.
+                Dialog::Stop if self.model.store.mutating() => {
+                    let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                    ui.label(widgets::icon_text(icons::POWER, 26.0).color(theme::DANGER));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(format!("Force stop {name}?")).font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(
+                        &p,
+                        "iOS is installing an app, so it can't shut down until that finishes. Force stop ends it now, like pulling the battery: the app being installed is lost, along with anything else iOS hadn't saved, and the next start checks the device's storage first.",
+                    ));
+                    ui.add_space(16.0);
+                    widgets::dialog_buttons(ui, |ui| {
+                        if widgets::danger(ui, "Force stop").clicked() {
+                            self.model.force_stop();
+                            close = true;
+                        }
+                        if widgets::text_button(ui, &p, "Keep installing").clicked() {
+                            close = true;
+                        }
+                    });
+                }
                 Dialog::Stop => {
                     let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
                     ui.label(widgets::icon_text(icons::POWER, 26.0).color(p.primary));

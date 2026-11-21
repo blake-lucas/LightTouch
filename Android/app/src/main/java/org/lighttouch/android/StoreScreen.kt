@@ -115,6 +115,8 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 
     val servicesAvailable get() = apps.available
     val installing get() = queue.any { it.active }
+    /** iOS is installing an app ([QueueItem.committed]): a shutdown now would wait for it, so only Force stop helps. */
+    val committed get() = queue.any { it.active && it.committed }
 
     init {
         installer.onChanged = { queue = it }

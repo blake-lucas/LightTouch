@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val settings by lazy { AppSettings(this) }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
-    override val storeInstalling get() = store.installing
+    override val storeInstalling get() = store.committed
     // Save & Stop needs the engine to serialize live GL state on EGL hosts (docs/TODO.md).
     override val canSaveState = false
     /** HOME or FULLSCREEN: what is under any full-page overlay. */

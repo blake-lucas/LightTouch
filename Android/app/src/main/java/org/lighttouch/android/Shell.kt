@@ -44,6 +44,7 @@ interface GuestHost {
     val profileAutomatic: Boolean
     val profileBusy: Boolean
     val profileNotice: String
+    /** iOS has started installing an app: it can't shut down until that finishes, so Stop offers Force stop. */
     val storeInstalling: Boolean
     /** The engine can save this guest's state (Save & Stop); false until supported on this host. */
     val canSaveState: Boolean
