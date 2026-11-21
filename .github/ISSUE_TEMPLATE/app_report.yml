@@ -2,6 +2,13 @@ name: App or game report
 description: An iOS app or game that won't install, quits, looks wrong or runs slowly
 labels: [compatibility]
 body:
+  - type: markdown
+    attributes:
+      value: >
+        Before reporting, check that the app supports the iOS version your device runs: many Store apps marked
+        compatible need a newer iOS and quit right after opening. An older version of the app often works.
+        [COMPATIBILITY.md](https://github.com/blake-lucas/LightTouch/blob/main/docs/COMPATIBILITY.md) lists what's
+        tested.
   - type: input
     id: app
     attributes:
@@ -46,7 +53,7 @@ body:
     id: host
     attributes:
       label: Phone or computer
-      description: For example "Poco F3" or "Ryzen 7 3700X with an RTX 2080, Windows 11".
+      description: For example "Poco F3" or "Ryzen 7 3700X with an RTX 2080, Windows 11". For graphics problems, the GPU matters most.
     validations:
       required: true
   - type: input
@@ -61,8 +68,20 @@ body:
     attributes:
       label: What happened
       description: >
-        Where in the app it happens and what you see. If it quits, paste what "Why did it quit?" says. For speed,
-        the frame rate you see and what you expected.
+        Where in the app it happens and what you see. If it quits on Android, paste what "Why did it quit?" says in
+        the Store. For speed, the frame rate you see (the performance overlay in Settings shows it) and what you
+        expected.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Right after the problem, with the device still running if you can, open **Settings › Diagnostics › Export
+        logs** and drag the zip here. While the device runs, the zip also gets iOS's newest crash report, which shows
+        where an app quit. It leaves out your files and personal details.
+      placeholder: Drop the LightTouch-logs-....zip file here
     validations:
       required: true
   - type: textarea

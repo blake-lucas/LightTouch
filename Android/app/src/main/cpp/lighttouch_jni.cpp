@@ -176,25 +176,72 @@ void *angle_provider_handles[3]={};
 const char *graphics_provider_name() { return graphics_provider_choice==1?"angle-gl":"platform"; }
 std::string engine_log_path;
 
-// Each guest session writes engine-PID.log into the record's state, and nothing removed
-// them: 137 (41 MB) on one phone, 271 on another. Keep the newest few for diagnosis.
-static void prune_engine_logs(const char *state_path)
+// The engine's log (docs/LOGS.md): files/logs/engine.log is the head of this start's output, then
+// engine.tail.log, which rolls into engine.tail.1.log; the start before is kept as engine.prev*.log.
+// stdout and stderr point at the file itself, not a pipe, so the lines before a crash are on disk;
+// a watcher moves them to the next segment (dup2) once a part passes its size.
+constexpr off_t engine_log_head=1<<20, engine_log_segment=1<<20;
+static const char *const engine_log_parts[]={".log",".tail.1.log",".tail.log"};
+std::string engine_log_dir;
+
+static void engine_log_generation(const std::string &dir)
 {
-    constexpr size_t keep=7;  // plus the one this session opens
-    std::vector<std::pair<time_t,std::string>> logs;
+    for(const char *part:engine_log_parts)unlink((dir+"/engine.prev"+part).c_str());
+    for(const char *part:engine_log_parts)rename((dir+"/engine"+part).c_str(),(dir+"/engine.prev"+part).c_str());
+}
+
+// stdout and stderr to `path` (appending), after `first` if the file is new.
+static bool engine_log_point(const std::string &path,const std::string &first)
+{
+    const int fd=open(path.c_str(),O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
+    if(fd<0)return false;
+    if(!first.empty() && write(fd,first.data(),first.size())<0) {}
+    const bool ok=fchmod(fd,0600)==0 && dup2(fd,STDOUT_FILENO)>=0 && dup2(fd,STDERR_FILENO)>=0;
+    close(fd);
+    if(ok){std::lock_guard<std::mutex> lock(guard);engine_log_path=path;}
+    return ok;
+}
+
+static std::string engine_log_marker(int segment)
+{
+    char line[96];const time_t now=time(nullptr);struct tm local;localtime_r(&now,&local);
+    std::snprintf(line,sizeof(line),"----- [log] tail segment %d, %02d:%02d:%02d -----\n",segment,local.tm_hour,local.tm_min,local.tm_sec);
+    return line;
+}
+
+static void engine_log_watch(std::string dir)
+{
+    std::thread([dir]{
+        int segment=0;
+        for(;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            struct stat st;
+            if(fstat(STDERR_FILENO,&st)!=0)continue;
+            if(segment==0 && st.st_size>=engine_log_head) {
+                fflush(stdout);
+                if(engine_log_point(dir+"/engine.tail.log",engine_log_marker(segment+1)))segment=1;
+            } else if(segment>0 && st.st_size>=engine_log_segment) {
+                fflush(stdout);
+                rename((dir+"/engine.tail.log").c_str(),(dir+"/engine.tail.1.log").c_str());
+                if(engine_log_point(dir+"/engine.tail.log",engine_log_marker(segment+1)))segment++;
+            }
+        }
+    }).detach();
+}
+
+// Logs from before docs/LOGS.md: engine-PID.log files and guest-serial.log in the record's state.
+static void remove_old_engine_logs(const char *state_path)
+{
     if(DIR *dir=opendir(state_path)) {
+        std::vector<std::string> old;
         while(dirent *entry=readdir(dir)) {
             const std::string name=entry->d_name;
-            if(name.rfind("engine-",0)!=0 || name.size()<5 || name.compare(name.size()-4,4,".log")!=0)continue;
-            struct stat st;
-            const std::string path=std::string(state_path)+"/"+name;
-            if(stat(path.c_str(),&st)==0 && S_ISREG(st.st_mode))logs.emplace_back(st.st_mtime,path);
+            if(name.rfind("engine-",0)==0 && name.size()>4 && name.compare(name.size()-4,4,".log")==0)old.push_back(std::string(state_path)+"/"+name);
         }
         closedir(dir);
+        for(const auto &path:old)unlink(path.c_str());
     }
-    if(logs.size()<=keep)return;
-    std::sort(logs.begin(),logs.end());
-    for(size_t i=0;i+keep<logs.size();i++)unlink(logs[i].second.c_str());
+    unlink((std::string(state_path)+"/guest-serial.log").c_str());  // now in files/logs
 }
 std::string debug_qmp_path;
 bool debug_qmp_armed=false;
@@ -817,19 +864,27 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     }
     if(status==LT_OK)status=lt_library_device_open(library,record.value,allow_dirty?1u:0u,&prepared_device,&error);
     if(status==LT_OK) {
-        prune_engine_logs(selected.state_path);
-        const std::string path=std::string(selected.state_path)+"/engine-"+std::to_string(getpid())+".log";
-        const int log_fd=open(path.c_str(),O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
-        if(log_fd<0 || fchmod(log_fd,0600)!=0 || dup2(log_fd,STDOUT_FILENO)<0 || dup2(log_fd,STDERR_FILENO)<0) {
+        remove_old_engine_logs(selected.state_path);
+        // The library is files/library; the logs are files/logs.
+        const std::filesystem::path library_root(path.value);
+        engine_log_dir=(library_root.parent_path()/"logs").string();
+        mkdir(engine_log_dir.c_str(),0700);
+        engine_log_generation(engine_log_dir);
+        // iOS's console for this start; QEMU truncates it, so the start before is kept beside it.
+        rename((engine_log_dir+"/guest-serial.log").c_str(),(engine_log_dir+"/guest-serial.prev.log").c_str());
+        char header[512];const time_t now=time(nullptr);struct tm local;localtime_r(&now,&local);
+        std::snprintf(header,sizeof(header),"[log] engine log of \"%s\" (%s %s, record %.8s), started %04d-%02d-%02d %02d:%02d:%02d%s\n",
+            selected.display_name,selected.board,selected.build,selected.id,local.tm_year+1900,local.tm_mon+1,local.tm_mday,
+            local.tm_hour,local.tm_min,local.tm_sec,allow_dirty?" (recovering retained state)":"");
+        if(!engine_log_point(engine_log_dir+"/engine.log",header)) {
             status=LT_IO;error.code=LT_IO;std::snprintf(error.message,sizeof(error.message),"Cannot retain private guest diagnostics; check available storage");
         } else {
             std::setvbuf(stdout,nullptr,_IOLBF,0);std::setvbuf(stderr,nullptr,_IONBF,0);
-            std::lock_guard<std::mutex> lock(guard);engine_log_path=path;
+            engine_log_watch(engine_log_dir);
         }
-        if(log_fd>=0)close(log_fd);
     }
     if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",selected.board,&prepared_board,&error);
-    std::string serial=std::string(selected.state_path)+"/guest-serial.log";
+    std::string serial=(engine_log_dir.empty()?std::string(selected.state_path):engine_log_dir)+"/guest-serial.log";
     lt_runtime_config engine=LT_INIT(lt_runtime_config);
     engine.engine_library="libqemu-arm.so";engine.device=prepared_device;engine.boot=lt_boot_config LT_INIT(lt_boot_config);
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;

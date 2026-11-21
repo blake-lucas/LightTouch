@@ -503,6 +503,10 @@ fn progress_step(app: &mut App, ui: &mut Ui) {
                     if widgets::text_button(ui, &p, "Back").clicked() {
                         app.prepare.step = Step::Version;
                     }
+                    let label = if app.model.exporting_logs() { "Saving logs…" } else { "Save logs" };
+                    if widgets::text_button(ui, &p, label).clicked() && !app.model.exporting_logs() {
+                        super::save_logs(app);
+                    }
                 });
             }
         }

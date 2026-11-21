@@ -67,6 +67,9 @@ interface GuestHost {
     fun deleteDevice(id: String)
     fun addDevice()
     fun toggleProfile()
+    /** Collect the logs (docs/LOGS.md) into a zip and ask where to save it. */
+    fun exportLogs()
+    val logsBusy: Boolean
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()

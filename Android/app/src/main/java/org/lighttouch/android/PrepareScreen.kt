@@ -91,7 +91,8 @@ private fun preparationCost(firmware: CatalogFirmware?) =
 @Composable
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit,
                            onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit,
-                           onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
+                           onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit,
+                           onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false) {
     val run = state.preparation?.getString("state")
     val showProgress = preparing || run in listOf("complete", "failed", "cancelled")
     val back = {
@@ -116,7 +117,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                 when {
-                    showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose)
+                    showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose, onSaveLogs, savingLogs)
                     state.step == PrepareStep.DEVICE -> DeviceStep(state)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
                     else -> FilesStep(state, busy, onDownload, onChooseIpsw, onChooseRom, onDownloadRom, onPrepare)
@@ -328,7 +329,8 @@ private fun Card(icon: ImageVector, title: String, done: Boolean, detail: String
 }
 
 @Composable
-private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onPrepare: () -> Unit, onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
+private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onPrepare: () -> Unit, onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit,
+                     onSaveLogs: () -> Unit, savingLogs: Boolean) {
     val run = state.preparation
     val phase = run?.getString("state") ?: "starting"
     val firmware = state.firmware
@@ -361,6 +363,7 @@ private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onP
                     color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(24.dp))
                 Button(onClick = onRetryImport, enabled = !busy) { Text("Try adding it again") }
+                TextButton(onClick = onSaveLogs, enabled = !savingLogs, modifier = Modifier.padding(top = 8.dp).testTag("save_logs")) { Text("Save logs") }
             }
             phase == "complete" -> {
                 Text("Adding $title", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
@@ -383,6 +386,8 @@ private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onP
                     OutlinedButton(onClick = { state.preparation = null }) { Text("Back") }
                     Button(onClick = onPrepare, enabled = !busy && state.ipswReady && state.romReady) { Text("Try again") }
                 }
+                // For a bug report: the preparation's log, its one-shot boots and the phone they ran on.
+                if (phase != "cancelled") TextButton(onClick = onSaveLogs, enabled = !savingLogs, modifier = Modifier.padding(top = 8.dp).testTag("save_logs")) { Text("Save logs") }
             }
         }
     }

@@ -14,7 +14,7 @@ const LOG_TAIL: usize = 60;
 /// Where the running device's own logs are.
 #[derive(Debug, Clone, Default)]
 pub struct DeviceLogs {
-    /// The session log, which holds the emulator's output.
+    /// The logs folder, whose engine log holds the emulator's output.
     pub engine: Option<std::path::PathBuf>,
     /// The guest's serial console.
     pub serial: Option<std::path::PathBuf>,
@@ -24,7 +24,7 @@ pub struct DeviceLogs {
 /// tails of the device's logs. `crash` is the guest's newest report (name, text).
 pub fn report(logs: &DeviceLogs, crash: Option<(&str, &str)>, system_log: Option<&str>) -> String {
     let summary = crash.filter(|(_, body)| !body.trim().is_empty()).map(|(name, body)| summarize(name, body));
-    let engine = tail(logs.engine.as_deref(), LOG_TAIL);
+    let engine = engine_tail(logs.engine.as_deref(), LOG_TAIL);
     let serial = tail(logs.serial.as_deref(), 40);
     let mut out = String::new();
     out.push_str(summary.as_ref().map_or(
@@ -72,6 +72,20 @@ fn tail(file: Option<&Path>, count: usize) -> Vec<String> {
     let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<String> =
         text.lines().filter(|l| !l.trim().is_empty()).map(|l| l.chars().take(400).collect()).collect();
+    lines[lines.len().saturating_sub(count)..].to_vec()
+}
+
+/// The last `count` lines of the engine log in the logs folder `dir`, across its head and tail segments.
+fn engine_tail(dir: Option<&Path>, count: usize) -> Vec<String> {
+    let Some(bytes) = dir.and_then(|d| lighttouch_core::logs::stitch(d, lighttouch_core::logs::ENGINE.name)) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(lighttouch_core::logs::tail(&bytes, 64 << 10));
+    let lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with("----- [log]"))
+        .map(|l| l.chars().take(400).collect())
+        .collect();
     lines[lines.len().saturating_sub(count)..].to_vec()
 }
 

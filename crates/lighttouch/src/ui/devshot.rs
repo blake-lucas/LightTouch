@@ -4,7 +4,8 @@
 //! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
-//! it starts preparing).
+//! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
+//! saved, and closes once they are written.
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -89,7 +90,10 @@ pub fn start(app: &mut App) {
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;
-            app.page = Page::Device;
+            // LIGHTTOUCH_UI_PAGE=prepare stays on the preparation page (its progress, then its result).
+            if start_page() != Some(Page::Prepare) {
+                app.page = Page::Device;
+            }
         }
     }
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {
@@ -123,12 +127,15 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
             }
         }
     }
-    if shot.saved.load(Ordering::Acquire) {
+    if shot.saved.load(Ordering::Acquire) && !app.model.exporting_logs() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         return;
     }
     if !shot.requested && Instant::now() >= shot.at {
         shot.requested = true;
+        if let Some(zip) = std::env::var_os("LIGHTTOUCH_UI_EXPORT") {
+            app.model.export_logs(PathBuf::from(zip));
+        }
         let (path, saved, waker) = (shot.path.clone(), shot.saved.clone(), ctx.clone());
         ctx.request_screenshot(move |image| {
             let [w, h] = image.size;

@@ -798,6 +798,11 @@ impl Store {
 
     /// Why the last app quit: the guest's newest crash report read for where it died, with the device's own logs
     /// (`crash::report`).
+    /// The running device's guest tools socket, once the USB link is up.
+    pub fn guest_socket(&self) -> Option<PathBuf> {
+        self.guest_socket.clone()
+    }
+
     pub fn show_last_crash(&mut self, logs: crate::crash::DeviceLogs) {
         let Some(socket) = self.guest_socket.clone() else {
             self.crash = Some("Start the device to read its crash reports.".into());

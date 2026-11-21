@@ -92,6 +92,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     if (!s.detailedTiming) ActionRow(LtIcons.Save, if (host.profileRecording) "Stop profile recording" else "Record a profile",
                         if (host.profileRecording) host.profileNotice.ifEmpty { "Recording…" } else "Capture engine timing for the app on screen, for tools/perf/profile.py",
                         enabled = !host.profileBusy && (host.running || host.profileRecording), tag = "profile_capture") { host.toggleProfile() }
+                    ActionRow(LtIcons.File, "Export logs", "Saves LightTouch's logs as a zip to attach to a bug report. Leaves out your files and personal details.",
+                        enabled = !host.logsBusy, tag = "export_logs") { host.exportLogs() }
                     if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
                         "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                 }

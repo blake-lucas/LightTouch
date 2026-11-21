@@ -211,6 +211,8 @@ class EngineService : Service() {
                 if (error.isEmpty() && network.enabled) startGuestNetwork()
             }
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
+            AppLog.i("Engine ${if (coldRecovery) "recovery" else "start"} of ${recordId.take(8)}: " + error.ifEmpty { "started" } +
+                " (graphics ${Native.status().getOrNull(5) ?: "?"}, network $networkSetup, USB ${usbError.ifEmpty { "ok" }}, app pauses $flush, headphones $headphones)")
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
@@ -560,6 +562,7 @@ class EngineService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
+        AppLog.attach(applicationContext, "engine")
         // A worker that ended its device is replaced by a fresh one while LightTouch stays bound, and Android carries
         // the old one's foreground state over: its "running" notification stayed up with nothing running.
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -677,7 +680,7 @@ class EngineService : Service() {
                         it.stop(); it.release(); record = null
                         val (_, rate, _, pushed, dropped) = Native.micInfo().toList() + List(5) { 0L }
                         Native.micFlush()
-                        android.util.Log.i("LightTouch", "microphone closed: $pushed frames pushed, $dropped dropped, guest port at $rate Hz")
+                        AppLog.i("Microphone closed: $pushed frames pushed, $dropped dropped, guest port at $rate Hz")
                     }
                     Thread.sleep(250)
                     continue
@@ -689,7 +692,7 @@ class EngineService : Service() {
                         maxOf(minimum, block * 2 * 4)).also {
                         check(it.state == AudioRecord.STATE_INITIALIZED) { "microphone did not initialize" }
                         it.startRecording(); record = it
-                        android.util.Log.i("LightTouch", "microphone open: the guest is recording")
+                        AppLog.i("Microphone open: the guest is recording")
                     }
                 } catch (_: Exception) { microphone = false; continue }  // no microphone: stop asking until set again
                 val read = active.read(mono, 0, block)

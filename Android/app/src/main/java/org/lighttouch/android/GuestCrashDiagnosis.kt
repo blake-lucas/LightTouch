@@ -29,10 +29,9 @@ internal object GuestCrashDiagnosis {
         } catch (_: Exception) { emptyList() }
     }
 
-    /** The record's newest engine log; the engine names them by worker pid. */
-    fun engineLog(stateDir: File): File? =
-        stateDir.listFiles { file -> file.isFile && file.name.startsWith("engine-") && file.name.endsWith(".log") }
-            ?.maxByOrNull { it.lastModified() }
+    /** The last [lines] lines of a capped log (docs/LOGS.md), across its head and tail parts. */
+    fun tail(files: List<File>, lines: Int = LOG_TAIL, maxBytes: Long = 64L * 1024): List<String> =
+        try { Logs.tail(files, maxBytes).lines().filter { it.isNotBlank() }.takeLast(lines).map { it.take(400) } } catch (_: Exception) { emptyList() }
 
     /**
      * What the engine said it dropped on the floor. A guest crash in the app's own code right after one of these
@@ -54,12 +53,12 @@ internal object GuestCrashDiagnosis {
 
     /**
      * [crashName]/[crashBody] is the guest's newest crash report (null when it has none), [guestLog] the captured
-     * system log of the last launch (null when nothing was captured). Everything else is read from [stateDir].
+     * system log of the last launch (null when nothing was captured). Everything else is read from the logs in [logs].
      */
-    fun report(stateDir: File, crashName: String?, crashBody: String?, guestLog: String?): String {
+    fun report(logs: File, crashName: String?, crashBody: String?, guestLog: String?): String {
         val summary = crashBody?.takeIf { it.isNotBlank() }?.let { GuestCrashReport.summarize(crashName ?: "", it) }
-        val engine = tail(engineLog(stateDir))
-        val serial = tail(File(stateDir, "guest-serial.log"), 40)
+        val engine = tail(Logs.files(logs, Logs.ENGINE.name))
+        val serial = tail(File(logs, "guest-serial.log"), 40)
         val hint = engineHint(engine)
         return buildString {
             appendLine(summary?.verdict ?: "There is no crash report, so the app didn't crash. Either iOS closed it (for example, to free " +

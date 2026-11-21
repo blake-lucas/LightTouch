@@ -65,6 +65,7 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
             ui.label(widgets::muted(&p, "The first start takes longer while iOS sets itself up."));
             if !app.setup.timings.is_empty() {
                 ui.add_space(12.0);
+                let mut save = false;
                 egui::CollapsingHeader::new(widgets::muted(&p, "Details")).id_salt("prepare-details").show(ui, |ui| {
                     ui.spacing_mut().interact_size.y = 20.0;
                     egui::Grid::new("timings").num_columns(2).spacing([28.0, 2.0]).show(ui, |ui| {
@@ -74,7 +75,13 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
                             ui.end_row();
                         }
                     });
+                    ui.add_space(6.0);
+                    let label = if app.model.exporting_logs() { "Saving logs…" } else { "Save logs" };
+                    save = widgets::text_button(ui, &p, label).clicked() && !app.model.exporting_logs();
                 });
+                if save {
+                    super::save_logs(app);
+                }
             }
             ui.add_space(22.0);
             ui.horizontal(|ui| {

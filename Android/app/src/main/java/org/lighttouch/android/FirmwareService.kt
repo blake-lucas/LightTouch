@@ -27,6 +27,8 @@ class FirmwareService : Service() {
     /** Each finished step's name and seconds, a line each ("name\tseconds"), for the finished screen's details. */
     @Volatile private var timings = ""
     @Volatile private var process: java.lang.Process? = null
+    /** This preparation's log (docs/LOGS.md): firmwarekit's stderr, its one-shot boots and their serial logs. */
+    private var log: Logs.Writer? = null
 
     private val binder = object : IFirmware.Stub() {
         override fun supports(firmwareId: String): Boolean =
@@ -75,6 +77,16 @@ class FirmwareService : Service() {
         val libs = File(applicationInfo.nativeLibraryDir)
         val cache = File(cacheDir, "firmwarekit")
         val out = File(destination)
+        AppLog.attach(this, "firmware")
+        val logs = Logs.dir(this)
+        Logs.newGeneration(logs, Logs.PREPARE.name)
+        val log = Logs.Writer(logs, Logs.PREPARE).also { this.log = it }
+        fun say(line: String) = log.write("[log] $line\n".toByteArray())
+        say("LightTouch ${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_COMMIT}) preparing $firmwareId from ${File(ipsw).name}" +
+            (if (jailbreak) ", jailbroken" else "") + (if (bootrom.isNotEmpty()) ", with a boot ROM" else "") +
+            " on ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}")
+        AppLog.i("Preparation of $firmwareId started" + if (jailbreak) " (jailbreak)" else "")
+        val started = SystemClock.elapsedRealtime()
         try {
             val catalog = File(filesDir, "firmware-catalog.json")
             assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
@@ -88,7 +100,10 @@ class FirmwareService : Service() {
                 // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
                 (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
             // create's own lease and boot logs; the device is the rest
+            keepWorkLogs(out, log)
             File(out, "work").deleteRecursively()
+            say("prepared in ${(SystemClock.elapsedRealtime() - started) / 1000} s")
+            AppLog.i("Preparation of $firmwareId finished in ${(SystemClock.elapsedRealtime() - started) / 1000} s")
             done = total
             state = "complete"
             note("complete")
@@ -96,6 +111,9 @@ class FirmwareService : Service() {
         } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
             if (!cancelling) foreground(FAILED)
+            keepWorkLogs(out, log)
+            say(if (cancelling) "cancelled" else "failed after ${(SystemClock.elapsedRealtime() - started) / 1000} s: $failure")
+            if (cancelling) AppLog.i("Preparation of $firmwareId cancelled") else AppLog.w("Preparation of $firmwareId failed: $failure")
             out.deleteRecursively()
             if (cancelling) PreparationNote.clear(this) else note("failed")
         } finally {
@@ -112,7 +130,6 @@ class FirmwareService : Service() {
      */
     private fun run(libs: File, args: List<String>) {
         val builder = ProcessBuilder(listOf(File(libs, "libfirmwarekit.so").path) + args)
-            .redirectError(File(cacheDir, "firmwarekit.log").apply { parentFile?.mkdirs() })
         builder.environment().apply {
             put("LTM_QEMU_DYLIB", File(libs, "libqemu-arm.so").path)
             put("LD_LIBRARY_PATH", libs.path)
@@ -120,6 +137,13 @@ class FirmwareService : Service() {
         }
         check(!cancelling) { "Cancelled" }
         val child = builder.start().also { process = it }
+        // stderr through a pipe into the capped log: the pipe outlives a crashing firmwarekit, so its last lines arrive.
+        val copier = Thread({
+            val buffer = ByteArray(16 * 1024)
+            child.errorStream.use { input ->
+                while (true) { val n = input.read(buffer); if (n < 0) break; log?.write(buffer, 0, n) }
+            }
+        }, "firmwarekit-log").apply { start() }
         var weights = listOf<Long>(); var step = 0
         var message = ""
         var stepName = ""; var stepStarted = 0L
@@ -141,9 +165,23 @@ class FirmwareService : Service() {
             }
         }
         val exit = child.waitFor()
+        copier.join(5000)
         endStep()
         check(!cancelling) { "Cancelled" }
         check(exit == 0) { message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } }
+    }
+
+    /**
+     * The one-shot boots' serial logs (work/keybag.log, seal.log, …), which go with the job folder: the end of each
+     * into the preparation log, where a failed preparation keeps them.
+     */
+    private fun keepWorkLogs(out: File, log: Logs.Writer) {
+        val work = File(out, "work").takeIf { it.isDirectory } ?: return
+        work.walkTopDown().maxDepth(3).filter { it.isFile && it.name.endsWith(".log") }.sortedBy { it.lastModified() }.forEach { file ->
+            val skip = (file.length() - 256 * 1024).coerceAtLeast(0L)
+            log.write("\n----- [log] ${file.relativeTo(out).path} (${file.length()} bytes${if (skip > 0) ", the last 256 KiB" else ""}) -----\n".toByteArray())
+            runCatching { java.io.RandomAccessFile(file, "r").use { f -> f.seek(skip); val b = ByteArray((f.length() - skip).toInt()); f.readFully(b); log.write(b) } }
+        }
     }
 
     private fun note(phase: String) = PreparationNote.write(this, JSONObject().put("state", phase).put("pid", Process.myPid())

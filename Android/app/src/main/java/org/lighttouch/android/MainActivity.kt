@@ -35,13 +35,21 @@ import java.util.concurrent.Executors
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var engine by mutableStateOf<IEngine?>(null)
-    override var status by mutableStateOf("stopped")
-        private set
+    private var statusState by mutableStateOf("stopped")
+    // Each change of the guest's state, and each error and notice the user sees, goes into the app log (docs/LOGS.md).
+    override var status: String
+        get() = statusState
+        private set(value) {
+            if (value != statusState) AppLog.i("Device ${selected?.let { "\"${it.name}\" (${it.subtitle})" } ?: "(none)"}: $statusState -> $value")
+            statusState = value
+        }
     private var detail by mutableStateOf("")
     override var displayAsleep by mutableStateOf(false)
         private set
-    override var error by mutableStateOf("")
-        private set
+    private var errorState by mutableStateOf("")
+    override var error: String
+        get() = errorState
+        private set(value) { if (value.isNotEmpty() && value != errorState) AppLog.w("Shown error: $value"); errorState = value }
     private val workerEvidenceDelivery = SessionDeliveryGate()
     private var workerPid by mutableIntStateOf(0)
     override var sessionOwned by mutableStateOf(false)
@@ -55,7 +63,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override var busy by mutableStateOf(false)
         private set
     /** A passing message (screenshot saved, device renamed), shown as a snackbar. */
-    private var notice by mutableStateOf("")
+    private var noticeState by mutableStateOf("")
+    private var notice: String
+        get() = noticeState
+        set(value) { if (value.isNotEmpty()) AppLog.i("Notice: $value"); noticeState = value }
     override var profileRecording by mutableStateOf(false)
         private set
     override var profileAutomatic by mutableStateOf(false)
@@ -90,6 +101,35 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             askedNotifications = true
             notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+    override var logsBusy by mutableStateOf(false)
+        private set
+    private var pendingLogs: File? = null
+    private val saveLogs = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val file = pendingLogs; pendingLogs = null
+        if (uri == null || file == null) { logsBusy = false; file?.delete(); return@registerForActivityResult }
+        Thread({
+            try {
+                (contentResolver.openOutputStream(uri) ?: error("the file couldn't be opened")).use { out -> file.inputStream().use { it.copyTo(out) } }
+                handler.post { logsBusy = false; notice = "Logs saved" }
+            } catch (e: Exception) { handler.post { logsBusy = false; error = "Couldn't save the logs: ${e.message}" } }
+            finally { file.delete() }
+        }, "save-logs").start()
+    }
+    override fun exportLogs() {
+        if (logsBusy) return
+        logsBusy = true
+        val socket = muxSocket
+        val inputs = LogExport.Inputs(devices, status) { socket.takeIf { it.isNotEmpty() }?.let { GuestApps(applicationContext).lastCrash(it, 8) } }
+        Thread({
+            try {
+                val zip = LogExport.build(applicationContext, inputs)
+                handler.post { pendingLogs = zip; saveLogs.launch(zip.name) }
+            } catch (e: Exception) {
+                AppLog.e("Log export failed", e)
+                handler.post { logsBusy = false; error = "Couldn't collect the logs: ${e.message}" }
+            }
+        }, "export-logs").start()
     }
     private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
@@ -309,6 +349,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private val pickGuestToolsFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) copyAsset(uri, "guest.itpack") }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.start(applicationContext)
+        Thread({ Housekeeping.run(applicationContext) }, "housekeeping").start()
         // The guest is a portrait device; its landscape apps rotate inside the portrait screen.
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -385,7 +427,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
                         }
                         Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(), onPrepare = { openPreparation() },
-                            onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
+                            onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null },
+                            onSaveLogs = ::exportLogs, savingLogs = logsBusy)
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
                         Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
@@ -664,7 +707,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
-            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation,
+            onSaveLogs = ::exportLogs, savingLogs = logsBusy)
     }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
@@ -925,8 +969,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 // Newer guest tools in this build of LightTouch reach existing devices here; a failure leaves the old ones.
                 try { GuestTools.newerFor(this, request.recordId)?.let { tools ->
                     val result = worker.setGuestPackage(request.recordId, tools.absolutePath)
-                    android.util.Log.i("LightTouch", if (result.isEmpty()) "Guest tools updated for ${request.recordId}" else "Guest tools not updated: $result")
-                } } catch (failure: Exception) { android.util.Log.w("LightTouch", "Guest tools not updated", failure) }
+                    if (result.isEmpty()) AppLog.i("Guest tools updated for ${request.recordId.take(8)} to ${tools.name}") else AppLog.w("Guest tools not updated: $result")
+                } } catch (failure: Exception) { AppLog.e("Guest tools not updated", failure) }
+                AppLog.i("Starting ${request.recordId.take(8)}" + if (request.coldRecovery) " (recovering retained state)" else "")
                 val b = if (request.coldRecovery) worker.recoverStart(request.recordId) else worker.start(request.recordId)
                 handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
             }

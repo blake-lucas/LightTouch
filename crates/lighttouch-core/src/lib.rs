@@ -4,13 +4,18 @@ pub mod bundle;
 mod clock;
 mod ffi;
 pub mod frames;
+pub mod host;
 pub mod job;
 pub mod library;
+pub mod logs;
 pub mod network;
 pub mod paths;
 pub mod protocol;
 pub mod runtime;
 
-pub use clock::{local_date, monotonic_ns, process_cpu_ns, process_resident_bytes};
+pub use clock::{LocalTime, local_date, local_time, monotonic_ns, process_cpu_ns, process_resident_bytes};
 pub use ffi::{Error, Result, status_name};
 pub use lighttouch_sys as sys;
+
+/// The LightTouch commit this was built from or "unknown".
+pub const COMMIT: &str = env!("LIGHTTOUCH_COMMIT");

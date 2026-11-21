@@ -41,7 +41,7 @@ internal class SetupState {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () -> Unit,
-                         onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit) {
+                         onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit, onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false) {
     BackHandler {
         when {
             state.step == SetupStep.DONE -> onFinish(false)
@@ -57,7 +57,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () ->
             AnimatedContent(state.step, Modifier.weight(1f), label = "setup-step") { step ->
                 when (step) {
                     SetupStep.WELCOME -> Welcome(onPrepare)
-                    SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish)
+                    SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish, onSaveLogs, savingLogs)
                 }
             }
         }
@@ -101,7 +101,7 @@ private fun Need(icon: ImageVector, title: String, detail: String) {
 }
 
 @Composable
-private fun Done(name: String, timings: String, onFinish: (Boolean) -> Unit) {
+private fun Done(name: String, timings: String, onFinish: (Boolean) -> Unit, onSaveLogs: () -> Unit, savingLogs: Boolean) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Filled.CheckCircle, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(24.dp))
@@ -115,6 +115,7 @@ private fun Done(name: String, timings: String, onFinish: (Boolean) -> Unit) {
         }
         TextButton(onClick = { onFinish(false) }, modifier = Modifier.padding(top = 8.dp)) { Text("Not now") }
         if (timings.isNotEmpty()) StageTimes(timings)
+        TextButton(onClick = onSaveLogs, enabled = !savingLogs, modifier = Modifier.testTag("save_logs")) { Text("Save logs") }
     }
 }
 

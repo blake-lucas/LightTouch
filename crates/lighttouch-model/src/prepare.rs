@@ -7,10 +7,12 @@ use lighttouch_catalog::catalog::{CATALOG_JSON, Catalog, default_device_name};
 use lighttouch_catalog::download::{self, DownloadError};
 use lighttouch_catalog::{Bootrom, GuestTools};
 use lighttouch_core::library::{ImportSource, Library};
+use lighttouch_core::logs::{self, CappedLog, SharedLog};
 use lighttouch_core::paths::{DataDirs, Resources};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -131,7 +133,95 @@ pub(crate) struct PrepareContext {
     pub waker: Waker,
 }
 
+/// Prepare a device, writing what happens to the `prepare` log (a new generation; docs/LOGS.md).
 pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Reporter) -> Result<Finished, String> {
+    let log = match CappedLog::start(&ctx.dirs.logs(), logs::PREPARE) {
+        Ok(log) => Arc::new(Mutex::new(log)),
+        Err(e) => return Err(format!("Couldn't start the preparation's log in {}: {e}", ctx.dirs.logs().display())),
+    };
+    let t = lighttouch_core::local_time();
+    note(
+        &log,
+        &format!(
+            "LightTouch {} ({}): preparing {} at {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            env!("CARGO_PKG_VERSION"),
+            lighttouch_core::COMMIT,
+            request.firmware_id,
+            t.year,
+            t.month,
+            t.day,
+            t.hour,
+            t.minute,
+            t.second
+        ),
+    );
+    note(
+        &log,
+        &format!(
+            "IPSW: {}; boot ROM: {}; jailbreak: {}; extra apps: {}",
+            match &request.ipsw {
+                IpswSource::Download => "download".to_string(),
+                IpswSource::File(path) => format!("file {}", path.display()),
+            },
+            request.bootrom.as_ref().map_or("found or downloaded".to_string(), |p| format!("file {}", p.display())),
+            request.jailbreak,
+            request.ipas.len()
+        ),
+    );
+    let started = Instant::now();
+    let result = prepare_device(ctx, request, reporter, &log);
+    match &result {
+        Ok(Finished::DeviceAdded { name, timings, .. }) => {
+            note(&log, &format!("[prepare] done in {:.0} s: added {name}", started.elapsed().as_secs_f64()));
+            for (stage, seconds) in timings {
+                note(&log, &format!("[prepare]   {stage}: {seconds:.1} s"));
+            }
+        }
+        Ok(_) => {}
+        Err(e) => note(&log, &format!("[prepare] failed after {:.0} s: {e}", started.elapsed().as_secs_f64())),
+    }
+    result
+}
+
+/// One line of LightTouch's own in the prepare log.
+fn note(log: &SharedLog, line: &str) {
+    if let Ok(mut log) = log.lock() {
+        let _ = log.line(line.as_bytes());
+    }
+}
+
+/// The one-shot boots' serial logs in a job's `work` folder, added to the prepare log before the folder goes: a
+/// failed preparation deletes them otherwise.
+fn keep_work_logs(log: &SharedLog, out: &Path) {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(out.join("work"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "log") && p.is_file())
+        .collect();
+    files.sort();
+    for file in files {
+        let Some(bytes) = logs::read_tail(&file, WORK_LOG_TAIL) else { continue };
+        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        note(log, &format!("----- [prepare] work/{name} (its last {} KiB at most) -----", WORK_LOG_TAIL >> 10));
+        for line in bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            if let Ok(mut log) = log.lock() {
+                let _ = log.line(line);
+            }
+        }
+    }
+}
+
+/// How much of each one-shot serial log the prepare log keeps.
+const WORK_LOG_TAIL: u64 = 256 << 10;
+
+fn prepare_device(
+    ctx: PrepareContext,
+    request: PrepareRequest,
+    reporter: &Reporter,
+    log: &SharedLog,
+) -> Result<Finished, String> {
     let catalog = Catalog::get();
     let firmware = catalog.find(&request.firmware_id).ok_or("That iOS version isn't in the catalog")?.clone();
     availability(&ctx.resources)?;
@@ -210,6 +300,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         }
     };
     timings.push(("Getting the IPSW".into(), started.elapsed().as_secs_f64()));
+    note(log, &format!("[prepare] IPSW ready ({}) after {:.0} s", firmware.id, started.elapsed().as_secs_f64()));
 
     // 2. The boot ROM, when the board starts from one.
     let bootrom = match Bootrom::for_board(&firmware.board) {
@@ -258,8 +349,10 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         request.jailbreak,
         &request.ipas,
         request.no_game_center,
+        log,
     );
     let _ = std::fs::remove_dir_all(&cache);
+    keep_work_logs(log, &out);
     if let Err(e) = result {
         remove_tree(&out);
         return Err(e);
@@ -328,6 +421,7 @@ fn run_firmwarekit(
     jailbreak: bool,
     ipas: &[PathBuf],
     no_game_center: bool,
+    log: &SharedLog,
 ) -> Result<(), String> {
     let engine = ctx.resources.engine();
     let mut command = Command::new(ctx.resources.firmwarekit());
@@ -374,10 +468,8 @@ fn run_firmwarekit(
             command.env("LD_LIBRARY_PATH", joined);
         }
     }
-    std::fs::create_dir_all(ctx.dirs.logs()).ok();
-    let log_path = ctx.dirs.logs().join("firmwarekit.log");
-    let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
-    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::from(log));
+    // firmwarekit's own log (its steps and its one-shot boots' output) goes through a pipe into the prepare log.
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -395,6 +487,7 @@ fn run_firmwarekit(
     let mut child = command.spawn().map_err(|e| format!("Couldn't start firmwarekit: {e}"))?;
     lighttouch_core::job::bind_to_this_process(&child);
     let stdout = child.stdout.take().unwrap();
+    let copier = child.stderr.take().map(|stderr| logs::copy_lines(stderr, log.clone()));
 
     // Follow the event lines; cancellation kills the tool (it cleans up its children).
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
@@ -450,6 +543,11 @@ fn run_firmwarekit(
         }
     }
     let status = child.wait().map_err(|e| e.to_string())?;
+    // Its last lines, before reading them for the error; a one-shot child holding the pipe open is not waited for.
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    while copier.as_ref().is_some_and(|c| !c.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     if step > 0 {
         timings.push((step_name, step_started.elapsed().as_secs_f64()));
     }
@@ -457,9 +555,13 @@ fn run_firmwarekit(
         Ok(())
     } else {
         Err(error.unwrap_or_else(|| {
-            let tail = std::fs::read_to_string(&log_path)
-                .ok()
-                .and_then(|t| t.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string))
+            let newest = log.lock().map(|l| l.path()).ok();
+            let tail = newest
+                .and_then(|p| logs::read_tail(&p, 16 << 10))
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .and_then(|t| {
+                    t.lines().rev().find(|l| !l.trim().is_empty() && !l.starts_with("----- [")).map(str::to_string)
+                })
                 .unwrap_or_default();
             format!("Preparation failed ({status}). {tail}")
         }))

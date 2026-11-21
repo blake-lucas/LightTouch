@@ -95,7 +95,62 @@ pub struct App {
     dev_shot: Option<devshot::DevShot>,
 }
 
+/// The GPU the window draws with, read once the window has a GL context (or wgpu adapter).
+static GPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Open this run's app log (docs/LOGS.md) with what LightTouch and this computer are, and send panics to it too.
+fn start_logging() {
+    let dirs = DataDirs::new(data_root());
+    let mut header = format!(
+        "LightTouch {} (commit {}), desktop, {}\n",
+        env!("CARGO_PKG_VERSION"),
+        lighttouch_core::COMMIT,
+        std::env::consts::OS
+    );
+    for (label, value) in lighttouch_core::host::describe(&dirs.root) {
+        header.push_str(&format!("{label}: {value}\n"));
+    }
+    let t = lighttouch_core::local_time();
+    header.push_str(&format!(
+        "Opened {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        t.year, t.month, t.day, t.hour, t.minute, t.second
+    ));
+    if let Err(e) = lighttouch_core::logs::start_app_log(&dirs.logs(), &header) {
+        eprintln!("LightTouch couldn't open its log in {}: {e}", dirs.logs().display());
+    }
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        lighttouch_core::app_log!("PANIC in thread {}: {info}", thread.name().unwrap_or("?"));
+        previous(info);
+    }));
+}
+
+/// "Vendor Renderer (version)" from the window's GL context or wgpu adapter.
+fn gpu_name(cc: &eframe::CreationContext) -> Option<String> {
+    #[cfg(not(target_os = "macos"))]
+    if let Some(gl) = &cc.gl {
+        use eframe::glow::HasContext;
+        // SAFETY: the context is current while the app is created.
+        let (vendor, renderer, version) = unsafe {
+            (
+                gl.get_parameter_string(eframe::glow::VENDOR),
+                gl.get_parameter_string(eframe::glow::RENDERER),
+                gl.get_parameter_string(eframe::glow::VERSION),
+            )
+        };
+        return Some(format!("{vendor} {renderer} (OpenGL {version})"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(state) = &cc.wgpu_render_state {
+        let info = state.adapter.get_info();
+        return Some(format!("{} ({:?}, {})", info.name, info.backend, info.driver_info));
+    }
+    None
+}
+
 pub fn run() -> eframe::Result {
+    start_logging();
     let viewport = egui::ViewportBuilder::default()
         .with_title("LightTouch")
         .with_app_id("org.lighttouch.LightTouch")
@@ -119,6 +174,10 @@ pub fn run() -> eframe::Result {
         "LightTouch",
         options,
         Box::new(|cc| {
+            if let Some(gpu) = gpu_name(cc) {
+                lighttouch_core::app_log!("window GPU: {gpu}");
+                let _ = GPU.set(gpu);
+            }
             theme::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // The Windows single-file build unpacks its resources at a version's first start: show it doing so.
@@ -133,10 +192,24 @@ pub fn run() -> eframe::Result {
 fn ready_app(ctx: &egui::Context) -> App {
     let ctx = ctx.clone();
     let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
-    let model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
+    let mut model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
+    model.gpu = GPU.get().cloned();
     let mut app = App::new(model);
     devshot::start(&mut app);
     app
+}
+
+/// Ask where to save LightTouch's logs, then save them there in the background (Settings › Diagnostics, and the
+/// preparation pages).
+pub fn save_logs(app: &mut App) {
+    let file = rfd::FileDialog::new()
+        .set_title("Save LightTouch's logs")
+        .set_file_name(lighttouch_model::diagnostics::file_name())
+        .add_filter("Zip archive", &["zip"])
+        .save_file();
+    if let Some(file) = file {
+        app.model.export_logs(file);
+    }
 }
 
 /// The window's content: the app, or the first start of a single-file build unpacking its resources.

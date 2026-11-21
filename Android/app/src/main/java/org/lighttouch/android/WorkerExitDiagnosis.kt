@@ -79,21 +79,7 @@ internal object WorkerExitDiagnosis {
      * std::terminate on the shared library's side, prints there before the process goes.
      */
     private fun engineLogTail(files: File): String? {
-        val newest = File(files, "library/records").listFiles()
-            ?.mapNotNull { File(it, "state") }
-            ?.flatMap { state -> state.listFiles { file -> file.name.startsWith("engine-") && file.name.endsWith(".log") }?.toList() ?: emptyList() }
-            ?.maxByOrNull { it.lastModified() }
-            ?: return null
-        val text = runCatching {
-            RandomAccessFile(newest, "r").use { file ->
-                val length = file.length()
-                val start = maxOf(0L, length - TAIL_BYTES)
-                val buffer = ByteArray((length - start).toInt())
-                file.seek(start)
-                file.readFully(buffer)
-                String(buffer, Charsets.UTF_8)
-            }
-        }.getOrNull() ?: return null
+        val text = runCatching { Logs.tail(Logs.files(File(files, "logs"), Logs.ENGINE.name), TAIL_BYTES.toLong()) }.getOrNull() ?: return null
         // The last lines that say something: qemu's and the library's errors are one line each.
         return text.lines().map { it.trim() }.filter { it.isNotEmpty() }.takeLast(3)
             .joinToString(" / ").take(400).ifEmpty { null }

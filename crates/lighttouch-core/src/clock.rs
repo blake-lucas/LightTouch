@@ -77,18 +77,48 @@ pub fn process_resident_bytes() -> u64 {
 }
 
 /// Today's date on the host's calendar (local time): year, month, day.
-#[cfg(unix)]
 pub fn local_date() -> (i32, u32, u32) {
+    let t = local_time();
+    (t.year, t.month, t.day)
+}
+
+/// The host's local wall-clock time, to the second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalTime {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+#[cfg(unix)]
+pub fn local_time() -> LocalTime {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
-    (tm.tm_year + 1900, tm.tm_mon as u32 + 1, tm.tm_mday as u32)
+    LocalTime {
+        year: tm.tm_year + 1900,
+        month: tm.tm_mon as u32 + 1,
+        day: tm.tm_mday as u32,
+        hour: tm.tm_hour as u32,
+        minute: tm.tm_min as u32,
+        second: tm.tm_sec as u32,
+    }
 }
 
 #[cfg(windows)]
-pub fn local_date() -> (i32, u32, u32) {
+pub fn local_time() -> LocalTime {
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;
     let mut now = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut now) };
-    (now.wYear as i32, now.wMonth as u32, now.wDay as u32)
+    LocalTime {
+        year: now.wYear as i32,
+        month: now.wMonth as u32,
+        day: now.wDay as u32,
+        hour: now.wHour as u32,
+        minute: now.wMinute as u32,
+        second: now.wSecond as u32,
+    }
 }

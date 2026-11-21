@@ -265,7 +265,6 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         private set
 
     /** Where the running device's own logs are (the record the store is showing). */
-    private fun stateDir() = File(appContext.filesDir, "library/records/$recordId/state")
 
     /**
      * Why the last app quit. The crash report's faulting-thread frames say where it died (the old report kept only
@@ -278,7 +277,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         background("store-crash") {
             val text = try {
                 val last = runCatching { apps.lastCrash(socket) }.getOrNull()
-                GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, null)
+                GuestCrashDiagnosis.report(Logs.dir(appContext), last?.first, last?.second, null)
             } catch (e: Exception) { "Couldn't read crash reports: ${e.message}" }
             post { crash = text }
         }
@@ -298,7 +297,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
             var failure: String? = null
             try { log = apps.guestLog(socket, 30) } catch (e: Exception) { failure = e.message }
             val last = runCatching { apps.lastCrash(socket) }.getOrNull()
-            val text = GuestCrashDiagnosis.report(stateDir(), last?.first, last?.second, log)
+            val text = GuestCrashDiagnosis.report(Logs.dir(appContext), last?.first, last?.second, log)
             post {
                 watching = false
                 crash = if (failure != null && log == null) "Couldn't record the system log ($failure).\n\n$text" else text

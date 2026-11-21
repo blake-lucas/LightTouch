@@ -17,7 +17,7 @@ fn main() {
         _ => match ui::run() {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("LightTouch couldn't open its window: {e}");
+                lighttouch_core::app_log!("LightTouch couldn't open its window: {e}");
                 1
             }
         },

@@ -1,0 +1,82 @@
+name: Device preparation
+description: Preparing a device from an IPSW failed, stopped making progress, or the prepared device doesn't start
+labels: [bug, preparation]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        When preparation fails, the page that says so has a **Save logs** button: attach that zip below. It holds the
+        preparation's own log, including its test boots of iOS. You can also get it later from **Settings ›
+        Diagnostics › Export logs**, as long as you haven't started another preparation more than once since.
+  - type: input
+    id: version
+    attributes:
+      label: LightTouch version
+      description: From Settings › About, or the release you downloaded (for example "v0.0.14").
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Phone or computer, and its OS version
+      description: For example "Pixel 10, Android 17" or "Ryzen 7 3700X, Windows 11".
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version you were preparing
+      description: For example "iPhone 4, iOS 6.1.3".
+    validations:
+      required: true
+  - type: dropdown
+    id: ipsw
+    attributes:
+      label: Where the IPSW came from
+      options:
+        - LightTouch downloaded it
+        - I chose my own file
+    validations:
+      required: true
+  - type: dropdown
+    id: jailbreak
+    attributes:
+      label: Jailbreak on?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: >
+        The step it was on and the error LightTouch showed (paste its text), or how long it sat without progress.
+        Say whether the phone was locked or LightTouch was in the background while it ran.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag the zip from **Save logs** (or Settings › Diagnostics › Export logs) here. It leaves out the IPSW, your files and personal details.
+      placeholder: Drop the LightTouch-logs-....zip file here
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Please don't attach IPSWs, boot ROMs or other firmware.

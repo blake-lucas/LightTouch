@@ -891,10 +891,13 @@ impl MotionStats {
         }
     }
 
-    /// Every 10 s while samples flow: how many went, how many the engine turned away (and why), and the latest.
+    /// While samples flow: how many went, how many the engine turned away (and why), and the latest. Every 10 s
+    /// when some were turned away, else every 5 minutes: the desktop sends the resting pose all the time, and a line
+    /// every 10 s of that filled the engine log (docs/LOGS.md) with nothing.
     fn note(&mut self) {
         let Some(since) = self.since else { return };
-        if since.elapsed() < Duration::from_secs(10) {
+        let every = if self.rejected > 0 { Duration::from_secs(10) } else { Duration::from_secs(300) };
+        if since.elapsed() < every {
             return;
         }
         let last = self.last.map(|a| a.map(|x| (x * 100.0).round() / 100.0));

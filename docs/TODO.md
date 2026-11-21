@@ -190,7 +190,7 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   reaches the 2G's accelerometer. Suspected: the controller stops sending sensor reports after SDL turns them on
   (Steam Input?), and a motion binding then overrode the stick tilt. `3110750a` re-enables quiet sensors and falls
   back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
-  (`logs/session-*.log`). Read those from the user's next run before calling it fixed.
+  (`logs/engine*.log`, formerly `logs/session-*.log`). Read those from the user's next run before calling it fixed.
 - [x] A/B on the phones: `LT_LDST_LIVE` and `LT_LDM_BLOCK` (both on by default). Poco, bench app (engine with the
   upstream merge, current PGO profile), iPod touch 4G 6.1.6, 8 alternating runs with both on or both off: Epic
   Citadel 42.8 fps on vs 40.1 off (on ahead in each of the 4 back-to-back pairs), Real Racing's menu 44.2 vs 43.8; no

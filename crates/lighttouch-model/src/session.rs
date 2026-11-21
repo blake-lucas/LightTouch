@@ -58,7 +58,10 @@ pub struct Session {
     pub status: Option<StatusEvent>,
     /// The last command error or rejected input, for a notice.
     pub last_error: Option<String>,
-    pub log_path: PathBuf,
+    /// The logs folder, whose `engine` log (docs/LOGS.md) holds what the worker and the engine printed.
+    pub log_dir: PathBuf,
+    /// Copies the worker's stderr into the engine log; finishes once the worker and its children have exited.
+    log_copier: Option<std::thread::JoinHandle<()>>,
     pub started_at: Instant,
     /// The guest's usbmux socket for app services, once the USB link is up.
     pub usb_socket: Option<PathBuf>,
@@ -137,13 +140,27 @@ impl Session {
             usb: options.usb.clone(),
             network: options.network.clone(),
         };
-        std::fs::create_dir_all(&options.log_dir).ok();
-        prune_logs(&options.log_dir, 10);
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        let log_path = options
-            .log_dir
-            .join(format!("session-{stamp}-{}.log", &options.record_id[..8.min(options.record_id.len())]));
-        let log = std::fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
+        // Each start begins a new engine log; the one before stays as its previous generation.
+        let mut log = lighttouch_core::logs::CappedLog::start(&options.log_dir, lighttouch_core::logs::ENGINE)
+            .map_err(|e| format!("Couldn't start the device's log in {}: {e}", options.log_dir.display()))?;
+        let t = lighttouch_core::local_time();
+        let _ = log.line(
+            format!(
+                "LightTouch {} ({}): {} {} ({}) at {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                env!("CARGO_PKG_VERSION"),
+                lighttouch_core::COMMIT,
+                if options.recover { "recovering" } else { "starting" },
+                options.name,
+                &options.record_id[..8.min(options.record_id.len())],
+                t.year,
+                t.month,
+                t.day,
+                t.hour,
+                t.minute,
+                t.second
+            )
+            .as_bytes(),
+        );
         let exe = lighttouch_core::paths::worker_exe()?;
         let mut command = std::process::Command::new(exe);
         command
@@ -151,7 +168,7 @@ impl Session {
             .arg(serde_json::to_string(&args).unwrap())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::from(log));
+            .stderr(Stdio::piped());
         for (key, value) in &options.extra_env {
             command.env(key, value);
         }
@@ -164,6 +181,11 @@ impl Session {
         let mut child = command.spawn().map_err(|e| format!("Couldn't start the device: {e}"))?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().unwrap();
+        // Through a pipe this process reads: a worker that crashes still delivers its last lines.
+        let log_copier = child
+            .stderr
+            .take()
+            .map(|stderr| lighttouch_core::logs::copy_lines(stderr, std::sync::Arc::new(std::sync::Mutex::new(log))));
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new()
             .name("session-events".into())
@@ -186,7 +208,8 @@ impl Session {
             phase: Phase::Verifying { done: 0, total: 0 },
             status: None,
             last_error: None,
-            log_path,
+            log_dir: options.log_dir,
+            log_copier,
             started_at: Instant::now(),
             usb_socket: None,
             usb_error: None,
@@ -246,7 +269,8 @@ impl Session {
                              first."
                                 .to_string()
                         } else {
-                            crash_message(&self.log_path)
+                            self.wait_for_log();
+                            crash_message(&self.log_dir)
                         };
                         self.phase = Phase::Ended { clean: false, dirty: true, message };
                         changed = true;
@@ -614,6 +638,17 @@ impl Session {
     }
 
     /// Last resort when the worker ignores Stop beyond the grace period: kill it. The device stays dirty.
+    /// Give the engine log a moment to take the worker's last lines (it ends when the worker's stderr closes).
+    fn wait_for_log(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.log_copier.as_ref().is_some_and(|c| !c.is_finished()) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if self.log_copier.as_ref().is_some_and(|c| c.is_finished()) {
+            let _ = self.log_copier.take().map(|c| c.join());
+        }
+    }
+
     pub fn kill_if_overdue(&mut self) {
         if self.frontmost_asked.is_some_and(|at| at.elapsed() > Duration::from_millis(2500)) {
             self.pause_after_frontmost();
@@ -637,26 +672,15 @@ impl Drop for Session {
     }
 }
 
-fn crash_message(log: &Path) -> String {
-    let tail = std::fs::read_to_string(log)
-        .ok()
-        .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string))
+fn crash_message(log_dir: &Path) -> String {
+    let newest = lighttouch_core::logs::newest_part(log_dir, lighttouch_core::logs::ENGINE.name);
+    let tail = lighttouch_core::logs::read_tail(&newest, 16 << 10)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .and_then(|text| {
+            text.lines().rev().find(|l| !l.trim().is_empty() && !l.starts_with("----- [log]")).map(str::to_string)
+        })
         .unwrap_or_default();
     if tail.is_empty() { "iOS stopped unexpectedly".into() } else { format!("iOS stopped unexpectedly: {tail}") }
-}
-
-fn prune_logs(dir: &Path, keep: usize) {
-    let mut logs: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("session-")))
-        .collect();
-    logs.sort();
-    while logs.len() >= keep {
-        let _ = std::fs::remove_file(logs.remove(0));
-    }
 }
 
 /// Frame timing for the performance overlay: frames published by the worker and their pacing.

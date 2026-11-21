@@ -2,6 +2,7 @@
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
 pub mod crash;
+pub mod diagnostics;
 pub mod gamepad;
 pub mod inspector;
 pub mod network;
@@ -18,6 +19,7 @@ pub mod tilt;
 
 use lighttouch_catalog::catalog::{device_subtitle, model_name};
 use lighttouch_catalog::{Bootrom, GuestTools};
+use lighttouch_core::app_log;
 use lighttouch_core::library::{Library, Record};
 use lighttouch_core::paths::{DataDirs, Resources};
 use session::{Phase, Session, StartOptions};
@@ -26,6 +28,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use task::{Progress, Task};
+
+/// Results a background thread hands back to `tick`.
+type Channel<T> = (std::sync::mpsc::Sender<T>, std::sync::mpsc::Receiver<T>);
 
 /// Ask the frontend to redraw (called from background threads).
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -113,6 +118,13 @@ pub struct Model {
     screenshots: (std::sync::mpsc::Sender<Result<PathBuf, String>>, std::sync::mpsc::Receiver<Result<PathBuf, String>>),
     /// A preparation LightTouch closed during, to offer again (taken by the UI).
     pub interrupted: Option<prepare::PrepareRequest>,
+    /// The GPU LightTouch's window draws with, for exported logs (set by the frontend).
+    pub gpu: Option<String>,
+    /// A log export in progress, and how the last one went (the zip, or why not).
+    exporting: bool,
+    exports: Channel<Result<PathBuf, String>>,
+    /// The error last written to the app log, so each shows there once.
+    logged_error: Option<String>,
     waker: Waker,
 }
 
@@ -142,14 +154,33 @@ impl Model {
             finished: None,
             screenshots: std::sync::mpsc::channel(),
             interrupted: None,
+            gpu: None,
+            exporting: false,
+            exports: std::sync::mpsc::channel(),
+            logged_error: None,
             waker,
         };
+        remove_old_logs(&model.dirs.logs());
         model.interrupted = prepare::recover_interrupted(&model.dirs);
         match Library::open(&model.dirs.library()) {
             Ok(library) => model.library = Some(library),
             Err(e) => model.error = Some(format!("Couldn't open your devices: {e}")),
         }
         model.refresh();
+        for d in &model.devices {
+            app_log!(
+                "device {}: {} ({} {}){}{}",
+                &d.id[..8.min(d.id.len())],
+                d.subtitle,
+                d.board,
+                d.build,
+                if d.selected { ", selected" } else { "" },
+                if d.dirty { ", not shut down cleanly" } else { "" }
+            );
+        }
+        if let Some(request) = &model.interrupted {
+            app_log!("a preparation of {} was interrupted when LightTouch last closed", request.firmware_id);
+        }
         model
     }
 
@@ -173,7 +204,13 @@ impl Model {
             if let Some(error) = session.last_error.take() {
                 self.notice = Some((error, Instant::now()));
             }
-            if let Phase::Ended { clean, message, .. } = &session.phase {
+            if let Phase::Ended { clean, dirty, message } = &session.phase {
+                app_log!(
+                    "{} ended after {:.0} s: clean={clean} dirty={dirty}{}",
+                    session.name,
+                    session.started_at.elapsed().as_secs_f64(),
+                    if message.is_empty() { String::new() } else { format!(": {message}") }
+                );
                 if !*clean && !message.is_empty() {
                     self.error = Some(message.clone());
                 }
@@ -190,6 +227,14 @@ impl Model {
                 let activity = activity.clone();
                 self.task = None;
                 let finished = result.unwrap_or_else(|message| Finished::Failed { activity, message });
+                match &finished {
+                    Finished::DeviceAdded { name, timings, .. } => {
+                        app_log!("preparation done: added {name} in {:.0} s", timings.last().map_or(0.0, |(_, s)| *s))
+                    }
+                    Finished::Failed { activity: Activity::Preparing(id), message } => {
+                        app_log!("preparation of {id} failed: {message}")
+                    }
+                }
                 if let Finished::DeviceAdded { name, selected: false, .. } = &finished {
                     self.notice =
                         Some((format!("Added {name}; stop the running device to switch to it"), Instant::now()));
@@ -213,6 +258,22 @@ impl Model {
             usb_problem.as_deref(),
         );
         self.store.tick();
+        while let Ok(result) = self.exports.1.try_recv() {
+            self.exporting = false;
+            match result {
+                Ok(path) => {
+                    app_log!("logs exported");
+                    self.notify(format!("Logs saved to {}", path.display()));
+                }
+                Err(e) => self.error = Some(e),
+            }
+        }
+        if self.error != self.logged_error {
+            if let Some(e) = &self.error {
+                app_log!("error shown: {e}");
+            }
+            self.logged_error = self.error.clone();
+        }
         if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(4)) {
             self.notice = None;
         }
@@ -247,7 +308,7 @@ impl Model {
     /// The running device's emulator log (its session's) and serial console, for "why did the last app quit".
     pub fn device_logs(&self) -> crash::DeviceLogs {
         crash::DeviceLogs {
-            engine: self.session.as_ref().map(|s| s.log_path.clone()),
+            engine: self.session.as_ref().map(|s| s.log_dir.clone()),
             serial: self.current().map(|d| d.record.state_path.join("serial.log")),
         }
     }
@@ -335,11 +396,25 @@ impl Model {
         if let Some(pack) = tools.newer_than(device.record.guest_package_path.as_deref(), &device.board, &device.build)
         {
             if let Ok(library) = self.library() {
-                if let Err(e) = library.set_guest_package(&device.id, &pack) {
-                    eprintln!("guest tools update for {}: {e}", device.id);
+                match library.set_guest_package(&device.id, &pack) {
+                    Ok(_) => app_log!("guest tools for {} updated to {}", device.name, pack.display()),
+                    Err(e) => app_log!("guest tools update for {} failed: {e}", device.name),
                 }
             }
         }
+        // iOS's console starts over each boot: keep the one before, as the engine log does.
+        let serial = device.record.state_path.join("serial.log");
+        if serial.is_file() {
+            let _ = std::fs::rename(&serial, device.record.state_path.join("serial.prev.log"));
+        }
+        app_log!(
+            "{} {} ({} {} {})",
+            if recover || device.dirty { "recovering" } else { "starting" },
+            device.name,
+            device.model,
+            device.board,
+            device.build
+        );
         let options = StartOptions {
             library: self.dirs.library(),
             record_id: device.id.clone(),
@@ -375,6 +450,40 @@ impl Model {
         self.refresh();
     }
 
+    /// Save LightTouch's logs as a zip at `dest` in the background (Settings › Diagnostics › Export logs, and the
+    /// preparation pages' Save logs). A notice says where when it is done.
+    pub fn export_logs(&mut self, dest: PathBuf) {
+        if self.exporting {
+            return;
+        }
+        let running = self
+            .session
+            .as_ref()
+            .filter(|s| s.phase.active())
+            .map(|s| (s.record_id.clone(), s.phase.label().to_string()));
+        let request = diagnostics::ExportRequest {
+            dirs: self.dirs.clone(),
+            devices: self.devices.clone(),
+            current: self.current().map(|d| d.id.clone()),
+            running,
+            settings: self.settings.clone(),
+            gpu: self.gpu.clone(),
+            guest_socket: self.store.guest_socket(),
+        };
+        self.exporting = true;
+        self.notify("Saving the logs…");
+        let (tx, waker) = (self.exports.0.clone(), self.waker.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(diagnostics::export(&request, &dest).map(|_| dest));
+            waker();
+        });
+    }
+
+    /// Whether a log export is running.
+    pub fn exporting_logs(&self) -> bool {
+        self.exporting
+    }
+
     pub fn stop(&mut self) {
         if self.store.mutating() {
             self.notify("An app is being installed; stop the device once it finishes.");
@@ -406,7 +515,7 @@ impl Model {
             session.pause_for_inspector();
         }
         let events = session.claim_timing();
-        let mut snapshot = session.timeline.snapshot(&session.name, Some(session.log_path.clone()));
+        let mut snapshot = session.timeline.snapshot(&session.name, Some(session.log_dir.clone()));
         snapshot.events = events;
         Some((snapshot, pause))
     }
@@ -474,6 +583,7 @@ impl Model {
             self.library().and_then(|library| library.set_guest_package(&device.id, pack).map_err(|e| e.to_string()));
         match result {
             Ok(_) => {
+                app_log!("guest tools for {} replaced with {}", device.name, pack.display());
                 self.notify("Guest tools updated; they install at the next start");
                 self.refresh();
             }
@@ -529,6 +639,7 @@ impl Model {
             select: !self.session_active(),
             waker: self.waker.clone(),
         };
+        app_log!("preparing {} (jailbreak: {})", request.firmware_id, request.jailbreak);
         let activity = Activity::Preparing(request.firmware_id.clone());
         let task = Task::spawn(self.waker.clone(), move |reporter| prepare::run(context, request, reporter));
         self.task = Some((activity, task));
@@ -555,6 +666,16 @@ pub(crate) fn chrono_like_stamp() -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if mo <= 2 { 1 } else { 0 };
     format!("{y:04}-{mo:02}-{d:02} at {h:02}.{m:02}.{s:02}")
+}
+
+/// Logs from before docs/LOGS.md: a session log per device start, and firmwarekit's own.
+fn remove_old_logs(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if (name.starts_with("session-") && name.ends_with(".log")) || name == "firmwarekit.log" {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// The USB link for a session of `record`, when this build has the bridge.

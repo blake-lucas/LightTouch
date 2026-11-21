@@ -91,15 +91,35 @@ class GuestCrashReportTest {
     }
 
     @Test fun diagnosisIncludesTheEnginesOwnLogTail() {
-        val state = File.createTempFile("state", "").let { it.delete(); it.mkdirs(); it }
+        val logs = File.createTempFile("logs", "").let { it.delete(); it.mkdirs(); it }
         try {
-            File(state, "engine-1.log").writeText((1..200).joinToString("\n") { "line $it" })
-            val tail = GuestCrashDiagnosis.tail(GuestCrashDiagnosis.engineLog(state), 5)
+            // A rolled engine log: the head, then the newest tail segment, whose last lines are the ones that count.
+            File(logs, "engine.log").writeText((1..100).joinToString("\n", postfix = "\n") { "head $it" })
+            File(logs, "engine.tail.log").writeText((1..200).joinToString("\n") { "line $it" })
+            val tail = GuestCrashDiagnosis.tail(Logs.files(logs, "engine"), 5)
             assertEquals(listOf("line 196", "line 197", "line 198", "line 199", "line 200"), tail)
-            val text = GuestCrashDiagnosis.report(state, "Asphalt8.plist", asphalt, "dyld: missing _foo")
+            val text = GuestCrashDiagnosis.report(logs, "Asphalt8.plist", asphalt, "dyld: missing _foo")
             assertTrue(text.contains("iOS system log"))
             assertTrue(text.contains("line 200"))
             assertTrue(text.contains("Thread 0 Crashed:"))
-        } finally { state.deleteRecursively() }
+        } finally { logs.deleteRecursively() }
+    }
+
+    @Test fun aCappedLogKeepsItsHeadAndRollsItsTail() {
+        val logs = File.createTempFile("logs", "").let { it.delete(); it.mkdirs(); it }
+        try {
+            val writer = Logs.Writer(logs, Logs.Spec("t", 100, 100))
+            repeat(60) { writer.write("line ${it.toString().padStart(4, '0')}\n".toByteArray()) }  // 10 bytes a line
+            val parts = Logs.files(logs, "t").map { it.name }
+            assertEquals(listOf("t.log", "t.tail.1.log", "t.tail.log"), parts)
+            val whole = java.io.ByteArrayOutputStream().also { Logs.copyTo(Logs.files(logs, "t"), it) }.toString()
+            assertTrue("the head is kept", whole.startsWith("line 0000"))
+            assertTrue("the newest line is kept", whole.trimEnd().endsWith("line 0059"))
+            assertTrue("a dropped middle is marked", Regex("tail segment [3-9]").containsMatchIn(whole))
+            assertTrue("the middle went", !whole.contains("line 0015"))
+            Logs.newGeneration(logs, "t")
+            assertEquals(listOf("t.prev.log", "t.prev.tail.1.log", "t.prev.tail.log"), Logs.files(logs, "t", previous = true).map { it.name })
+            assertTrue(Logs.files(logs, "t").isEmpty())
+        } finally { logs.deleteRecursively() }
     }
 }

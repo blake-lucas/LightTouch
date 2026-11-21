@@ -77,7 +77,7 @@ pub struct Snapshot {
     pub frames: Vec<Frame>,
     pub snapshot_ns: u64,
     pub device: String,
-    /// The session's log, whose end goes in a report.
+    /// The logs folder, whose engine log's end goes in a report.
     pub log: Option<PathBuf>,
     /// The detailed timing capture the inspector claimed, if detailed timing was on.
     pub events: Option<PathBuf>,
@@ -482,9 +482,10 @@ pub fn save_report(
         "lowFps": stats.low_fps, "worstMs": stats.worst_ms, "hitches": stats.hitches, "detailed": detail.is_some()});
     std::fs::write(folder.join("report.json"), serde_json::to_string_pretty(&report).unwrap_or_default() + "\n")
         .map_err(fail)?;
-    if let Some(log) = snapshot.log.as_ref().and_then(|p| std::fs::read(p).ok()) {
-        let tail = &log[log.len().saturating_sub(2 << 20)..];
-        std::fs::write(folder.join("session-tail.log"), tail).map_err(fail)?;
+    if let Some(log) =
+        snapshot.log.as_ref().and_then(|dir| lighttouch_core::logs::stitch(dir, lighttouch_core::logs::ENGINE.name))
+    {
+        std::fs::write(folder.join("engine-tail.log"), lighttouch_core::logs::tail(&log, 2 << 20)).map_err(fail)?;
     }
     Ok(folder)
 }

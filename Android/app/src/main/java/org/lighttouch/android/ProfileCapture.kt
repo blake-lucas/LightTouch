@@ -127,7 +127,8 @@ internal class ProfileCapture(private val context: android.content.Context, priv
                         File(dir, "engine-$group-manifest.json").outputStream().use { input.copyTo(it) }
                     } } catch (_: java.io.IOException) { /* Older APK notice layouts may differ. */ }
                 }
-                log?.takeIf { it.exists() }?.inputStream()?.use { input ->
+                // The head of this start's engine log (docs/LOGS.md), wherever the log has rolled on to since.
+                File(Logs.dir(context), "engine.log").takeIf { it.exists() }?.inputStream()?.use { input ->
                     File(dir, "engine-start.log").outputStream().use { output ->
                         val buffer = ByteArray(8192)
                         var remaining = 65536
@@ -164,9 +165,12 @@ internal class ProfileCapture(private val context: android.content.Context, priv
         try {
             val result = Native.profile("")
             if (result.isNotEmpty()) lastError = result
-            engineLog?.takeIf { it.exists() }?.let { source ->
+            // The engine log rolls to a new part past 1 MiB (docs/LOGS.md); then the capture keeps the part now written.
+            val current = Native.status().getOrNull(3)?.takeIf { it.isNotBlank() }?.let { File(it) }
+            val rolled = current != null && current.path != engineLog?.path
+            (if (rolled) current else engineLog)?.takeIf { it.exists() }?.let { source ->
                 RandomAccessFile(source, "r").use { input ->
-                    input.seek(logOffset.coerceAtMost(input.length()))
+                    input.seek(if (rolled || logOffset > input.length()) 0L else logOffset)
                     File(dir, "engine.log").outputStream().use { output ->
                         val buffer = ByteArray(32768)
                         var remaining = (input.length() - input.filePointer).coerceAtMost(8L * 1024 * 1024)

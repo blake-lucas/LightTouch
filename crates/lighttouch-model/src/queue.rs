@@ -412,6 +412,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
                     match result {
                         Ok(()) => {
                             entry.item.state = QueueState::Done;
+                            lighttouch_core::app_log!("app installed: {} ({})", entry.item.name, entry.item.key);
                             entry.item.phase = INSTALLED.into();
                             entry.item.progress = Some(1.0);
                             entry.item.overall = 1.0;
@@ -426,6 +427,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
 }
 
 fn fail(item: &mut QueueItem, error: String) {
+    lighttouch_core::app_log!("app install failed: {} ({}): {error}", item.name, item.key);
     item.state = QueueState::Failed;
     item.phase.clear();
     item.progress = None;

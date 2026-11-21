@@ -432,7 +432,7 @@ lookups (5.6%), mostly cache misses on the jump-cache entry and the TB it points
 
 Debug builds can log the vCPU's time split: `adb shell run-as org.lighttouch.android touch
 files/debug-vcpu-accounting`, start the guest, and read the `[acct]` lines in the record's
-`state/engine-PID.log`. The `run`/`halt`/`io (bql …)` split on each line understates lock time: its "bql" covers only
+`files/logs/engine*.log` ([LOGS.md](LOGS.md)). The `run`/`halt`/`io (bql …)` split on each line understates lock time: its "bql" covers only
 the halt path. The `vcpu-bql`, `bql-by-mr`, `bql-wait-hist`, `bql-holder` and `bql-hold-hist` lines
 (engine `256d81f9fb`) time every vCPU acquisition by MMIO region or call site, and the other threads'
 holds by taker; `tools/perf/bqlsites.py LOG T0 T1` turns two dumps into per-site rates. They showed

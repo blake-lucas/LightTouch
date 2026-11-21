@@ -109,7 +109,7 @@ so pull it after Stop. Each line is `monotonic_ns event a b c`. A missing `# end
 | `LT_FMSS_PATH=on` | NAND loads, stores, erases and their fsyncs | `fmsspath.py` |
 | `LT_BT_PATH=on` | Bluetooth HCI commands, reply queueing and UART injection (reply prefixes only, never firmware payloads) | `btpath.py` |
 
-These print five-second blocks to the engine log instead (`state/engine-PID.log` in the record):
+These print five-second blocks to the engine log instead (`files/logs/engine*.log` on Android, `logs/engine*.log` on the desktop; see [LOGS.md](LOGS.md)):
 
 | Switch | Prints | Read with |
 | --- | --- | --- |

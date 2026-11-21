@@ -22,6 +22,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let recording = app.model.recording_status();
             let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
             let mut toggle_recording = false;
+            let exporting = app.model.exporting_logs();
+            let mut export_logs = false;
             let mut open_ipad_size = false;
             let ipad_summary = super::ipad_size::summary(app);
             let settings = &mut app.model.settings;
@@ -263,7 +265,23 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                     }
                 }
-                widgets::setting_row(ui, &p, icons::FILE, "Session logs", "What each device session printed", |ui| {
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::DOWNLOAD,
+                    "Export logs",
+                    "Saves LightTouch's logs and a summary of this computer as a zip, to attach to a problem report",
+                    |ui| {
+                        export_logs = widgets::tonal_enabled(
+                            ui,
+                            &p,
+                            if exporting { "Saving…" } else { "Export" },
+                            !exporting,
+                        )
+                        .clicked();
+                    },
+                );
+                widgets::setting_row(ui, &p, icons::FILE, "Log folder", "Where LightTouch keeps its logs", |ui| {
                     if widgets::tonal(ui, &p, "Open folder").clicked() {
                         let dir = app.model.dirs.logs();
                         let _ = std::fs::create_dir_all(&dir);
@@ -342,6 +360,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
             if open_ipad_size {
                 super::ipad_size::open(app);
+            }
+            if export_logs {
+                super::save_logs(app);
             }
             if toggle_recording {
                 app.model.toggle_recording();

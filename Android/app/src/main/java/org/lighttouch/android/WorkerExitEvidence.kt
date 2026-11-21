@@ -9,12 +9,12 @@ import java.io.File
 
 /** Own :engine exit history only; never reads another app or system log stream. */
 internal object WorkerExitEvidence {
-    private const val TRACE_LIMIT = 4 * 1024 * 1024
+    private const val TRACE_LIMIT = 1024 * 1024
     fun capture(context: Context, workerPid: Int) {
         if (Build.VERSION.SDK_INT < 30) return
         val directory = File(context.filesDir, "worker-exits").apply { mkdirs() }
         // A receipt (and possibly a trace) per worker exit, never removed before (536 on one phone).
-        directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(60)?.forEach { it.delete() }
+        directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(10)?.forEach { it.delete() }
         val manager = context.getSystemService(ActivityManager::class.java)
         val deadline = SystemClock.elapsedRealtime() + 10_000
         try {

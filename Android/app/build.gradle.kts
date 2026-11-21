@@ -6,6 +6,15 @@ val shutdownGraceMs = Regex("(?m)^#define\\s+LT_SHUTDOWN_GRACE_MS\\s+([0-9]+)u?\
     .find(shutdownPolicyHeader.readText())?.groupValues?.get(1)?.toLong()
     ?: error("Shared LT_SHUTDOWN_GRACE_MS policy is unavailable")
 require(shutdownGraceMs > 0)
+// The commit the APK is built from, for logs and issue reports (-PgitCommit= when building outside a checkout).
+val gitCommit = providers.gradleProperty("gitCommit").orNull ?: runCatching {
+    val git = ProcessBuilder("git", "rev-parse", "--short=10", "HEAD").directory(projectDir).redirectErrorStream(true).start()
+    val commit = git.inputStream.bufferedReader().readText().trim().takeIf { git.waitFor() == 0 && it.isNotEmpty() }
+    // A build with uncommitted changes says so, so a log never claims a commit it wasn't built from.
+    val status = ProcessBuilder("git", "status", "--porcelain", "--untracked-files=no").directory(projectDir).start()
+    val dirty = status.inputStream.bufferedReader().readText().isNotBlank().also { status.waitFor() }
+    commit?.let { if (dirty) "$it-modified" else it }
+}.getOrNull() ?: "unknown"
 android {
     namespace = "org.lighttouch.android"
     compileSdk = 35
@@ -19,6 +28,7 @@ android {
         versionCode = 14
         versionName = "0.0.14"
         buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
         externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get(), "-DOPENSSL_ROOT_DIR=" + providers.gradleProperty("networkDeps").orElse("").get()) } }
