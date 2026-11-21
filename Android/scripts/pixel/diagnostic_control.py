@@ -77,7 +77,7 @@ def scoped_paths(binding, timeline=None):
     root = "files/" + folder
     pid, record = binding["workerPid"], binding["recordId"]
     paths = [root + "/result.json", root + "/ready.json", root + "/timeline.json",
-             f"files/library/records/{record}/state/engine-{pid}.log",
+             "files/logs/engine.log", "files/logs/engine.tail.1.log", "files/logs/engine.tail.log",
              f"files/worker-shutdown-{pid}.json", f"files/worker-stop-error-{pid}.txt"]
     if timeline is not None:
         if not isinstance(timeline, list) or len(timeline) > 40:

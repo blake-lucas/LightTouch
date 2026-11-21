@@ -49,6 +49,7 @@ Starting a generation: delete `NAME.prev*.log`, rename each `NAME*.log` to the s
 ### How each is written
 
 - **Android engine**: the engine runs inside the `:engine` process, whose stdout and stderr point at the log file itself. A watcher thread checks the file's size every second and, past the limit, points stdout and stderr at the next segment (`dup2`). Writes never pass through a pipe, so nothing is lost if the engine crashes.
+  Perf runs on a debuggable build that print all along (`LT_FRAME_LOG`, vCPU accounting, `IT_GLES_PROF`) can add `LT_LOG_UNCAPPED=1` to `files/debug-env` to keep the whole engine log in `engine.log`.
 - **Child processes** (firmwarekit on both platforms; the desktop device worker): LightTouch reads the child's stderr from a pipe and writes it to the capped log. The pipe outlives a crashing child, so its last lines arrive.
 - **App log**: one line at a time, appended (`O_APPEND`), from any of the app's processes.
 - **Preparation serial logs**: firmwarekit removes the one-shot boots' serial logs (`work/keybag.log`, `seal.log`, …) after a success; when a preparation fails, LightTouch appends them to `prepare` (their last 256 KiB each) before the job folder goes. The lines that matter (`it_keybag: …`) are in firmwarekit's own output either way.

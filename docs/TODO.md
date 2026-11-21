@@ -1,6 +1,6 @@
 # Open work
 
-Tick items off here as they land (with the commit), so nothing is lost between sessions.
+Remove items once they land (the commit and git history keep them), so this list stays what's still open.
 Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Support targets
@@ -133,6 +133,11 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   (Steam Input?), and a motion binding then overrode the stick tilt. `3110750a` re-enables quiet sensors and falls
   back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
   (`logs/engine*.log`, formerly `logs/session-*.log`). Read those from the user's next run before calling it fixed.
+
+- [ ] Checks still owed from fixes that landed:
+  - IPA installs: check the Pixel. What's left is the 2G's unpack, which is guest-CPU-bound (~148 s on the desktop), and the 4G's IOP round trip per NAND request (~1.6 ms on the Poco).
+  - Battle Bears: Zombies! at its 29.6–29.7 fps cap (guest tools serial 31): check on the phones.
+  - The 4G's gyro "down" re-centring (engine `cdd01aec99`): confirm on the Pixel in Real Racing.
 
 ## Firmware and assets
 

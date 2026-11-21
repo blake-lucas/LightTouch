@@ -335,7 +335,7 @@ def snapshot(record):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["tar", "-cSf", str(path), "-C", str(WORK / "data/library/records" / record), "--exclude",
-                        "state/work", "--exclude", "state/.lease", "--exclude", "state/serial.log", "--exclude",
+                        "state/work", "--exclude", "state/.lease", "--exclude", "state/serial.log", "--exclude", "state/serial.prev.log", "--exclude",
                         "state/engine-*.log", "state"], check=True)
     return path
 
@@ -616,7 +616,7 @@ def warm(args):
             if s.stop():
                 tar = WORK / "pristine" / f"{rec}.warm.tar"
                 subprocess.run(["tar", "-cSf", str(tar), "-C", str(WORK / "data/library/records" / rec), "--exclude",
-                                "state/work", "--exclude", "state/.lease", "--exclude", "state/serial.log", "--exclude",
+                                "state/work", "--exclude", "state/.lease", "--exclude", "state/serial.log", "--exclude", "state/serial.prev.log", "--exclude",
                                 "state/engine-*.log", "state"], check=True)
                 log(key, "warm state kept:", tar)
             else:

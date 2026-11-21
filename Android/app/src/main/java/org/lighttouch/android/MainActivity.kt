@@ -106,8 +106,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     private var pendingLogs: File? = null
     private val saveLogs = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        val file = pendingLogs; pendingLogs = null
-        if (uri == null || file == null) { logsBusy = false; file?.delete(); return@registerForActivityResult }
+        // The zip waiting in the cache: this activity's, or one a recreated activity finds there.
+        val file = pendingLogs ?: File(cacheDir, "log-exports").listFiles { f -> f.name.endsWith(".zip") }?.maxByOrNull { it.lastModified() }
+        pendingLogs = null
+        if (uri == null) { logsBusy = false; file?.delete(); return@registerForActivityResult }
+        if (file == null || !file.isFile) {
+            runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) }
+            logsBusy = false; error = "Couldn't save the logs: LightTouch was closed while the save dialog was open. Try Export logs again."
+            return@registerForActivityResult
+        }
         Thread({
             try {
                 (contentResolver.openOutputStream(uri) ?: error("the file couldn't be opened")).use { out -> file.inputStream().use { it.copyTo(out) } }

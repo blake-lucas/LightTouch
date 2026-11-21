@@ -31,7 +31,7 @@ internal object LogExport {
     fun build(context: Context, inputs: Inputs): File {
         val time = Date()
         val name = "LightTouch-logs-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(time)}.zip"
-        val dir = File(context.cacheDir, "log-exports").apply { deleteRecursively(); mkdirs() }
+        val dir = File(context.cacheDir, "log-exports").apply { listFiles()?.forEach { it.delete() }; mkdirs() }
         val zip = File(dir, name)
         val logs = Logs.dir(context)
         val scrub = scrubber(context)
@@ -98,7 +98,7 @@ internal object LogExport {
         val memory = ActivityManager.MemoryInfo().also { context.getSystemService(ActivityManager::class.java).getMemoryInfo(it) }
         appendLine("Memory: ${size(memory.totalMem)} total, ${size(memory.availMem)} available${if (memory.lowMemory) " (low)" else ""}")
         appendLine("Storage: ${size(context.filesDir.usableSpace)} free of ${size(context.filesDir.totalSpace)}")
-        gpu().forEach { appendLine(it) }
+        gpuWithin(5_000).forEach { appendLine(it) }
         appendLine()
         appendLine("Settings")
         context.getSharedPreferences("ui", Context.MODE_PRIVATE).all.toSortedMap().forEach { (key, value) -> appendLine("  $key = $value") }
@@ -115,6 +115,14 @@ internal object LogExport {
                 ", jailbroken ${if (jailbroken) "yes" else "no"}" + (facts?.toolsSerial?.let { ", guest tools serial $it" } ?: "") +
                 (if (device.dirty) ", left running (unclean)" else "") + ", record ${device.id.take(8)}")
         }
+    }
+
+    /** [gpu] on a thread of its own, so a driver that hangs (the suspect, when logs are wanted) can't stop the export. */
+    private fun gpuWithin(millis: Long): List<String> {
+        var result: List<String> = listOf("GPU: the driver didn't answer within ${millis / 1000} s")
+        val probe = Thread({ val lines = gpu(); synchronized(this) { result = lines } }, "log-export-gpu").apply { isDaemon = true; start() }
+        probe.join(millis)
+        return synchronized(this) { result }
     }
 
     /** The GPU as LightTouch's own GL context sees it: the driver the engine draws with ("platform" graphics). */
@@ -143,7 +151,7 @@ internal object LogExport {
                 EGL14.eglDestroySurface(display, surface); EGL14.eglDestroyContext(display, context)
             }
         } catch (e: Exception) { listOf("GPU: unavailable ($e)") }
-        finally { EGL14.eglTerminate(display) }
+        // No eglTerminate: the display is the process's one, which the UI's renderer may share.
     }
 
     /** LightTouch's own Android log (an app reads only its own): its processes, the GPU driver in them, crashes. */
@@ -226,7 +234,8 @@ internal object Housekeeping {
         }
         File(files, "hitches").listFiles()?.sortedByDescending { it.lastModified() }?.drop(5)?.forEach { it.deleteRecursively() }
         File(context.cacheDir, "firmwarekit.log").delete()
-        File(context.cacheDir, "log-exports").deleteRecursively()
+        // An export waiting for its save dialog is kept: the activity may be recreated behind the dialog.
+        File(context.cacheDir, "log-exports").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.deleteRecursively() }
         File(files, "library/records").listFiles()?.forEach { record ->
             File(record, "state").listFiles { f -> f.isFile && (f.name.startsWith("engine-") && f.name.endsWith(".log") || f.name == "guest-serial.log") }
                 ?.forEach { it.delete() }

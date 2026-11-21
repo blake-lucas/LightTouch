@@ -69,7 +69,7 @@ class Control(unittest.TestCase):
 
     def test_only_derived_record_worker_and_sample_paths(self):
         paths = control.scoped_paths(binding(), [{"index": 0, "status": {"pid": 42, "uid": 10215}}])
-        self.assertIn("files/library/records/" + "a" * 32 + "/state/engine-42.log", paths)
+        self.assertIn("files/logs/engine.log", paths)
         self.assertIn("files/screenshots/pixel-boot-" + "b" * 32 + "/frame-0.png", paths)
         self.assertFalse(any("base/" in p or "itbase" in p for p in paths))
 
@@ -185,7 +185,7 @@ class CaptureIdentity(unittest.TestCase):
                        {"/proc/sys/kernel/random/boot_id": b"different"}):
             receipt, calls = self.collect(change)
             self.assertIn("failure", receipt)
-            self.assertFalse(any("engine-42.log" in " ".join(c) for c in calls))
+            self.assertFalse(any("logs/engine.log" in " ".join(c) for c in calls))
 
     def test_symlink_remote193_is_not_treated_as_success(self):
         path = "files/pixel-boot-" + binding()["attemptToken"] + "/ready.json"

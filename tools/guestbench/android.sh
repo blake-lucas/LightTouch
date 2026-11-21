@@ -19,8 +19,7 @@ install)
     as "$lib/liblt_appservice.so install --socket /data/data/$PKG/$sock --ipa /data/data/$PKG/files/LTBench.ipa --bundle-id org.lighttouch.ltbench"
     ;;
 results)
-    log=$(as 'ls -t files/library/records/*/state/engine-*.log | head -1' | tr -d '\r')
-    as "grep -a ltbench $log" | tr -d '\r' | awk -v n="${2:-1}" '
+    as "cat files/logs/engine.log files/logs/engine.tail.1.log files/logs/engine.tail.log 2>/dev/null | grep -a ltbench" | tr -d '\r' | awk -v n="${2:-1}" '
         /\[ltbench\] start pass/ { buf[++k] = "" } k { buf[k] = buf[k] $0 "\n" }
         END { for (i = (k > n ? k - n + 1 : 1); i <= k; i++) printf "%s", buf[i] }'
     ;;

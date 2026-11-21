@@ -318,7 +318,7 @@ def android(args):
         shot = WORK / firmware_id / "android-wake.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
         shot.write_bytes(phone.adb("exec-out", "screencap", "-p", binary=True))
-        log = phone.run_as(f"cat $(ls -t files/library/records/{rid}/state/engine-*.log | head -1)")
+        log = phone.run_as("cat files/logs/engine.log files/logs/engine.tail.1.log files/logs/engine.tail.log 2>/dev/null")
         engine_milestones(log, result)
         phone.tap("Stop", 1.5)
         phone.tap("Shut down", 0)

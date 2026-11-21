@@ -188,7 +188,7 @@ class EngineService : Service() {
             android.system.Os.setenv("LT_FLUSH_ON_APP", flush, true)
             android.system.Os.setenv("LT_FLUSH_SETTLE", flush, true)
             // Perf work on debug builds (create these with run-as): files/debug-vcpu-accounting logs the
-            // vCPU's run/halt/BQL split every 5 s to the record's state/engine-PID.log; files/debug-env
+            // vCPU's run/halt/BQL split every 5 s to files/logs/engine.log (LT_LOG_UNCAPPED=1 keeps it whole); files/debug-env
             // holds KEY=VALUE engine environment lines, e.g. QEMU_PERFMAP_DIR=<files>/perfmap for JIT
             // symbols or IT_GLES_PROF=1 (see docs/PERFORMANCE.md).
             if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {

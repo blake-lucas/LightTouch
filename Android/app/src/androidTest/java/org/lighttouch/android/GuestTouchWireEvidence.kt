@@ -23,7 +23,7 @@ internal class GuestTouchWireEvidence(filesDir: File, status: Bundle, private va
 
     init {
         require(status.getBoolean("touchTraceConfigured")) { "Fixed trace must be configured before guest start in this worker" }
-        require(log.toPath().startsWith(filesDir.canonicalFile.toPath()) && log.name == "engine-${status.getInt("pid")}.log" && log.isFile)
+        require(log.toPath().startsWith(filesDir.canonicalFile.toPath()) && log.name in listOf("engine.log", "engine.tail.log") && log.isFile)
         offset = log.length(); startOffset = offset
         raw.writeBytes(byteArrayOf())
     }

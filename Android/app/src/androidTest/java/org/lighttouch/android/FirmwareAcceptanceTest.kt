@@ -64,7 +64,7 @@ class FirmwareAcceptanceTest {
                             // A third of the way in, firmwarekit is past decrypting and is writing the volumes.
                             if (cancelMidway && terminal.getString("state") == "preparing" && terminal.getLong("total") > 0 &&
                                 terminal.getLong("done") * 3 > terminal.getLong("total")) worker.cancel()
-                            if (SystemClock.elapsedRealtime() - started > timeoutMs) { worker.cancel(); error("Preparation timed out; see cache/firmwarekit.log") }
+                            if (SystemClock.elapsedRealtime() - started > timeoutMs) { worker.cancel(); error("Preparation timed out; see files/logs/prepare.log") }
                             Thread.sleep(100)
                         }
                         File(evidence, if (cancelMidway) "cancel-result.txt" else "complete-result.txt").writeText(terminal.toString())

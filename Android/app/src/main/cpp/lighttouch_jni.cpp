@@ -211,6 +211,9 @@ static std::string engine_log_marker(int segment)
 
 static void engine_log_watch(std::string dir)
 {
+    // Perf runs that print all along (LT_FRAME_LOG, vCPU accounting, IT_GLES_PROF) set LT_LOG_UNCAPPED=1 in
+    // files/debug-env to keep their whole log (docs/LOGS.md).
+    if(const char *uncapped=getenv("LT_LOG_UNCAPPED"); uncapped && *uncapped=='1')return;
     std::thread([dir]{
         int segment=0;
         for(;;) {
