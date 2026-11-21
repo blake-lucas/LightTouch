@@ -414,6 +414,13 @@ impl Mapper {
             Action::Motion { sensitivity } if b.with.as_ref().is_none_or(|w| inputs.held(w)) => Some(sensitivity),
             _ => None,
         });
+        // No stick tilt this step (the layout is being edited): a Tilt binding still holds its rest and level.
+        let tilt = tilt.or_else(|| {
+            preset.bindings.iter().find_map(|b| match b.action {
+                Action::Tilt { rest, .. } => Some(TiltAsk { lean: (0.0, 0.0), rest, set: false }),
+                _ => None,
+            })
+        });
         let was_sensing = std::mem::replace(&mut self.sensing, false);
         let present = preset.bindings.iter().any(|b| matches!(b.action, Action::Motion { .. }))
             && (inputs.pad.accel.is_some() || inputs.pad.sensors_quiet);
@@ -1057,6 +1064,27 @@ mod tests {
         let (a, w) = out.motion.expect("the rest");
         assert!(near(a, [0.0, 0.0, GRAVITY]) && w == [0.0; 3], "{a:?}");
         assert!(m.holds_motion() && !out.busy);
+        // Editing the layout keeps it (and a level set) where it rests.
+        let lean =
+            |x| Merged { axes: [0.0, 0.0, x, 0.0, 0.0, 0.0], buttons: PadButton::South.bit(), ..Default::default() };
+        let mut p = p.clone();
+        if let Action::Tilt { set_level, .. } = &mut p.bindings[0].action {
+            *set_level = Some(Input::Pad(PadButton::South));
+        }
+        let mut leaned = [0.0; 3];
+        for i in 1..40 {
+            let pad = if i < 30 { stick_at(0.5, 0.0, 0) } else { lean(0.5) };
+            leaned = m
+                .step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(20 * i))
+                .motion
+                .unwrap()
+                .0;
+        }
+        let at = t0 + Duration::from_millis(900);
+        let (a, _) = m.step_motion(&p, &Inputs { pad: &stick_at(0.0, 0.0, 0), keys: &keys }, &v, at).motion.unwrap();
+        assert!(near(a, leaned) && m.holds_motion(), "{a:?} {leaned:?}");
+        let out = m.step(&p, &Inputs { pad: &stick_at(0.0, 0.0, 0), keys: &keys }, &v, at + Duration::from_millis(20));
+        assert!(near(out.motion.unwrap().0, leaned));
         // Let go of the binding (another preset): the app's rest again.
         let out = m.release(Some(&p), &v);
         assert!(!m.holds_motion() && out.motion.is_some());
