@@ -81,6 +81,8 @@ step_prepare() {
     # meson applies a wrap's diff_files only when it fetches the subproject, so the copy must be patched already.
     grep -q udp_refuse_dns "$R/engine/subprojects/slirp/src/udp.c" ||
         { echo "$QEMU_IOS/subprojects/slirp lacks libslirp-restricted-dns.patch: configure the engine there afresh" >&2; exit 1; }
+    grep -qF "(revents & SLIRP_POLL_HUP) && !(so->so_state & SS_FCANTRCVMORE)" "$R/engine/subprojects/slirp/src/slirp.c" ||
+        { echo "$QEMU_IOS/subprojects/slirp lacks libslirp-unix-hup.patch: configure the engine there afresh" >&2; exit 1; }
     for w in app engine; do
         [ -z "$(git -C "$R/$w" status --porcelain --untracked-files=all)" ] || { echo "$R/$w is not clean" >&2; exit 1; }
     done
