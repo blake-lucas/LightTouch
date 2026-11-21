@@ -7,7 +7,7 @@
 use super::preset::{Action, Binding, Input, Point, PointerStyle, Preset, Press, Stick, TapMode};
 use super::sdl::{Pad, Sensors};
 use crate::rotation::Rotation;
-use crate::tilt::Tilt;
+use crate::tilt::{Rest, Tilt};
 use lighttouch_core::runtime::Contact;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -273,7 +273,21 @@ pub struct Mapper {
     /// A Motion binding has a controller with motion sensors: level is then the controller's own, the device lying
     /// flat (FLAT), not the app's upright rest, while it is held or not.
     motion_present: bool,
+    /// A Tilt binding's Set level: the lean it rests at (roll, pitch, radians) from the rest it was set against, and
+    /// whether the stick is ignored until it's let go (so setting it doesn't lean it on by the stick's push again).
+    tilt_level: (f64, f64),
+    tilt_level_rest: Rest,
+    tilt_hold: bool,
     last: Option<Instant>,
+}
+
+/// What a Tilt binding asks this step: the stick's lean (fractions of the full lean, as shown), the rest it leans from,
+/// and whether its Set level was just pressed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TiltAsk {
+    lean: (f64, f64),
+    rest: Rest,
+    set: bool,
 }
 
 impl Mapper {
@@ -312,6 +326,11 @@ impl Mapper {
         out
     }
 
+    /// Forget a Tilt binding's Set level (another preset).
+    pub fn forget_tilt_level(&mut self) {
+        (self.tilt_level, self.tilt_hold) = ((0.0, 0.0), false);
+    }
+
     /// Lift every finger and release every button the preset holds, leaving the device's motion as it is (an edit
     /// to the preset: a Motion binding removed levels on the next step).
     pub fn release_fingers(&mut self, preset: Option<&Preset>, view: &View) -> Output {
@@ -347,7 +366,7 @@ impl Mapper {
         }
         let mut out = Output::default();
         let mut fingers = self.states.iter().filter(|s| s.finger.is_some()).count();
-        let mut tilt: Option<(f64, f64)> = None;
+        let mut tilt: Option<TiltAsk> = None;
         for (i, binding) in preset.bindings.iter().enumerate() {
             let id = FIRST_CONTACT + i as u32;
             let state = &mut self.states[i];
@@ -384,7 +403,7 @@ impl Mapper {
         preset: &Preset,
         inputs: &Inputs,
         view: &View,
-        tilt: Option<(f64, f64)>,
+        tilt: Option<TiltAsk>,
         now: Instant,
         out: &mut Output,
     ) {
@@ -407,11 +426,32 @@ impl Mapper {
         } else if was_sensing && motion.is_some() && inputs.pad.sensors_quiet {
             self.sensing = true;
         } else if tilt.is_some() || self.tilting {
-            let (roll, pitch) = tilt.unwrap_or((0.0, 0.0));
-            let sample = self.tilt.step_toward(roll, pitch, view.rotation, now);
-            self.tilting = !self.tilt.at_rest() || tilt.is_some_and(|t| t != (0.0, 0.0));
+            let ask = tilt.unwrap_or(TiltAsk { lean: (0.0, 0.0), rest: Rest::Upright, set: false });
+            if ask.rest != self.tilt_level_rest {
+                (self.tilt_level, self.tilt_level_rest, self.tilt_hold) = ((0.0, 0.0), ask.rest, false);
+            }
+            let mut lean = ask.lean;
+            if ask.set {
+                // Where it leans now is where it rests; with the stick let go, the chosen rest again.
+                let pushed = lean != (0.0, 0.0);
+                self.tilt_level = if pushed { self.tilt.leaning() } else { (0.0, 0.0) };
+                self.tilt_hold = pushed;
+            }
+            if self.tilt_hold {
+                // The stick that set it leans no further until it's let go, so the device stays put.
+                self.tilt_hold = lean != (0.0, 0.0);
+                lean = (0.0, 0.0);
+            }
+            let max = crate::tilt::MAX_DEGREES.to_radians();
+            let to =
+                (self.tilt_level.0 + lean.0.clamp(-1.0, 1.0) * max, self.tilt_level.1 + lean.1.clamp(-1.0, 1.0) * max);
+            let sample = self.tilt.step_to(to.0, to.1, ask.rest, view.rotation, now);
+            let moving = self.tilt.leaning() != to || lean != (0.0, 0.0);
+            // Resting anywhere but upright, the binding holds the device there (the app's own rest is upright).
+            let away = tilt.is_some() && (ask.rest != Rest::Upright || self.tilt_level != (0.0, 0.0));
+            self.tilting = moving || away || !self.tilt.at_rest();
             out.motion = Some(sample);
-            out.busy |= self.tilting;
+            out.busy |= moving;
         } else if was_sensing || was_present != present || self.leveling.is_some_and(|t| now < t) {
             let fresh = was_sensing || was_present != present;
             self.leveling = self.leveling.filter(|_| !fresh).or(Some(now + Duration::from_millis(100)));
@@ -478,7 +518,7 @@ fn step_binding(
     id: u32,
     fingers: &mut usize,
     out: &mut Output,
-    tilt: &mut Option<(f64, f64)>,
+    tilt: &mut Option<TiltAsk>,
 ) {
     let mut put = |s: &mut State, at: Option<(f32, f32)>, out: &mut Output| match (s.finger, at) {
         (None, Some((u, v))) if *fingers < MAX_FINGERS => {
@@ -718,12 +758,18 @@ fn step_binding(
             let touching = s.pressing(&press, inputs, enabled, x.hypot(y), now);
             put(s, touching.then_some(at), out);
         }
-        Action::Tilt { stick, strength } => {
+        Action::Tilt { stick, strength, rest, set_level } => {
             let (x, y) = if enabled { inputs.stick(stick, deadzone) } else { (0.0, 0.0) };
+            let held = enabled && set_level.as_ref().is_some_and(|i| inputs.held(i));
+            let set = held && !s.pressed;
+            s.pressed = held;
             if (x, y) != (0.0, 0.0) || tilt.is_none() {
                 // As the screen shows it: sideways rocks the device that way, down tips its top toward the player.
-                let s = *strength as f64;
-                *tilt = Some((x as f64 * s, y as f64 * s));
+                let k = *strength as f64;
+                let was = tilt.is_some_and(|t| t.set);
+                *tilt = Some(TiltAsk { lean: (x as f64 * k, y as f64 * k), rest: *rest, set: set || was });
+            } else if let Some(t) = tilt {
+                t.set |= set;
             }
         }
         Action::Motion { .. } => {}
@@ -984,7 +1030,8 @@ mod tests {
         let (a, _) = lean(Rotation::HomeLeft);
         assert!(near(a, [-shown[1], shown[0], shown[2]]) && a[1] < -4.0, "{a:?}");
         // Same as a stick Tilt to the right in that turn.
-        let tilt = preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0 }]);
+        let tilt =
+            preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0, rest: Rest::Upright, set_level: None }]);
         let v = View { rotation: Rotation::HomeRight, turned: false, aspect: 1.5 };
         let t0 = Instant::now();
         let mut m = Mapper::default();
@@ -997,6 +1044,58 @@ mod tests {
         }
         let full = crate::tilt::lean(35f64.to_radians(), 0.0, 0.0, 0.0).0;
         assert!(near(last, Rotation::HomeRight.to_guest_axes(full)) && last[1] > 4.0, "{last:?}");
+    }
+
+    #[test]
+    fn a_stick_tilt_rests_as_chosen_and_holds_it() {
+        let keys = HashSet::new();
+        let p = preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0, rest: Rest::Flat, set_level: None }]);
+        let v = View { rotation: Rotation::HomeRight, turned: false, aspect: 1.5 };
+        let (mut m, t0) = (Mapper::default(), Instant::now());
+        let out = m.step(&p, &Inputs { pad: &stick_at(0.0, 0.0, 0), keys: &keys }, &v, t0);
+        // Flat on a table in any turn, and held there (the app's upright rest stays away), without busying the UI.
+        let (a, w) = out.motion.expect("the rest");
+        assert!(near(a, [0.0, 0.0, GRAVITY]) && w == [0.0; 3], "{a:?}");
+        assert!(m.holds_motion() && !out.busy);
+        // Let go of the binding (another preset): the app's rest again.
+        let out = m.release(Some(&p), &v);
+        assert!(!m.holds_motion() && out.motion.is_some());
+    }
+
+    #[test]
+    fn set_level_keeps_the_lean_as_the_rest_and_the_stick_let_go_resets_it() {
+        let keys = HashSet::new();
+        let set = Input::Pad(PadButton::South);
+        let p =
+            preset(vec![Action::Tilt { stick: Stick::Right, strength: 1.0, rest: Rest::Flat, set_level: Some(set) }]);
+        let (mut m, t0, v) = (Mapper::default(), Instant::now(), view());
+        let mut t = 0;
+        let mut run = |m: &mut Mapper, x: f32, button: bool, steps: u64| {
+            let pad = stick_at(x, 0.0, if button { PadButton::South.bit() } else { 0 });
+            let mut a = [0.0; 3];
+            for _ in 0..steps {
+                t += 20;
+                if let Some((s, _)) =
+                    m.step(&p, &Inputs { pad: &pad, keys: &keys }, &v, t0 + Duration::from_millis(t)).motion
+                {
+                    a = s;
+                }
+            }
+            a
+        };
+        let flat = run(&mut m, 0.0, false, 2);
+        let half = run(&mut m, 0.5, false, 30);
+        assert!(half[0] < -1.0, "{half:?}");
+        // Set while the stick still leans it: it stays put, through the stick being let go.
+        assert!(near(run(&mut m, 0.5, true, 1), half));
+        assert!(near(run(&mut m, 0.5, false, 10), half));
+        assert!(near(run(&mut m, 0.0, false, 30), half));
+        // From there, the stick leans it further.
+        assert!(run(&mut m, 0.5, false, 30)[0] < half[0] - 1.0);
+        // Set with the stick let go: back to flat.
+        run(&mut m, 0.0, false, 30);
+        run(&mut m, 0.0, true, 1);
+        assert!(near(run(&mut m, 0.0, false, 30), flat), "{flat:?}");
     }
 
     /// The controller turning, read through its sensors, turns the device the same way in both: the device's
@@ -1043,7 +1142,10 @@ mod tests {
     #[test]
     fn motion_without_sensor_readings_leaves_the_stick_tilt_working() {
         // Sensors quiet (the snapshot leaves them out): the stick's tilt still leans the device.
-        let p = preset(vec![Action::Motion { sensitivity: 1.0 }, Action::Tilt { stick: Stick::Left, strength: 1.0 }]);
+        let p = preset(vec![
+            Action::Motion { sensitivity: 1.0 },
+            Action::Tilt { stick: Stick::Left, strength: 1.0, rest: Rest::Upright, set_level: None },
+        ]);
         let mut m = Mapper::default();
         let keys = HashSet::new();
         let start = Instant::now();
@@ -1165,7 +1267,7 @@ mod tests {
     fn landscape_turns_the_stick() {
         // Home on the right: the screen's right is the guest's bottom, so pushing right lowers the bottom edge, from
         // upright (the right edge up, +x) toward it lying on that edge.
-        let p = preset(vec![Action::Tilt { stick: Stick::Dpad, strength: 1.0 }]);
+        let p = preset(vec![Action::Tilt { stick: Stick::Dpad, strength: 1.0, rest: Rest::Upright, set_level: None }]);
         let mut m = Mapper::default();
         let keys = HashSet::new();
         let v = View { rotation: Rotation::HomeRight, turned: false, aspect: 1.5 };
@@ -1232,6 +1334,10 @@ mod tests {
 
     fn stick_at(x: f32, y: f32, buttons: u32) -> Merged {
         Merged { axes: [0.0, 0.0, x, y, 0.0, 0.0], buttons, ..Default::default() }
+    }
+
+    fn near(a: [f64; 3], b: [f64; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
     }
 
     fn phases(out: &Output) -> Vec<u32> {

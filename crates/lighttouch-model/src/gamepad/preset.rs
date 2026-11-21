@@ -416,6 +416,12 @@ pub enum Action {
         stick: Stick,
         #[serde(default = "one")]
         strength: f32,
+        /// How the device rests when the stick is let go.
+        #[serde(default, skip_serializing_if = "is_default")]
+        rest: crate::tilt::Rest,
+        /// A button that keeps the device's lean now as where it rests (pressed with the stick let go: `rest` again).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set_level: Option<Input>,
     },
     /// The controller's own motion sensors move the device.
     Motion {
@@ -444,6 +450,10 @@ fn tap_lift() -> u32 {
 
 fn is_tap_lift(ms: &u32) -> bool {
     *ms == TAP_LIFT_MS
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 fn is_one(v: &f32) -> bool {
@@ -616,7 +626,10 @@ mod tests {
         let bare: Preset =
             serde_json::from_str(r#"{"name":"x","bindings":[{"action":{"kind":"tilt","stick":"left"}}]}"#).unwrap();
         assert!(!bare.show_spots && bare.deadzone > 0.0);
-        assert_eq!(bare.bindings[0].action, Action::Tilt { stick: Stick::Left, strength: 1.0 });
+        assert_eq!(
+            bare.bindings[0].action,
+            Action::Tilt { stick: Stick::Left, strength: 1.0, rest: Default::default(), set_level: None }
+        );
         // A joystick from before its speed follows at 1, and one at 1 is saved without it.
         let old = r#"{"name":"x","bindings":[{"action":{"kind":"joystick","stick":"left","center":{"x":0.2,"y":0.8},"radius":0.15}}]}"#;
         let old: Preset = serde_json::from_str(old).unwrap();

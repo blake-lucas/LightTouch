@@ -11,6 +11,7 @@ use lighttouch_model::gamepad::preset::{
     Action, Binding, DeviceButton, Input, PadButton, Point, PointerStyle, Preset, Press, Stick, TAP_LIFT_MS, TapMode,
 };
 use lighttouch_model::gamepad::sdl::{Backend, Pad, PadKind, Sensors};
+use lighttouch_model::tilt::Rest;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -85,6 +86,8 @@ enum Slot {
     Keys,
     /// A mouse-look binding's button that frees the mouse while held.
     Free,
+    /// A tilt binding's Set level button.
+    Level,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -129,7 +132,13 @@ pub fn bound_keys(model: &Model) -> HashSet<String> {
                 }
                 stick_keys(stick, &mut keys);
             }
-            Action::Flick { stick, .. } | Action::Tilt { stick, .. } => stick_keys(stick, &mut keys),
+            Action::Tilt { stick, set_level, .. } => {
+                if let Some(i) = set_level {
+                    add(i, &mut keys);
+                }
+                stick_keys(stick, &mut keys);
+            }
+            Action::Flick { stick, .. } => stick_keys(stick, &mut keys),
             Action::Motion { .. } => {}
         }
     }
@@ -1439,7 +1448,7 @@ fn templates() -> Vec<fn() -> Action> {
             follow: Some(4.0),
         },
         || Action::Flick { stick: Stick::Right, center: Point::CENTER, length: 0.3 },
-        || Action::Tilt { stick: Stick::Left, strength: 1.0 },
+        || Action::Tilt { stick: Stick::Left, strength: 1.0, rest: Rest::Upright, set_level: None },
         || Action::Motion { sensitivity: 1.0 },
         || Action::Device { input: unset(), button: DeviceButton::Home },
     ]
@@ -1490,7 +1499,12 @@ fn summary(binding: &Binding, kind: PadKind) -> String {
             format!("{} points ({how}), {} {touches}", stick.label(), input_text(touch, kind))
         }
         Action::Flick { stick, .. } => format!("{} flicks swipe", stick.label()),
-        Action::Tilt { stick, .. } => format!("{} leans the device", stick.label()),
+        Action::Tilt { stick, rest, set_level, .. } => {
+            let rest =
+                if *rest == Rest::Upright { String::new() } else { format!(" from {}", rest.label().to_lowercase()) };
+            let set = set_level.as_ref().map(|i| format!(", {} sets level", input_text(i, kind))).unwrap_or_default();
+            format!("{} leans the device{rest}{set}", stick.label())
+        }
         Action::Motion { .. } => "The controller's motion tilts the device".into(),
         Action::Device { button, .. } => format!("Presses {}", button.label()),
     };
@@ -1908,7 +1922,7 @@ fn binding_settings(
             more.push(More::Area { half, center, whole: true });
             more.push(More::Shown);
         }
-        Action::Tilt { stick, strength } => {
+        Action::Tilt { stick, strength, rest, set_level } => {
             if stick_row(ui, p, &row, stick) {
                 *capture = Some((i, Slot::Keys));
             }
@@ -1916,6 +1930,31 @@ fn binding_settings(
             row(ui, "Strength", tip, &mut |ui| {
                 number_slider(ui, SLIDER, percent(egui::Slider::new(strength, 0.2..=1.0))).on_hover_text(tip);
             });
+            let tip = "How the device rests when the stick is let go, as the screen is shown; the stick leans it from \
+                       there";
+            row(ui, "Rests", tip, &mut |ui| {
+                egui::ComboBox::from_id_salt(("tilt-rest", i))
+                    .selected_text(rest.label())
+                    .width(170.0)
+                    .show_ui(ui, |ui| {
+                        for r in Rest::ALL {
+                            ui.selectable_value(rest, r, r.label()).on_hover_text(r.about());
+                        }
+                    })
+                    .response
+                    .on_hover_text(tip);
+            });
+            optional_input(
+                ui,
+                p,
+                &row,
+                "Set level with",
+                "Lean the device with the stick to where the game looks level, then press it: the device rests there \
+                 when the stick is let go. Pressed with the stick let go, it rests as chosen above again",
+                set_level,
+                kind,
+                &mut || *capture = Some((i, Slot::Level)),
+            );
         }
         Action::Motion { sensitivity } => {
             let tip = "How far the device tilts as the controller tilts; 1× is the same amount";
@@ -2458,6 +2497,11 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
         (Slot::Free, Action::Look { free, .. }) => {
             if got.is_some() {
                 *free = got;
+            }
+        }
+        (Slot::Level, Action::Tilt { set_level, .. }) => {
+            if got.is_some() {
+                *set_level = got;
             }
         }
         (Slot::Tap, Action::Joystick { tap, .. } | Action::Look { tap, .. }) => {

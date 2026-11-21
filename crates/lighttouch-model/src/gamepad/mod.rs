@@ -115,6 +115,9 @@ impl Gamepads {
     /// Switch presets (or turn bindings off), lifting whatever the old one held.
     pub fn set_active(&mut self, index: Option<usize>, session: Option<&mut Session>) {
         self.release(session);
+        if index != self.active {
+            self.mapper.forget_tilt_level();
+        }
         self.active = index.filter(|&i| i < self.presets.len());
         if self.active.is_some() {
             self.start();

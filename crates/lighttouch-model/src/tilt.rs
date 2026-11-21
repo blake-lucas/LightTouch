@@ -7,9 +7,12 @@
 //! rad/s.
 
 use crate::rotation::Rotation;
+use serde::{Deserialize, Serialize};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 use std::time::Instant;
 
-const MAX_DEGREES: f64 = 35.0;
+/// How far a full lean goes from rest.
+pub const MAX_DEGREES: f64 = 35.0;
 const DEGREES_PER_SECOND: f64 = 150.0;
 pub const GRAVITY: f64 = 9.80665;
 
@@ -32,8 +35,114 @@ pub fn rest(rotation: Rotation) -> [f64; 3] {
 /// and `dpitch` a second. Returns (acceleration, angular velocity). The device is the upright pose rocked about the
 /// viewer's line of sight, then tipped about its own x axis; it measures gravity's reaction.
 pub fn lean(roll: f64, pitch: f64, droll: f64, dpitch: f64) -> ([f64; 3], [f64; 3]) {
-    let acceleration = [-GRAVITY * roll.sin(), GRAVITY * roll.cos() * pitch.cos(), -GRAVITY * roll.cos() * pitch.sin()];
-    let angular_velocity = [dpitch, -droll * pitch.sin(), -droll * pitch.cos()];
+    pose(Rest::Upright, roll, pitch, droll, dpitch)
+}
+
+/// How the device rests when nothing leans it, as the desktop shows it (a stick's Tilt binding).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rest {
+    /// Standing upright, facing the player.
+    #[default]
+    Upright,
+    /// Tipped back halfway to flat, as held in the hands.
+    TippedBack,
+    /// Lying face up on a table, its top away from the player.
+    Flat,
+    /// Lying face down, its top away from the player.
+    FaceDown,
+    /// Upright, turned a quarter onto its left side as shown.
+    LeftSide,
+    /// Upright, turned a quarter onto its right side as shown.
+    RightSide,
+    /// Upright, turned over onto its top.
+    UpsideDown,
+}
+
+impl Rest {
+    pub const ALL: [Rest; 7] = [
+        Rest::Upright,
+        Rest::TippedBack,
+        Rest::Flat,
+        Rest::FaceDown,
+        Rest::LeftSide,
+        Rest::RightSide,
+        Rest::UpsideDown,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Rest::Upright => "Upright, facing you",
+            Rest::TippedBack => "Tipped back, as held",
+            Rest::Flat => "Flat on a table",
+            Rest::FaceDown => "Face down",
+            Rest::LeftSide => "On its left side",
+            Rest::RightSide => "On its right side",
+            Rest::UpsideDown => "Upside down",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            Rest::Upright => "Standing up and facing you, turned the way the screen is shown",
+            Rest::TippedBack => "Tipped back halfway to flat, the way a device is held to play",
+            Rest::Flat => "Lying face up, its top away from you: for games played on a table, like rolling a ball",
+            Rest::FaceDown => "Lying face down, its top away from you",
+            Rest::LeftSide => "Standing up, turned a quarter onto its left side as shown",
+            Rest::RightSide => "Standing up, turned a quarter onto its right side as shown",
+            Rest::UpsideDown => "Standing up, turned over onto its top",
+        }
+    }
+
+    /// The pose's turn from upright, in the world's axes as shown (x right, y up, z toward the player).
+    fn turn(self) -> M {
+        match self {
+            Rest::Upright => rz(0.0),
+            Rest::TippedBack => rx(-FRAC_PI_4),
+            Rest::Flat => rx(-FRAC_PI_2),
+            Rest::FaceDown => mul(rz(PI), rx(-FRAC_PI_2)),
+            Rest::LeftSide => rz(FRAC_PI_2),
+            Rest::RightSide => rz(-FRAC_PI_2),
+            Rest::UpsideDown => rz(PI),
+        }
+    }
+}
+
+type M = [[f64; 3]; 3];
+
+fn rx(a: f64) -> M {
+    let (s, c) = a.sin_cos();
+    [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
+}
+
+fn rz(a: f64) -> M {
+    let (s, c) = a.sin_cos();
+    [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn mul(a: M, b: M) -> M {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
+}
+
+/// `m` transposed, times `v`: a world vector in the device's axes.
+fn into_device(m: M, v: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|j| (0..3).map(|i| m[i][j] * v[i]).sum())
+}
+
+fn apply(m: M, v: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| (0..3).map(|k| m[i][k] * v[k]).sum())
+}
+
+/// The device resting as `rest`, then leaning in the world as [`lean`] does from upright: `roll` turns it clockwise
+/// about the player's line of sight (its right side as shown goes down) and `pitch` about the left-right line (its
+/// top tips toward the player, or up from a table). Returns (acceleration, angular velocity) in the axes of the
+/// screen as shown.
+pub fn pose(rest: Rest, roll: f64, pitch: f64, droll: f64, dpitch: f64) -> ([f64; 3], [f64; 3]) {
+    let spin = rz(-roll);
+    let device = mul(mul(spin, rx(pitch)), rest.turn());
+    let acceleration = into_device(device, [0.0, GRAVITY, 0.0]);
+    let pitching = apply(spin, [dpitch, 0.0, 0.0]);
+    let angular_velocity = into_device(device, [pitching[0], pitching[1], pitching[2] - droll]);
     (acceleration, angular_velocity)
 }
 
@@ -58,22 +167,37 @@ impl Tilt {
     /// The same toward a lean in between (a controller's stick): `roll` and `pitch` from -1 to 1 of the full lean,
     /// as shown (positive `roll` lowers the right side, positive `pitch` tips the top toward the player).
     pub fn step_toward(&mut self, roll: f64, pitch: f64, rotation: Rotation, now: Instant) -> ([f64; 3], [f64; 3]) {
+        let max = MAX_DEGREES.to_radians();
+        self.step_to(roll.clamp(-1.0, 1.0) * max, pitch.clamp(-1.0, 1.0) * max, Rest::Upright, rotation, now)
+    }
+
+    /// Ease toward leaning `roll` and `pitch` radians from `rest` (as [`pose`] leans).
+    pub fn step_to(
+        &mut self,
+        roll_to: f64,
+        pitch_to: f64,
+        rest: Rest,
+        rotation: Rotation,
+        now: Instant,
+    ) -> ([f64; 3], [f64; 3]) {
         let dt = self.at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64().min(0.1));
         self.at = Some(now);
-        let max = MAX_DEGREES.to_radians();
-        let roll_to = roll.clamp(-1.0, 1.0) * max;
-        let pitch_to = pitch.clamp(-1.0, 1.0) * max;
         let reach = DEGREES_PER_SECOND.to_radians() * dt;
         let (roll, pitch) = (approach(self.roll, roll_to, reach), approach(self.pitch, pitch_to, reach));
         let (droll, dpitch) = if dt > 0.0 { ((roll - self.roll) / dt, (pitch - self.pitch) / dt) } else { (0.0, 0.0) };
         self.roll = roll;
         self.pitch = pitch;
-        let (acceleration, angular_velocity) = lean(roll, pitch, droll, dpitch);
+        let (acceleration, angular_velocity) = pose(rest, roll, pitch, droll, dpitch);
         (rotation.to_guest_axes(acceleration), rotation.to_guest_axes(angular_velocity))
     }
 
     pub fn at_rest(&self) -> bool {
         self.roll == 0.0 && self.pitch == 0.0
+    }
+
+    /// How far it leans now (roll, pitch), radians.
+    pub fn leaning(&self) -> (f64, f64) {
+        (self.roll, self.pitch)
     }
 }
 
@@ -166,6 +290,47 @@ mod tests {
                 t.step(TiltKeys::default(), r, now + Duration::from_millis(50 * i));
             }
             assert!(t.at_rest());
+        }
+    }
+
+    #[test]
+    fn each_rest_is_its_pose_and_leans_alike() {
+        let g = GRAVITY;
+        let rests = [
+            (Rest::Upright, [0.0, g, 0.0]),
+            (Rest::Flat, [0.0, 0.0, g]),
+            (Rest::FaceDown, [0.0, 0.0, -g]),
+            (Rest::LeftSide, [g, 0.0, 0.0]),
+            (Rest::RightSide, [-g, 0.0, 0.0]),
+            (Rest::UpsideDown, [0.0, -g, 0.0]),
+        ];
+        for (rest, at) in rests {
+            assert!(close(pose(rest, 0.0, 0.0, 0.0, 0.0).0, at), "{rest:?}");
+        }
+        let back = pose(Rest::TippedBack, 0.0, 0.0, 0.0, 0.0).0;
+        assert!(close(back, [0.0, g * FRAC_PI_4.cos(), g * FRAC_PI_4.sin()]));
+        // Upright, it's the lean it always was.
+        for (roll, pitch, droll, dpitch) in [(0.4, -0.3, 0.7, -1.2), (-0.6, 0.5, -0.2, 0.9)] {
+            let a = pose(Rest::Upright, roll, pitch, droll, dpitch);
+            let acceleration = [-g * f64::sin(roll), g * roll.cos() * pitch.cos(), -g * roll.cos() * pitch.sin()];
+            let angular_velocity = [dpitch, -droll * pitch.sin(), -droll * pitch.cos()];
+            assert!(close(a.0, acceleration) && close(a.1, angular_velocity));
+        }
+        // Flat, rolling right lowers its right side (gravity's reaction leans to its left, as upright), and pitching
+        // raises its top (the reaction leans toward its top), so a ball rolls right and down.
+        let (a, _) = pose(Rest::Flat, 0.3, 0.0, 0.0, 0.0);
+        assert!(a[0] < 0.0 && a[1].abs() < 1e-9);
+        let (a, _) = pose(Rest::Flat, 0.0, 0.3, 0.0, 0.0);
+        assert!(a[1] > 0.0 && a[2] > 0.0 && a[0].abs() < 1e-9);
+        // Every rest's gyroscope agrees with its accelerometer.
+        let dt = 1e-6;
+        for rest in Rest::ALL {
+            let (roll, pitch, droll, dpitch) = (0.3, -0.2, 0.8, -0.5);
+            let (a0, w) = pose(rest, roll, pitch, droll, dpitch);
+            let (a1, _) = pose(rest, roll + droll * dt, pitch + dpitch * dt, 0.0, 0.0);
+            let da = [(a1[0] - a0[0]) / dt, (a1[1] - a0[1]) / dt, (a1[2] - a0[2]) / dt];
+            let cross = [w[1] * a0[2] - w[2] * a0[1], w[2] * a0[0] - w[0] * a0[2], w[0] * a0[1] - w[1] * a0[0]];
+            assert!(close_to(da, cross.map(|c| -c)), "{rest:?}");
         }
     }
 
