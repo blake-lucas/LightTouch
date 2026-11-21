@@ -13,7 +13,7 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 | --- | --- | --- | --- |
 | iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
 | iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
-| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; most games at or near 60 fps on a Poco F3 (Jetpack Joyride's title ~55, Epic Citadel ~30) |
+| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; most games at or near 60 fps on a Poco F3 (Jetpack Joyride's title ~25, Epic Citadel ~43) |
 | iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | Tested (Linux: lock screen, services, clean stop) |
 | iPad (k48ap) | 5.1.1 (9B206) | its last iOS | Tested (Linux: lock screen, services, clean stop) |
 
@@ -21,8 +21,7 @@ Also Tested: the iPhone 4 on 4.2.1/4.3.5, the 3GS on 5.1.1 and the iPod touch 3G
 touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 skipped for now.
 
 - [ ] iPhone 4 6.1.3 and iPad 5.1.1 on a phone. The iPhone 4 ran the game benchmark on the Poco (docs/GAME-BENCHMARKS.md).
-  The iPad on the Poco: Infinity Blade and Epic Citadel launched after Temple Run kept showing Temple Run's last frame
-  (the desktop draws them), and Epic Citadel's intro movie judders as if frames came out of order (gameplay ~35-40 fps).
+  The iPad on the Poco: Epic Citadel gameplay ~35-40 fps.
 - [ ] iPod touch 1G / original iPhone white screen: iBoot never boots the kernel after preparation.
 - [ ] iPhone 5 (n42ap, A6, iOS 10.3.4): upstream qemu-ios added it in November 2026 (s5l8950 machine, generic timer, AIC,
   TLB and jump-cache work for iOS 10's process counts, `0ad2a354b5` and the commits around it; reviewed in the v0.0.14
@@ -43,8 +42,7 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   3. Performance at a fixed workload, frame times as median and 1% low: a 2D sprite scene (Jetpack's
      title, ~230 sprites), a 3D ES 1.1 mesh scene (Asphalt 5's race, ~125 draws), an ES 2.0 shader scene on
      SGX devices. Plus boot to Home, app launch and Home-screen swipe fps. The current microbenchmarks stay.
-  4. A short list of real games per target with the frame rate each should hold, for checks by hand.
-  5. Run on Linux, the Poco and the Pixel; results per target in COMPATIBILITY.md and PERFORMANCE.md.
+  4. Run on Linux, the Poco and the Pixel (the game matrix in `tools/bench/` has run on Linux and the Poco); results per target in COMPATIBILITY.md, GAME-BENCHMARKS.md and PERFORMANCE.md.
 
 ## Performance (current focus)
 
@@ -62,18 +60,11 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.
 - [ ] iPod touch 4G 6.1.6 on the Poco (PERFORMANCE.md, "iPod touch 4G"): Doodle Jump's title 45–49 fps
-  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~23–24 (median 24; desktop
-  ~27–28, vCPU-bound), Epic Citadel ~6–8 (runs since `d3768ae49c`; vCPU-bound). Next: Flight Control
+  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~25–27 (23.7–23.9
+  before the headphones route; desktop ~27–28, vCPU-bound), Epic Citadel's tour ~43–44 cool, 1% low ~20 (runs since
+  `d3768ae49c`; vCPU ~97% busy). Next: Flight Control
   (desktop 54–58; on the Poco its PLAY! button ignores `adb input` taps that UIKit alerts take: find out
-  why before measuring), Real Racing (desktop attract demo 35–45), the Asphalt 5 race. Open option:
-  report a headset plugged in (CS42L59 register 0x33 bit 7) so iOS skips speaker protection (~10% of
-  the vCPU in games); a product decision, since the guest then routes audio as to headphones.
-- [x] IPA installs (PERFORMANCE.md, "App installs"): unpacking progress from the guest's free space,
-  limits that follow it, 1 MiB AFC writes, NAND FIFO bulk moves. Asphalt 5 on the Poco 4G: timed out
-  after ~10 min → done in 240 s. Left: the 2G's unpack is guest-CPU-bound (~148 s on the desktop); the
-  4G's IOP round trip per NAND request (~1.6 ms on the Poco). Check the Pixel.
-- [x] BQL spin on by default on Android with the 150 µs budget (engine `b5708085da`): +7.6% and
-  hitches 30 → 8 on the Poco, then +2.1% for 150 µs (PERFORMANCE.md).
+  why before measuring), Real Racing (desktop attract demo 35–45), the Asphalt 5 race.
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
   Poco game with `LT_BQL_SPIN=off` as the A arm, idle engine CPU with the spin on (it burns up to
   150 µs per contended take), and a desktop measurement before turning it on there.
@@ -117,39 +108,6 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
-- [x] Install the quiet GL shim in place (engine `7f744e80cc`, guest tools serial 27): Linux
-  `lighttouch-linux --library LIB --record ID --set-guest-package ITPACK`, Android "Guest tools" on a
-  stopped device. Both benchmark phones have it; the Poco has the private serial 29 from the rejected
-  tally experiment, which behaves as 27 against the current host.
-- [x] Prepare guest tools for public distribution (serial 30, engine `e95888e9cb`). AppSync's signer
-  certificate was Apple's "iPhone Activation" certificate; it is now a self-signed LightTouch one.
-  The `contrib/` sources carry no per-file headers, which qemu-ios's LICENSE covers as
-  GPL-2.0-or-later. Tested on the Poco: serial 30 installed at boot (good 30), and Enigmo 4.1
-  installed through AppSync and opened. The armv7 package was built but not run. The helpers still
-  build against Apple's iPhoneOS 3.1.3/3.2 SDK headers and link stubs from a third-party mirror.
-  Apple's own 3.1.3 SDK installer is on the Internet Archive (docs/BUILDING.md, "The Mac"); try
-  building from it instead.
-- [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
-  (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
-  the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial
-  27 installed by hand lasted two boots. `Portable/src/GuestPackageJudge.hpp` now judges each boot as
-  the macOS app's `GuestPackage.verdict` does: good after 10 s with the agent alive and a loader
-  report, bad after 300 s of running time without that. Time paused does not count. The verdicts go to
-  `state/guest-verdicts`, and each offer carries them as `verdict good N` / `verdict bad N` lines.
-- [x] Update a record's guest tools in place, keeping the device. `lt_library_set_guest_package(library,
-  id, path, ...)` refuses while the record is open (`state/.lease`) or when the file is not an
-  `ITPACK01` package, then stages and swaps `assets/guest.itpack` and rewrites `guest_package_sha256` in
-  `record.json`. The guest's `it_boot` installs a newer serial over the existing system at the next
-  boot, keeping apps and data. Linux: `lighttouch-linux --library LIB --record ID --set-guest-package
-  ITPACK`. Android: "Guest tools" on a stopped device applies the file to the selected device. Tested:
-  desktop (serial 26 record → 27, two boots judged good) and the Pixel (26 ↔ 27 through the picker).
-- [x] Guest tools update, follow-up: a package is refused unless it has a family for the record's board and
-  build and its serial is at least the device's (`it_boot` ignored either, so the swap did nothing).
-- [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
-  the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
-- [x] Fewer host GL calls per draw: the client-array cache (engine `6762325419`, on by default) skips
-  pointer, enable and client-unit calls that change nothing (setup + cleanup 0.619 → 0.228 µs per draw on
-  the Pixel). Strict `glGetError` checks stay (`IT_GLES_STRICT=0` was rejected).
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
@@ -161,70 +119,25 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. `LT_EXCEPTION_PROF=on` counts exceptions, SVCs and
   Mach messages; next, find which of them the emulator makes expensive.
-- [x] Pixel: the AHardwareBuffer present (engine 4de4ae5ba1) takes the `IOSurface` path on the Pixel's
-  PowerVR driver and renders correctly (LT Bench).
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
   reaches 60, so ADPF is not causing it (it is worth 1.7× here). Next: per-frame gaps against the
   BQL hold log, to see whether the slow seconds line up with main-loop work (audio DMA, LCD).
-- [x] Upstream qemu-ios's November fixes (engine `6da406a458`, branch `dev/upstream-nov`: 29 commits, no iPhone 5 work):
-  LDM/STM moving 4 or 2 words at once (`LT_LDM_BLOCK=off` for the old pairs), aarch64 loads and stores that keep
-  guest registers live (`LT_LDST_LIVE=off`), macOS MAP_JIT switches only on change, storage writes off the BQL, the
-  A4 JPEG interrupt, display stride and VXD fixes, iOS 6 Safari text, matrix palette, Cover Flow art, Wi-Fi country,
-  GL and snapshot hardening; guest package serial 46. Linux: five boards boot and stop cleanly; Doodle Jump on the 3G
-  and 4G at 59-60 fps with serial 46. Left out: 8ffe1bebb3 and the H2FMI async pair (they need the iPhone 5 code),
-  the slirp destination-class rule (our patch stack diverged).
-- [x] iPad: Infinity Blade / Epic Citadel stuck on Temple Run's frame. Upstream's 512 MiB GL cap counted suspended
-  games (TR 65 + IB 130 + EC 320 MiB); now 2 GiB (engine `2e10c356d0`), checked with the desktop cycle.
 - [ ] iOS's "Connect to iTunes to Use Push Notifications" alert pauses each game on an unactivated iPad until OK is
   tapped (all versions). Decide whether to suppress it; the bench's alert taps miss on the iPad (OK sits at scan
   0.5,0.60 for landscape apps, 0.57,0.52 for portrait).
-- [x] Epic Citadel's intro movie juddered on A4 devices: the VXD wrote each P picture after iOS showed its buffer.
-  Pictures now reach their buffers in decode order (engine `b98d38fe8a`). Poco iPad: stale frames 2-5 per run -> 0;
-  4G 6.1.6 desktop: all 901 pictures identical to the old order, movie plays through.
-- [x] Infinity Blade "12 fps" on the Poco (iPad) was the game paused behind the push alert. With the alert
-  dismissed its title flythrough runs 28.4 fps (27.6 with `LT_LDST_LIVE=off` and `LT_LDM_BLOCK=off`), as before.
 - [ ] Controller motion on Windows (Switch Pro, 2G 3.1.3 and 4G 6.1.6 Doodle Jump): the readout looked frozen and
   neither a motion nor a stick tilt binding leaned the device. On Linux a stick tilt leans Doodle Jump (3G) and motion
   reaches the 2G's accelerometer. Suspected: the controller stops sending sensor reports after SDL turns them on
   (Steam Input?), and a motion binding then overrode the stick tilt. `3110750a` re-enables quiet sensors and falls
   back to the stick; `8901ff19` logs sensor rates (`logs/controllers.log`) and motion the engine turned away
   (`logs/engine*.log`, formerly `logs/session-*.log`). Read those from the user's next run before calling it fixed.
-- [x] A/B on the phones: `LT_LDST_LIVE` and `LT_LDM_BLOCK` (both on by default). Poco, bench app (engine with the
-  upstream merge, current PGO profile), iPod touch 4G 6.1.6, 8 alternating runs with both on or both off: Epic
-  Citadel 42.8 fps on vs 40.1 off (on ahead in each of the 4 back-to-back pairs), Real Racing's menu 44.2 vs 43.8; no
-  crash or stall. Keep them on. The LDM/STM fault-midway checks (tcg-ldm f, g) failing was the harness: it couldn't
-  build tcg-ldm.S (literal addresses, a Thumb BL to ARM code). Fixed in engine `394116b7b4`; all 11 checks pass on
-  the old and new engine, and with either switch off.
-- [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
-  verified on Linux only.
-- [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
-- [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
-- [x] Manual Start/Stop profile in the Android app, next to the fps graph (engine `50a08eb2d2`):
-  frontmost app, per-frame GL totals, slow GL calls, BQL waits and holds, Android present stages
-  ([PROFILING.md](PROFILING.md)).
 
 ## Firmware and assets
 
-- [x] Rewrite [ASSETS.md](ASSETS.md) easiest route first: `tools/get-assets.py` (downloads the
-  upstream app ZIP and unpacks it on any OS, including guest.aar's LZFSE Apple Archive), then by
-  hand, then IPSW preparation. `--verified-tools` makes the folder IPSW preparation needs
-  (the n72-only `lighttouch-prepare` was verified with it; `firmwarekit` replaced it).
-- [x] Boot the bases `get-assets.py` unpacks. LightTouchMac prepares them with `aes-uid=hardware`
-  (its NOR wraps the SHSH with iBoot's encrypting UID derivation), and the v0.0.5 engine accepted only
-  `engine` or `legacy`, so every port failed at engine start with "aes-uid must be 'engine' or
-  'legacy'" (reported on Windows). Engine dev/perf now carries upstream's `cb400606d2`. Checked on Linux:
-  the v0.0.5 engine fails with that error on an imported `n72ap-7E18.itbase`, and the new engine boots
-  it to SpringBoard. Users need a new release to get it.
-- [x] Prepared-device (`.itbase`) import removed from every app, with `get-assets.py`: each app prepares from an
-  IPSW it downloads (or the user chooses), with the boot ROM downloaded too, so nothing needs rehosting.
-- [x] Jailbroken iPod touch 3G and iPhone 3GS ran slowly (BTServer killed at every start by the sandbox patch's missing
-  profile-switch flag): fixed for new preparations in `5627e538`, and devices prepared by v0.0.13 are repaired when they
-  open (`0af30246`, Portable/src/KernelRepair.hpp). Checked: 3G 4.2.1 14 kills / 19.7 fps -> 0 / 27.8, 3GS 5.1.1 15 /
-  20.7 -> 0 / 30.0 (Home-page swipes, Linux).
 - [ ] Preparing failed once with "firmwarekit's emulator library has no machine for n18ap" while the machine was
-  compiling (the `machines` listing exited non-zero); the retry passed. Not reproduced.
+  compiling (the `machines` listing exited non-zero); the retry passed. Not reproduced. (unverified)
 - [ ] Jailbreak on the iPod touch 2G. A jailbroken 2G (3.1.3 checked, on main's firmwarekit too) starts once and then
   never again: Cydia's Startup job installs Substrate from its AutoInstall folder on the first boot, Substrate's install
   script writes `/etc/launchd.conf` (`bsexec .. /usr/bin/cynject 1 …/SubstrateLauncher.dylib`), and on every later
@@ -238,62 +151,24 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
 
 ## Cleanup
 
-- [x] Prune the upstream Mac app code (branch `dev/cleanup`; the macOS port still builds with SwiftPM
-  from the root `Package.swift` via `macOS/build-shared.py`):
-  1. [x] Xcode project/workspace, xctestplans, `Packages/BuildTools`, `Packages/ReleaseChecks`,
-     `Models/`, the upstream `scripts/` (kept `check-android-package.py`, `measure-android-session.py`),
-     `tests/offline`, `tests/sessions` and the Xcode-only `Configuration/` files (b40cb574).
-  2. [x] `firmware-catalog.json` now lives in `Portable/firmware/` (2a9a518f). `CActivation` stays in
-     `Packages/FirmwareKit/Sources`: SwiftPM cannot take a target path outside its package and FirmwareKit
-     stays for the macOS port; `Portable/firmware` already compiles it from there.
-  3. [x] `LightTouchMac/`, `LightTouchServices/`, `macOS/build-native.py`, the `macos-arm64` dispatcher
-     target and the `LightTouch`/`CLockdown`/`LightTouchServices` targets (57bb9aaa).
-     `Packages/DeviceServices` stays: `LightTouchCore` (linked by `LightTouchDesktopHost`) depends on
-     `HostServiceWire`/`HostServiceClient`.
-  4. [x] `CONTRIBUTING.md` rewritten without Xcode; stale handoff/branch notes and the stopped TCG
-     profiling proposals removed.
-- [x] Remove the Swift packages, `Package.swift`, `LightTouchDevice/`, the Python/Tk `Desktop/`, the Linux SDL
-  frontend, the Windows C# helper and the macOS shared host: the Rust desktop app and firmwarekit replace them
-  (v0.0.12). `CActivation` moved to `crates/lighttouch-firmware/csrc`.
 - [ ] Port `tools/compat` to `lighttouch prepare`/`run` and Android's own preparation (docs/COMPATIBILITY.md).
-- [ ] The core still reads `.itbase` archives (`lt_import_archive*` in `Portable/src/Storage.cpp`), which only its
-  tests use now: move those tests' fixtures to prepared folders, then drop the archive reader.
+- [ ] The core still reads `.itbase` archives (`lt_import_archive*` in `Portable/src/Storage.cpp`), which its
+  tests use and `lt_library_import` still falls back to for a source that isn't a folder (`Portable/src/Library.cpp`):
+  move those tests' fixtures to prepared folders, then drop the archive reader.
 
 ## Android bugs seen, not yet fixed
 
-- [x] The first touch after the guest wakes was often ignored: the "Guest screen asleep" label sat
-  above the guest view and the view jumped down on wake. It is now an overlay on the guest view.
-  (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
-  shows puts it back to sleep.)
-- [ ] Stop was seen disabled once after Store use; not reproduced.
+- [ ] Stop was seen disabled once after Store use; not reproduced. (unverified)
 - [ ] The Store's install queue keeps the guest running with LightTouch off screen (then pauses it when the
   queue is empty); not yet tried on a phone. Guest audio is not muted meanwhile, and Android 14+ ends a
-  `dataSync` foreground service after six hours a day.
-- [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
+  `dataSync` foreground service after six hours a day. (unverified)
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD; the n72 search row
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
-  automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
+  automatically after a quick quit. Linux/Windows Apps now has a version picker and "Why did the last app quit?".
 
-- [x] Battle Bears: Zombies! was guest-CPU-bound (desktop ~24 fps, Pixel 22): its OpenFeint 2.9.1 `_mainDefault:`
-  thread spins on an empty run loop. Guest tools serial 31 make that wait sleep (gles-public); 29.6–29.7 fps, the
-  game's cap (PERFORMANCE.md). Check on the phones.
-
-- [ ] Installing a very large app over the USB bridge: profiled and sped up (the IPA installs item
-  above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
+- [ ] Installing a very large app over the USB bridge: profiled and sped up (PERFORMANCE.md, "App
+  installs"). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
   reproduced on the 4G or 2G desktop runs of 2026-10-22.
-
-- [x] Doodle Jump played at double speed on the iPod touch 3G and iPhone 3GS (4.2.1 and 5.1.1): its loop ran at exactly
-  120 Hz against the panel's 60 Hz vblank, because the 2.x-5.x GL front end's present (`fe_present`, qemu-ios
-  contrib/gles-public) never waited where a device blocks until a buffer frees at vblank. Each view now presents at
-  most once per 60 Hz slot (engine `2cc48708a1`, `a79be0befc`; guest tools serial 45, built by the Guest packages
-  workflow). 3G 5.1.1, Doodle Jump 3.10.1: menu bounce 0.5 -> 0.99 s (the 4G's 1.0), loop 120 -> ~60/s, 58-60 fps
-  published; 3G 4.2.1: Doodle Jump 3.6.1 loop 120 -> 56/s, Jetpack 58 -> 57-59 fps, Tiny Wings 54 -> 58-59 fps.
-  An accuracy bug (timer, display-link or vsync rate), not a performance one.
-
-- [x] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"
-  re-centred every so often. The accelerometer's z was upside down (face up read as face down), so iOS's motion
-  fusion disagreed with the gyro on every forward or back tilt. Fixed in the engine (cdd01aec99); confirm on the
-  Pixel in Real Racing.
 
 ## Android front end (dev/ui)
 
@@ -303,34 +178,3 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   CGL-only. Needs: an ES1/ES2 state capture (no `glGetTexImage`, so read textures back through an
   FBO), a runtime save + "suspended" marker per record, and `-incoming` restore on start. The UI
   hook exists: `MainActivity.canSaveState` turns the Stop dialog's primary action into Save & Stop.
-
-- [ ] Web proxy (port of the Mac's, per device in Settings: Off / Direct / Archive with a date). The guest
-  half ships in the guest tools: `itproxy on|off` points iOS's HTTP/HTTPS proxy at 10.0.2.100:3128 and
-  `ittrust` trusts a CA. The Mac's host half to port: `LightTouchDevice/WebProxy.swift` (HTTP/1.0 replies, TLS 1.0
-  terminated with a per-host leaf; direct, archive from the Wayback Machine, off) with `WebProxyAdapters.swift`
-  (Weather, Wi-Fi location, retired hosts), `DeviceRuntime/WebProxyCA.swift` (the device CA and leaves, hand-written
-  DER), `LightTouchCore` `WebProxyConfiguration`/`WebProxySetup`/`DeviceWebProxy` (routing file, then route and
-  trust through the guest agent). Android needs: (1) an engine guestfwd that reaches the app (the Mac's
-  `guestfwd=...-cmd:/usr/bin/nc -U SOCK` needs `/bin/sh` and `nc`; a per-connection Unix-socket target in
-  `net/slirp.c`, passed as `-netdev user,id=wifi0,...` in place of the boards' default); (2) the proxy in the
-  engine service (check that Conscrypt still serves TLS 1.0 with a cipher iOS 3 offers, else the engine's OpenSSL); (3) the CA and leaves
-  (port the DER writer; Android has no public certificate builder); (4) a guest agent client to run `itproxy` and
-  `ittrust` (Android has none yet); (5) the Settings row. (Battle Bears' spinning thread waits on an empty run
-  loop, not on the network, so this is unrelated to it.)
-
-## Guest graphics
-
-- [x] Untextured white or grey geometry on Android (engine 4ae00eaca8): Jetpack Joyride's lab
-  background, Battle Bears' zombies and menu art, Real Racing's opponent cars and scenery. Cause:
-  ES `glTexImage2D` does not convert between formats, and the bridge uploaded opaque PVRTC (decoded
-  to RGBA) as `GL_RGB`, so each such upload failed with `GL_INVALID_OPERATION` (engine log:
-  `REFUSED upload-error:0xde1:0x502`) and the texture stayed empty. Desktop GL converts, which is
-  why Linux and macOS never showed it. The upload now does the conversion itself. Confirmed on the
-  Poco F3 (Jetpack: white before, correct after, same NAND) and by the user on the Pixel 10
-  (Jetpack, Battle Bears, Real Racing).
-- [x] Zombie Gunship on the iPod touch 4G (iOS 6.1.6): only its interface drew; the game world stayed black (reported
-  2026-11-19). Two GL bridge gaps (engine dev/gunship-vao 5577d71a47): OES_vertex_array_object was unhandled (the log
-  said `UNHANDLED glGenVertexArraysOES`), and glGetFramebufferAttachmentParameteriv answered every question with the
-  bound renderbuffer, so the game took its half-size world depth buffer for the screen's and drew the world into a
-  quarter of it. Checked on Linux with Legacy Store copy 1.13: the tutorial's world fills the screen. Repro tools:
-  ~/Documents/LightTouch-Development/gunship (drive.py boots the device, launches the game, taps to a mission).
