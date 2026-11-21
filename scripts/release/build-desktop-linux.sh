@@ -7,8 +7,12 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE=lighttouch-desktop-linux
 docker build -q -t "$IMAGE" -f "$REPO/scripts/release/desktop-linux.Dockerfile" "$REPO/scripts/release" > /dev/null
 mkdir -p "$HOME/.cargo/registry"
+# The commit the logs name (crates/lighttouch-core/build.rs): a worktree's git metadata is outside the mount, so git
+# can't answer in the container; work it out here the way build.rs does.
+COMMIT=$(git -C "$REPO" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
+[ "$COMMIT" = unknown ] || [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || COMMIT="$COMMIT-modified"
 docker run --rm --user "$(id -u):$(id -g)" -v "$REPO:/src" -v "$HOME/.cargo/registry:/opt/cargo/registry" -w /src \
-    -e CARGO_TARGET_DIR=/src/target/bullseye "$IMAGE" \
+    -e CARGO_TARGET_DIR=/src/target/bullseye -e LIGHTTOUCH_COMMIT="$COMMIT" "$IMAGE" \
     cargo build --release --locked -p lighttouch -p lighttouch-firmware --features lighttouch-services/vendored-openssl
 # SDL2 for game controllers, loaded at run time (lighttouch_model::gamepad::sdl): Debian 11's, with its copyright file
 # for the licence page. The AppImage carries it in usr/lib.

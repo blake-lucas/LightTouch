@@ -46,6 +46,18 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
 
 ## Performance (current focus)
 
+- [ ] Games that pace themselves with a restarted timer: find what sets `w`. Real Racing HD 1.04 on the iPad 5.1.1
+  races at ~20–21 fps on every host (desktop 21.2, Pixel 10 20.2; the menu reaches 57). From its binary (symbols
+  kept): `-[EAGLView initWithCoder:]` sets `m_bUseDisplayLink` and then clears it, so it always draws from an
+  NSTimer; `CGlobal::game_UpdatePlay(dt)` keeps the last 16 samples of `1000 / dt` (integer ms), averages them,
+  floors that at 20, adds 2 and calls `updateAnimationInterval(1 / that)`, which stops and restarts the timer every
+  frame. A frame is then the interval plus `w`, the time from the timer firing to that restart, and the rate settles
+  where `f (f + 2) = 2000 / w`. Reconstructed from the desktop capture's presents (45–49 ms apart, not vsync steps):
+  `w` ≈ 3.5 ms (p10 2.1, p90 5.1). `w` ≈ 2 ms would give ~30 fps, 1 ms ~44. The Pixel runs the guest CPU ~3× slower
+  yet lands at the same rate, so `w` looks like fixed latency rather than guest work: measure, in a race, the guest
+  timer's wake-up (PMGR event timer deadline → FIQ → the run-loop thread) and how long `presentRenderbuffer` takes
+  to return. Unknown: what a real iPad 1 gets (likely the 20s, GPU-bound near 30). Other games that restart an
+  NSTimer each frame would gain the same way.
 - [ ] Storage space: give back the space iOS frees. A device's NAND page files only grow: pages iOS
   erases or no longer maps keep their bytes in the app's storage. Options: punch holes
   (`fallocate(FALLOC_FL_PUNCH_HOLE)`) for pages an erase clears, the way QEMU discards; or compact a
