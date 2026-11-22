@@ -44,8 +44,8 @@ pub const FIRST_BOOT_DONE: &str = "Process SpringBoard (";
 /// The restore boot's limit: 14G61's took 157 s on an M4 Max, unloaded; a phone is several times slower.
 pub const RESTORE_TIMEOUT: f64 = 2400.0;
 /// The first boot's limit: 14G61's migration lit SpringBoard after 380-430 s at a host load of 5 on a Mac, 800 s
-/// at 30; a phone is slower again.
-pub const FIRST_BOOT_TIMEOUT: f64 = 3600.0;
+/// at 30; on a Ryzen 7 3700X under Linux its last stretch alone takes ~25 minutes, and a phone is slower again.
+pub const FIRST_BOOT_TIMEOUT: f64 = 7200.0;
 /// How long after SpringBoard starts the first boot asks the guest to shut down (Swift's powerdown delay).
 pub const FIRST_BOOT_POWERDOWN_DELAY: Duration = Duration::from_secs(30);
 
