@@ -61,6 +61,9 @@ pub struct Options {
     pub keyboards: Option<Vec<String>>,
     /// Disable the jobs of services that cannot work on an emulated device (recipe option quiet_services).
     pub quiet_services: bool,
+    /// quiet_services leaves imagent's job alone: a phone on iOS 6 or later receives and sends texts through it (its
+    /// SMS.imservice plugin). iOS 5's texts go through SpringBoard's SMS plugin and CommCenter instead.
+    pub sms_in_imagent: bool,
     /// IPAs installed on the data volume (create --ipa; preinstall).
     pub apps: Vec<PathBuf>,
     /// Game Center's daemon disabled (create --no-game-center): benchmark devices, whose games would otherwise open
@@ -86,6 +89,7 @@ impl Default for Options {
             language: None,
             keyboards: None,
             quiet_services: true,
+            sms_in_imagent: false,
             apps: Vec::new(),
             no_game_center: false,
         }
@@ -181,6 +185,8 @@ pub const BT_JOB: &str = "System/Library/LaunchDaemons/com.apple.BTServer.plist"
 /// Jobs launchd starts at boot for services an emulated device has no use for, each Disabled where present: Apple's
 /// servers for them are gone or refuse these releases, or the hardware is absent (together ~12% of n81ap 6.1.6's
 /// first-start guest CPU). Not usbptpd: without it usbmux never enumerates. Not backupd: MobileBackup raises without it.
+/// Not imagent on a phone from iOS 6 (Options::sms_in_imagent): it hosts the SMS service there, and without it
+/// CommCenter acknowledges each incoming text and nothing stores it (iPhone 4 6.1.3).
 pub const GAMED_JOB: &str = "System/Library/LaunchDaemons/com.apple.gamed.plist";
 pub const DEAD_SERVICE_JOBS: [&str; 13] = [
     "com.apple.imagent",
@@ -457,7 +463,12 @@ pub fn build_k48(
         disable(&mut ed, BT_JOB)?;
     }
     if o.quiet_services {
-        let quieted: Vec<String> = DEAD_SERVICE_JOBS.iter().map(|n| job(&format!("{n}.plist"))).filter(|j| ed.exists(j)).collect();
+        let quieted: Vec<String> = DEAD_SERVICE_JOBS
+            .iter()
+            .filter(|n| !(o.sms_in_imagent && **n == "com.apple.imagent"))
+            .map(|n| job(&format!("{n}.plist")))
+            .filter(|j| ed.exists(j))
+            .collect();
         for j in &quieted {
             disable(&mut ed, j)?;
         }

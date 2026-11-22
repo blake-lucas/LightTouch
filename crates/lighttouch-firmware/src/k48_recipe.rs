@@ -128,6 +128,7 @@ impl K48Board {
     fn system_options(&self) -> system_edits::Options {
         let mut o = system_edits::Options::new(&self.recipe, &self.version);
         o.bluetooth = kboot::Board::for_board(self.board.name()).bluetooth_hci;
+        o.sms_in_imagent = matches!(self.board, Hardware::N88 | Hardware::N90) && crate::entry::release(&self.version).0 >= 6;
         o
     }
     fn die_id(&self) -> String {
