@@ -12,6 +12,9 @@ import urllib.request
 
 APP = Path(__file__).resolve().parents[2]
 NAMES = ('libplist', 'libimobiledevice-glue', 'libusbmuxd', 'libtatsu', 'libimobiledevice')
+# Size caps on what a device sends (upstream LightTouchMac 6978b7a3, 87974f89): libimobiledevice refuses a reply
+# declaring more than 32 MiB, and libplist's binary parser stops at 2^20 nodes or 32 MiB.
+LIMIT_PATCHES = {'libplist': 'libplist-bin-limits.patch', 'libimobiledevice': 'libimobiledevice-reply-limits.patch'}
 DAEMON = '5cb90897479b9021a69db9698fea071ef7b2eceb'
 
 
@@ -69,6 +72,7 @@ def main():
                   daemon_private_config_patch_sha256=sha(APP / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch'),
                   recipe_sha256=sha(__file__),
                   patch_sha256=sha(APP / 'build-support/patches/libimobiledevice-sslv3-ios1.patch'),
+                  limits_patch_sha256={n: sha(APP / 'build-support/patches' / n) for n in sorted(set(LIMIT_PATCHES.values()))},
                   compiler=subprocess.check_output(['cc', '--version'], text=True).splitlines()[0])
     if reuse_manifest:
         recipe['reused_dependency_manifest_sha256'] = sha(reuse_manifest)
@@ -88,6 +92,10 @@ def main():
             with (APP / 'build-support/patches/libimobiledevice-sslv3-ios1.patch').open('rb') as stream:
                 subprocess.run(['patch', '-p1'], cwd=tree, stdin=stream, check=True)
             (tree / '.lighttouch-ssl-patch').touch()
+        if package['name'] in LIMIT_PATCHES and not (tree / '.lighttouch-limits-patch').exists():
+            with (APP / 'build-support/patches' / LIMIT_PATCHES[package['name']]).open('rb') as stream:
+                subprocess.run(['patch', '-p1'], cwd=tree, stdin=stream, check=True)
+            (tree / '.lighttouch-limits-patch').touch()
         if not (tree / 'Makefile').exists():
             options = ['--prefix=' + str(prefix), '--libdir=' + str(prefix / 'lib'), '--enable-shared', '--disable-static']
             if package['name'] in ('libplist', 'libimobiledevice'):

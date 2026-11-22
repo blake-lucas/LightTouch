@@ -1,0 +1,49 @@
+--- a/src/bplist.c
++++ b/src/bplist.c
+@@ -239,7 +239,19 @@
+     uint32_t level;
+     ptrarray_t* used_indexes;
+     plist_err_t err;
++    uint64_t nodes;
++    uint64_t bytes;
+ };
++
++/* A binary plist's objects can be referenced from many places and each reference becomes its own copy, so a few
++ * hundred bytes of shared references stand for a tree of billions of nodes. One parse makes at most this many nodes
++ * and copies at most this many string, data and key bytes. */
++#ifndef PLIST_BIN_MAX_NODES
++#define PLIST_BIN_MAX_NODES (1 << 20)
++#endif
++#ifndef PLIST_BIN_MAX_BYTES
++#define PLIST_BIN_MAX_BYTES (32 << 20)
++#endif
+ 
+ #ifdef DEBUG
+ static int plist_bin_debug = 0;
+@@ -703,6 +715,17 @@
+ 
+     pobject = (uint64_t)(uintptr_t)*object;
+ 
++    if (type == BPLIST_DATA || type == BPLIST_STRING || type == BPLIST_UNICODE) {
++        /* UTF-16 becomes up to 3 bytes of UTF-8 per unit */
++        uint64_t copied = (size > PLIST_BIN_MAX_BYTES) ? PLIST_BIN_MAX_BYTES + 1 : size * (type == BPLIST_UNICODE ? 3 : 1);
++        bplist->bytes += copied;
++    }
++    if (++bplist->nodes > PLIST_BIN_MAX_NODES || bplist->bytes > PLIST_BIN_MAX_BYTES) {
++        PLIST_BIN_ERR("%s: more than %u nodes or %u bytes\n", __func__, (unsigned)PLIST_BIN_MAX_NODES, (unsigned)PLIST_BIN_MAX_BYTES);
++        bplist->err = PLIST_ERR_NO_MEM;
++        return NULL;
++    }
++
+     switch (type)
+     {
+ 
+@@ -1005,6 +1028,8 @@
+     bplist.level = 0;
+     bplist.used_indexes = ptr_array_new(16);
+     bplist.err = PLIST_ERR_SUCCESS;
++    bplist.nodes = 0;
++    bplist.bytes = 0;
+ 
+     if (!bplist.used_indexes) {
+         PLIST_BIN_ERR("failed to create array to hold used node indexes. Out of memory?\n");

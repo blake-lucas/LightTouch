@@ -95,19 +95,19 @@
     },
     {
       "name": "libplist",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "groups": [
         "native",
         "static"
       ],
-      "archive": "libplist-2.7.0.tar.bz2",
+      "archive": "libplist-2.8.0.tar.bz2",
       "cache_aliases": [
         "libplist.tar.bz2"
       ],
-      "directory": "libplist-2.7.0",
-      "url": "https://github.com/libimobiledevice/libplist/releases/download/2.7.0/libplist-2.7.0.tar.bz2",
-      "sha256": "7ac42301e896b1ebe3c654634780c82baa7cb70df8554e683ff89f7c2643eb8b",
-      "checksum_source": "Preserved from scripts/build-package-native.sh before dependency consolidation (2026-09-11)."
+      "directory": "libplist-2.8.0",
+      "url": "https://github.com/libimobiledevice/libplist/releases/download/2.8.0/libplist-2.8.0.tar.bz2",
+      "sha256": "b1f59f7634c58b2481325a23ff4e3bf51574a42d868cbe466d2b39b04550752a",
+      "checksum_source": "https://api.github.com/repos/libimobiledevice/libplist/releases/tags/2.8.0 (assets[].digest, verified 2026-10-21 upstream; LightTouchMac 87974f89)"
     },
     {
       "name": "libimobiledevice",

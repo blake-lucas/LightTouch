@@ -1,0 +1,94 @@
+--- a/src/idevice.h
++++ b/src/idevice.h
+@@ -52,6 +52,10 @@
+ #include "common/userpref.h"
+ #include "libimobiledevice/libimobiledevice.h"
+ 
++/* The most a device's reply may declare (a length prefix, an AFC packet, a debugserver response): the host allocates
++ * what the device names, so a larger one fails the receive rather than the host's memory. */
++#define IDEVICE_MAX_REPLY_SIZE (32 << 20)
++
+ #define DEVICE_CLASS_IPHONE  1
+ #define DEVICE_CLASS_IPAD    2
+ #define DEVICE_CLASS_IPOD    3
+--- a/src/property_list_service.c
++++ b/src/property_list_service.c
+@@ -209,6 +209,10 @@
+ 
+ 	pktlen = be32toh(pktlen);
+ 	debug_info("%d bytes following", pktlen);
++	if (pktlen > IDEVICE_MAX_REPLY_SIZE) {
++		debug_info("refusing a %u-byte plist (more than %u)", pktlen, IDEVICE_MAX_REPLY_SIZE);
++		return PROPERTY_LIST_SERVICE_E_PLIST_ERROR;
++	}
+ 	content = (char*)malloc(pktlen);
+ 	if (!content) {
+ 		debug_info("out of memory when allocating %d bytes", pktlen);
+--- a/src/afc.c
++++ b/src/afc.c
+@@ -266,11 +266,18 @@
+ 	}
+ 
+ 	debug_info("received AFC packet, full len=%lld, this len=%lld, operation=0x%llx", header.entire_length, header.this_length, header.operation);
++	if (header.entire_length > IDEVICE_MAX_REPLY_SIZE + sizeof(AFCPacket) || header.this_length > header.entire_length) {
++		debug_info("refusing an AFC packet of %llu bytes (this part %llu)", header.entire_length, header.this_length);
++		return AFC_E_OP_HEADER_INVALID;
++	}
+ 
+ 	entire_len = (uint32_t)header.entire_length - sizeof(AFCPacket);
+ 	this_len = (uint32_t)header.this_length - sizeof(AFCPacket);
+ 
+ 	buf = (char*)malloc(entire_len);
++	if (!buf) {
++		return AFC_E_NO_MEM;
++	}
+ 	if (this_len > 0) {
+ 		recv_len = 0;
+ 		service_receive(client->parent, buf, this_len, &recv_len);
+--- a/src/ostrace.c
++++ b/src/ostrace.c
+@@ -164,6 +164,9 @@
+ 	}
+ 	debug_info("got length %d", rlen);
+ 
++	if (rlen > IDEVICE_MAX_REPLY_SIZE) {
++		return OSTRACE_E_UNKNOWN_ERROR;
++	}
+ 	char* buf = (char*)malloc(rlen);
+ 	res = ostrace_error(service_receive(client->parent, buf, rlen, &received));
+ 	if (res != OSTRACE_E_SUCCESS) {
+@@ -240,6 +243,10 @@
+ 
+ 		debug_info("got length %d", rlen);
+ 
++		if (rlen > IDEVICE_MAX_REPLY_SIZE) {
++			debug_info("refusing a %u-byte message", rlen);
++			break;
++		}
+ 		void* buf = malloc(rlen);
+ 		res = ostrace_error(service_receive(oswt->client->parent, (char*)buf, rlen, &received));
+ 		if (res != OSTRACE_E_SUCCESS) {
+@@ -418,6 +425,10 @@
+ 		rlen = le32toh(rlen);
+ 		debug_info("got length %d", rlen);
+ 
++		if (rlen > IDEVICE_MAX_REPLY_SIZE) {
++			debug_info("refusing a %u-byte message", rlen);
++			break;
++		}
+ 		unsigned char* buf = (unsigned char*)malloc(rlen);
+ 		res = ostrace_error(service_receive(client->parent, (char*)buf, rlen, &received));
+ 		if (res != OSTRACE_E_SUCCESS) {
+--- a/src/debugserver.c
++++ b/src/debugserver.c
+@@ -459,6 +459,10 @@
+ 			checksum_length--;
+ 		}
+ 		if (buffer_size + 1 >= buffer_capacity) {
++			if (buffer_capacity >= IDEVICE_MAX_REPLY_SIZE) {
++				res = DEBUGSERVER_E_UNKNOWN_ERROR;
++				goto cleanup;
++			}
+ 			char* newbuffer = realloc(buffer, buffer_capacity+1024);
+ 			if (!newbuffer) {
+ 				return DEBUGSERVER_E_UNKNOWN_ERROR;

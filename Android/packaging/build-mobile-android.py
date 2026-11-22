@@ -41,6 +41,10 @@ TRIPLE = 'aarch64-linux-android'
 ABI = 'arm64-v8a'
 ALLOWED_NEEDED = {'libc.so', 'libm.so', 'libdl.so', 'liblog.so'}
 LIB_PATCH = APP / 'build-support/patches/libimobiledevice-sslv3-ios1.patch'
+# The device names each reply's length and libimobiledevice allocated it: refuse more than 32 MiB (upstream
+# LightTouchMac 6978b7a3). libplist copies a shared bplist object per reference: cap nodes and bytes (87974f89).
+LIB_LIMITS_PATCH = APP / 'build-support/patches/libimobiledevice-reply-limits.patch'
+PLIST_PATCH = APP / 'build-support/patches/libplist-bin-limits.patch'
 DAEMON_PATCHES = (  # applied in this order
     ('linux-standard-headers', APP / 'Linux/packaging/patches/usbmuxd-linux-standard-headers.patch'),
     ('private-qemu-config', APP / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch'),
@@ -134,7 +138,8 @@ def main():
 
     recipe = dict(schema=1, abi=ABI, android_api=API, ndk_revision=ndk_revision, packages=packages,
                   daemon_revision=DAEMON, recipe_sha256=sha(__file__),
-                  patch_sha256=sha(LIB_PATCH),
+                  patch_sha256=sha(LIB_PATCH), limits_patch_sha256=sha(LIB_LIMITS_PATCH),
+                  plist_patch_sha256=sha(PLIST_PATCH),
                   daemon_patches={name: sha(path) for name, path in DAEMON_PATCHES},
                   curl_stub_sha256={p.name: sha(p) for p in CURL_STUB},
                   helper_source_sha256=sha(HELPER),
@@ -215,6 +220,10 @@ def main():
     if not shim.exists():
         run([env['AR'], 'rcs', shim], build)
 
+    if not (trees['libplist'] / '.lighttouch-limits-patch').exists():
+        with PLIST_PATCH.open('rb') as stream:
+            subprocess.run(['patch', '-p1'], cwd=trees['libplist'], stdin=stream, check=True)
+        (trees['libplist'] / '.lighttouch-limits-patch').touch()
     autotools('libplist', ['--without-cython', '--without-tests'])
     autotools('libimobiledevice-glue', [])
     autotools('libusbmuxd', [])
@@ -224,6 +233,10 @@ def main():
         with LIB_PATCH.open('rb') as stream:
             subprocess.run(['patch', '-p1'], cwd=tree, stdin=stream, check=True)
         (tree / '.lighttouch-ssl-patch').touch()
+    if not (tree / '.lighttouch-limits-patch').exists():
+        with LIB_LIMITS_PATCH.open('rb') as stream:
+            subprocess.run(['patch', '-p1'], cwd=tree, stdin=stream, check=True)
+        (tree / '.lighttouch-limits-patch').touch()
     autotools('libimobiledevice', ['--without-cython', '--without-readline', '--disable-wireless-pairing',
                                    '--with-openssl'])
 
