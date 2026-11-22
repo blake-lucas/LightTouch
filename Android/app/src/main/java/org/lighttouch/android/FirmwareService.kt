@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.*
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -138,11 +139,15 @@ class FirmwareService : Service() {
         check(!cancelling) { "Cancelled" }
         val child = builder.start().also { process = it }
         // stderr through a pipe into the capped log: the pipe outlives a crashing firmwarekit, so its last lines arrive.
+        // The pipe can be closed under this read (cancel's destroy(), or the runtime's cleanup as firmwarekit exits;
+        // "read interrupted by close() on another thread"): that ends the copy, not the preparation process.
         val copier = Thread({
             val buffer = ByteArray(16 * 1024)
-            child.errorStream.use { input ->
-                while (true) { val n = input.read(buffer); if (n < 0) break; log?.write(buffer, 0, n) }
-            }
+            try {
+                child.errorStream.use { input ->
+                    while (true) { val n = input.read(buffer); if (n < 0) break; log?.write(buffer, 0, n) }
+                }
+            } catch (_: IOException) {}
         }, "firmwarekit-log").apply { start() }
         var weights = listOf<Long>(); var step = 0
         var message = ""
