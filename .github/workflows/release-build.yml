@@ -302,10 +302,23 @@ jobs:
           LT_SOURCE_REFERENCE: https://github.com/${{ github.repository }}/tree/${{ github.sha }}
           JOBS: "4"
         run: |
+          # Where the Android Gradle plugin finds debug.keystore. Left to itself on the runner it signed every APK
+          # with a fresh key of its own (ci.5 to ci.14 all differ), never the one the step above wrote.
+          export ANDROID_USER_HOME="$HOME/.android"
           bash release-$VER/app/scripts/build-release.sh "$VER" android || {
             g=release-$VER/app/build/obj/android-gradle.out
             [ -f "$g" ] && { echo "::group::android-gradle.out"; tail -200 "$g"; echo "::endgroup::"; }
             exit 1; }
+      - name: The APK is signed with that key
+        run: |
+          set -euo pipefail
+          want=$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey |
+                 grep -m1 SHA256: | sed 's/.*SHA256: *//; s/://g' | tr A-F a-f)
+          signer=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          got=$("$signer" verify --print-certs "release-$VER/out/LightTouch-v$VER-android-arm64.apk" |
+                grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+          echo "keystore $want, APK $got"
+          [ "$want" = "$got" ] || { echo "::error::the APK is not signed with debug.keystore"; exit 1; }
       - uses: actions/upload-artifact@v6
         with:
           name: LightTouch-v${{ env.VER }}-android-arm64
