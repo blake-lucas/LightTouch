@@ -41,8 +41,8 @@ fn write_exclusive(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 fn write_json(path: &Path, value: &serde_json::Value) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(&lock::sorted(value))
-        .map_err(|e| crate::internal!("{}: {e}", path.display()))?;
+    let bytes =
+        serde_json::to_vec_pretty(&lock::sorted(value)).map_err(|e| crate::internal!("{}: {e}", path.display()))?;
     std::fs::write(path, bytes).map_err(|e| crate::internal!("{}: {e}", path.display()))?;
     Ok(())
 }
@@ -118,6 +118,18 @@ pub fn volumes(i: &Inputs<'_>, fit: &fitcheck::Log, log: &dyn Fn(&str)) -> Resul
     set_root(&result.system, &root_owned)?;
 
     sideload::install(&result.system, i.helpers)?;
+    // The folders the modem firmware and the helpers made are root's, as the Swift writer (owner 0:0) makes them.
+    set_root(
+        &result.system,
+        &[
+            "usr/local",
+            "usr/local/bin",
+            "usr/local/standalone",
+            "usr/local/standalone/firmware",
+            "usr/local/standalone/firmware/Baseband",
+        ]
+        .map(String::from),
+    )?;
 
     write_exclusive(&i.out.join("mbr.bin"), &layout.partition_table())?;
     write_json(&i.out.join("fit.json"), &fit.object())?;
