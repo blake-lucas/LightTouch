@@ -66,7 +66,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let mut open_text = false;
     let mut answer = false;
     let mut hang_up = false;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("carrier-page").auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(18.0);
         let width = (ui.available_width() - 48.0).clamp(200.0, 640.0);
         let margin = ((ui.available_width() - width) / 2.0).max(24.0);
@@ -195,7 +195,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             }
                             ui.add(
                                 egui::TextEdit::singleline(&mut form.longitude)
-                                    .desired_width(96.0)
+                                    .desired_width(110.0)
                                     .hint_text("Longitude")
                                     .margin(vec2(8.0, 6.0)),
                             );
