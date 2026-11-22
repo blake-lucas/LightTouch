@@ -16,7 +16,12 @@ use crate::k48_recipe::{ramdisk_with_helper, KEYBAG_DONE};
 use crate::oneshot::{self, Helper};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+#[cfg(windows)]
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,7 +58,7 @@ pub fn run(
     let nor = work.join("nor.rw");
     let serial = work.join("keybag.log");
     std::fs::copy(out.join("nor.bin"), &nor)?;
-    let port = free_port()?;
+    let stub = Arc::new(Stub::new(work)?);
     let hardware = helper.hardware(Hardware::N72)?;
     let file = |n: &str| boot::escape(&out.join(n).to_string_lossy());
     let m = format!(
@@ -82,7 +87,7 @@ pub fn run(
         "-serial",
         &format!("file:{}", serial.display()),
         "-gdb",
-        &format!("tcp:127.0.0.1:{port}"),
+        &stub.argument(),
         "-S",
     ]
     .iter()
@@ -93,8 +98,9 @@ pub fn run(
     let note = Arc::new(Mutex::new(String::new()));
     let during = {
         let note = note.clone();
+        let stub = stub.clone();
         Box::new(move || -> Result<()> {
-            let text = handoff(&mut GdbRemote::connect(port)?, &kernelcache, &image)?;
+            let text = handoff(&mut GdbRemote::connect(&stub)?, &kernelcache, &image)?;
             *note.lock().unwrap_or_else(|e| e.into_inner()) = text;
             Ok(())
         })
@@ -217,33 +223,98 @@ pub fn handoff(gdb: &mut GdbRemote, kernelcache: &[u8], ramdisk: &[u8]) -> Resul
     ))
 }
 
-/// A loopback port nothing listens on now.
-pub fn free_port() -> Result<u16> {
-    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|e| crate::internal!("no free TCP port: {e}"))?;
-    Ok(l.local_addr().map_err(|e| crate::internal!("no free TCP port: {e}"))?.port())
+/// Where the one-shot's gdbstub listens. The stub has no authentication, so it is on a Unix socket in the
+/// preparation's work directory, which only this user can connect to (upstream LightTouchMac 7d183d0c). A loopback TCP
+/// port picked free and then handed to QEMU could be taken, or connected to, by any local process in between; Windows
+/// keeps that port because QEMU's Unix chardev isn't built there.
+pub enum Stub {
+    #[cfg(unix)]
+    Unix(PathBuf),
+    #[cfg(windows)]
+    Tcp(u16),
 }
+
+impl Stub {
+    #[cfg(unix)]
+    pub fn new(work: &Path) -> Result<Stub> {
+        // sun_path holds 108 bytes on Linux and Android (104 on macOS); a deep work directory falls back to a fresh
+        // private directory under the temporary one.
+        let mut path = work.join("gdb.sock");
+        if path.as_os_str().len() >= 100 {
+            let dir = std::env::temp_dir().join(format!("lt-gdb-{}", std::process::id()));
+            std::fs::create_dir_all(&dir)?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+            path = dir.join("gdb.sock");
+        }
+        let _ = std::fs::remove_file(&path);
+        Ok(Stub::Unix(path))
+    }
+
+    #[cfg(windows)]
+    pub fn new(_work: &Path) -> Result<Stub> {
+        let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|e| crate::internal!("no free TCP port: {e}"))?;
+        Ok(Stub::Tcp(l.local_addr().map_err(|e| crate::internal!("no free TCP port: {e}"))?.port()))
+    }
+
+    /// The `-gdb` argument. A Unix chardev needs server and wait spelled out (QEMU adds them only to `tcp:`), and a
+    /// comma in the path doubles.
+    pub fn argument(&self) -> String {
+        match self {
+            #[cfg(unix)]
+            Stub::Unix(p) => format!("unix:{},server=on,wait=off", p.to_string_lossy().replace(',', ",,")),
+            #[cfg(windows)]
+            Stub::Tcp(port) => format!("tcp:127.0.0.1:{port}"),
+        }
+    }
+}
+
+impl Drop for Stub {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            let Stub::Unix(p) = self;
+            let _ = std::fs::remove_file(&*p);
+            if let Some(dir) = p.parent().filter(|d| d.file_name().is_some_and(|n| n.to_string_lossy().starts_with("lt-gdb-"))) {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+type StubStream = UnixStream;
+#[cfg(windows)]
+type StubStream = TcpStream;
 
 /// Just enough of the gdb remote protocol (QEMU's gdbstub): breakpoints, registers, memory, continue.
 pub struct GdbRemote {
-    stream: TcpStream,
+    stream: StubStream,
     buffer: Vec<u8>,
 }
 
 impl GdbRemote {
     /// Connects, retrying for up to 10 s while the helper starts QEMU.
-    pub fn connect(port: u16) -> Result<GdbRemote> {
+    pub fn connect(stub: &Stub) -> Result<GdbRemote> {
         for _ in 0..100 {
-            if let Ok(stream) = TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+            let stream = match stub {
+                #[cfg(unix)]
+                Stub::Unix(p) => UnixStream::connect(p),
+                #[cfg(windows)]
+                Stub::Tcp(port) => TcpStream::connect((Ipv4Addr::LOCALHOST, *port)).inspect(|s| {
+                    // Each packet is answered, then acked by a separate "+": without TCP_NODELAY, Nagle and delayed
+                    // ACKs cost ~40 ms a packet, minutes for a 16 MB ramdisk.
+                    let _ = s.set_nodelay(true);
+                }),
+            };
+            if let Ok(stream) = stream {
                 // `c` waits for iBoot to reach the kernel
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
-                // Each packet is answered, then acked by a separate "+": without TCP_NODELAY, Nagle and delayed ACKs
-                // cost ~40 ms a packet, minutes for a 16 MB ramdisk.
-                let _ = stream.set_nodelay(true);
                 return Ok(GdbRemote { stream, buffer: Vec::new() });
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Err(failed(format!("no gdbstub on port {port}")))
+        Err(failed(format!("no gdbstub at {}", stub.argument())))
     }
 
     pub fn send(&mut self, text: &str) -> Result<()> {
