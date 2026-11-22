@@ -25,7 +25,7 @@ data class DeviceSummary(
 internal fun shortProductName(productType: String): String = when (productType) {
     "iPod1,1" -> "iPod touch"; "iPod2,1" -> "iPod touch 2G"; "iPod3,1" -> "iPod touch 3G"; "iPod4,1" -> "iPod touch 4G"
     "iPhone1,1" -> "iPhone"; "iPhone1,2" -> "iPhone 3G"; "iPhone2,1" -> "iPhone 3GS"; "iPhone3,1" -> "iPhone 4"
-    "iPad1,1" -> "iPad"; else -> productType
+    "iPhone5,2" -> "iPhone 5"; "iPad1,1" -> "iPad"; else -> productType
 }
 
 /** Whether a name being typed fits: 60 characters, and the library's 127-byte UTF-8 limit (an emoji or CJK name reaches it first). */

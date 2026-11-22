@@ -15,7 +15,21 @@ import javax.net.ssl.HttpsURLConnection
 
 /** The guest a search or download is checked against: what it runs, not the Android host. */
 data class StoreTarget(val productType: String, val ios: String, val arch: String, val family: String = "1") {
+    /** Whether the user's apps can be installed here ([managesApps]). */
+    val managesApps get() = managesApps(ios)
+
     companion object {
+        /** What every install entry point says on a firmware that doesn't take installs. */
+        const val NO_INSTALLS_IOS10 = "App installs aren\u2019t supported on iOS 10 yet."
+
+        /**
+         * The one rule for whether a firmware takes app installs (Light Touch for Mac's Entry.managesApps; the
+         * desktop's target::manages_apps): iPhone OS 1 has no installation service, and iOS 10's installd checks
+         * code signatures inside the dyld shared cache, which nothing bypasses yet, so an app neither installs nor
+         * launches there.
+         */
+        fun managesApps(ios: String): Boolean = (ios.substringBefore('.').toIntOrNull() ?: 2) in 2..9
+
         private val armv6 = setOf("iPod1,1", "iPod2,1", "iPhone1,1", "iPhone1,2")
         fun of(productType: String, ios: String) =
             StoreTarget(productType, ios, if (productType in armv6) "armv6" else "armv7", if (productType.startsWith("iPad")) "2" else "1")

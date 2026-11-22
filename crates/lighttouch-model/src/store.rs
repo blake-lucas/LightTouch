@@ -758,6 +758,10 @@ impl Store {
     }
 
     fn enqueue(&mut self, key: String, name: &str, request: InstallRequest) {
+        if self.target.as_ref().is_some_and(|t| !t.manages_apps()) {
+            self.message = lighttouch_catalog::target::NO_INSTALLS_IOS10.into();
+            return;
+        }
         if self.guest_socket.is_none() {
             self.message = "Start the device to install apps.".into();
             return;
