@@ -179,7 +179,8 @@ impl Board for N42Board {
         false
     }
     fn needs_seal(&self) -> bool {
-        true
+        // LT_N42_FIRST_BOOT=off (diagnostic): no first boot here; the device's first Start runs the migration.
+        std::env::var("LT_N42_FIRST_BOOT").as_deref() != Ok("off")
     }
     fn shipped(&self) -> Vec<String> {
         vec!["kboot.bin".to_string()]
