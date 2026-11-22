@@ -331,7 +331,15 @@ pub fn verified_code_directories(data: &[u8]) -> Result<Vec<[u8; 20]>> {
         return verified_superblob(data, signature, allocation, 0, data.len());
     }
     let images = images(data).ok_or_else(|| crate::unsupported!("A6 guest assets: not a signed Mach-O"))?;
-    let image = native_arm_slice(&images).ok_or_else(|| crate::unsupported!("A6 guest assets: no native ARM slice"))?;
+    // A fat file's armv7s or armv7 slice; a thin file is taken whatever its subtype (the Swift's rule): the guest
+    // helpers it_agent and libappsync's armv6 slice are built for every board.
+    let fat = data.len() >= 4 && data[0..4] == [0xca, 0xfe, 0xba, 0xbe];
+    let image = if fat {
+        native_arm_slice(&images)
+    } else {
+        images.first().filter(|i| i.cputype == ARM_CPU && !i.is_64bit)
+    }
+    .ok_or_else(|| crate::unsupported!("A6 guest assets: no native ARM slice"))?;
     let slice = &data[image.base..image.base + image.size];
     let (off, size) = code_signature(slice).ok_or_else(|| crate::unsupported!("A6 guest assets: missing code signature"))?;
     verified_superblob(data, image.base + off, size, image.base, image.size)
