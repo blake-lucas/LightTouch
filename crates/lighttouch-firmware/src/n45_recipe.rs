@@ -506,7 +506,7 @@ impl Board for N45Board {
         ed.enable_journal(JOURNAL_BYTES)?;
         let activation = {
             let log = |s: &str| c.log(s);
-            system_edits::activate(&mut ed, &log).map_err(|f| Error { code: Code::ActivationFailed, message: f.0, piece: None })?
+            system_edits::activate(&mut ed, "armv7", &log).map_err(|f| Error { code: Code::ActivationFailed, message: f.0, piece: None })?
         };
         c.activation = Some(activation);
         system_edits::remove_junk(&mut ed)?;

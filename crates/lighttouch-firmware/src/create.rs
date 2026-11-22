@@ -128,6 +128,10 @@ pub trait Board {
     fn seed_prefix(&self) -> String;
     fn boot_step(&self) -> String;
     fn volumes_step(&self) -> String;
+    /// The store step's name: "Writing the NAND", or the N42's restore boot.
+    fn store_step(&self) -> String {
+        "Writing the NAND".to_string()
+    }
     fn keybag_step(&self) -> String;
     fn data_protection(&self) -> bool;
     fn needs_seal(&self) -> bool;
@@ -165,6 +169,7 @@ pub fn board_for(o: &Options) -> Result<Box<dyn Board>> {
         }
         ("n45ap", "n45") | ("m68ap", "m68") => Ok(Box::new(crate::n45_recipe::N45Board::new(o)?)),
         ("n72ap", "n72") => Ok(Box::new(crate::n72_recipe::N72Board::new(o)?)),
+        ("n42ap", "n42") => Ok(Box::new(crate::n42_recipe::N42Board::new(o)?)),
         _ => Err(crate::unsupported!("{}: no preparer for board {} recipe {recipe}", e.id, e.board)),
     }
 }
@@ -248,7 +253,13 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
     if e.estimates.peak_bytes > 0 {
         files::require_space(e.estimates.peak_bytes - e.source.bytes.unwrap_or(0), &c.o.out)?;
     }
-    let mut steps = vec!["Verifying the IPSW".to_string(), "Decrypting the firmware".to_string(), board.boot_step(), board.volumes_step(), "Writing the NAND".to_string()];
+    let mut steps = vec![
+        "Verifying the IPSW".to_string(),
+        "Decrypting the firmware".to_string(),
+        board.boot_step(),
+        board.volumes_step(),
+        board.store_step(),
+    ];
     if board.data_protection() {
         steps.push(board.keybag_step());
     }

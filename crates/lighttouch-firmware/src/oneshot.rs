@@ -149,8 +149,43 @@ pub fn run(
     log: &dyn Fn(&str),
     during: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
 ) -> Result<(OneShot, String)> {
+    run_wait(helper, argv, serial, stop, stop_pattern, timeout, Duration::ZERO, log, during)
+}
+
+/// `run` with a grace period after the stop marker: the guest may halt by itself (the seal one-shot's
+/// powerdown) before the helper is terminated. `grace == 0` is the historical immediate stop.
+#[allow(clippy::too_many_arguments)]
+pub fn run_wait(
+    helper: &Helper,
+    argv: &[String],
+    serial: &Path,
+    stop: Option<&str>,
+    stop_pattern: Option<&str>,
+    timeout: f64,
+    grace: Duration,
+    log: &dyn Fn(&str),
+    during: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
+) -> Result<(OneShot, String)> {
     let mut command = helper.command(argv);
-    command.env("IT_TVOUT_READY", "1").stdout(Stdio::from(std::io::stderr())).stderr(Stdio::inherit());
+    // The helper's own prints belong in our log; the engine's stderr is where it says why it refused to
+    // start (an unknown option, a machine that would not be created), and on a phone that text would
+    // otherwise vanish into the app's redirect. It goes to a file beside the serial log as well.
+    let stderr_path = serial.with_file_name(format!(
+        "{}.engine.log",
+        serial.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "serial".into())
+    ));
+    let engine_stderr = std::fs::File::create(&stderr_path).ok();
+    command.env("IT_TVOUT_READY", "1").stdout(Stdio::from(std::io::stderr()));
+    // A preparation boot is headless: no display listener, so no frame callback into the host. The engine
+    // honours this in qemu_ios_ui_vm_started; a device boot (the app's own path) never sets it.
+    command.env("LTM_NO_UI", "1");
+    // Ask the engine for a crash report on stderr (signal, pc, backtrace) when it dies; the restore and
+    // seal stages quote that stderr in their failure.
+    command.env("LTM_CRASH_TRACE", "1");
+    command.stderr(match engine_stderr {
+        Some(f) => Stdio::from(f),
+        None => Stdio::inherit(),
+    });
     if helper.own {
         command.env("LT_ONESHOT_STDIN", "1").stdin(Stdio::piped());
     } else {
@@ -171,6 +206,7 @@ pub fn run(
         })
     });
     let (mut marker, mut stopping) = (false, false);
+    let mut marker_at: Option<Instant> = None;
     let mut deadline: Option<Instant> = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -192,8 +228,13 @@ pub fn run(
                     marker = true;
                 }
             }
+            if marker && marker_at.is_none() {
+                marker_at = Some(Instant::now());
+            }
         }
-        if !stopping && (marker || start.elapsed().as_secs_f64() > timeout) {
+        let grace_done = marker_at.is_some_and(|t| t.elapsed() >= grace);
+        let timeout_done = start.elapsed().as_secs_f64() > timeout;
+        if !stopping && ((marker && (grace.is_zero() || grace_done)) || timeout_done) {
             stopping = true;
             terminate(&mut child); // the helper quits QEMU, which flushes the NAND and NOR
             deadline = Some(Instant::now() + Duration::from_secs(60));
@@ -208,7 +249,17 @@ pub fn run(
     if let Ok(e) = failed_rx.try_recv() {
         return Err(e);
     }
-    let r = OneShot { exited: !stopping, exit_code: status.code().unwrap_or(-1), marker, seconds: start.elapsed().as_secs_f64() };
+    // A helper killed by a signal (the phone's low-memory killer sends SIGKILL) has no exit code; keep the
+    // signal so a phone run can tell "the engine refused" from "the system killed it".
+    #[cfg(unix)]
+    let killed = std::os::unix::process::ExitStatusExt::signal(&status);
+    #[cfg(not(unix))]
+    let killed: Option<i32> = None;
+    let exit_code = match status.code() {
+        Some(code) => code,
+        None => -killed.unwrap_or(1),
+    };
+    let r = OneShot { exited: !stopping, exit_code, marker, seconds: start.elapsed().as_secs_f64() };
     log(&format!(
         "one-shot: {} after {:.0} s (exit {})",
         if r.marker { "marker" } else if r.exited { "halted" } else { "timed out" },

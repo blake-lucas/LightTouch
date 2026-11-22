@@ -3,6 +3,8 @@
 //! file offsets (an unslid linkedit), so an image's symbols and sections read straight out of the cache file.
 //! Port of imgtools/appsync_cachepatch.py and ipad1_rootfs.cache_images/image_strings.
 use crate::error::Result;
+use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use crate::macho::{c_bytes, hex, hex_bytes, latin1, le16, le32, le64, LC_SEGMENT, LC_SYMTAB};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +193,170 @@ impl DyldSharedCache {
         }
         Err(crate::unsupported!("{name} not found in cache image symbol tables"))
     }
+
+    /// Refresh only existing code-page hash slots after intentional cache edits
+    /// (`SharedCacheSignature.rehashingCodeSignature`). Layout, special slots, scatter vectors and
+    /// payload are retained; this neither creates a signature nor changes admission policy.
+    pub fn rehash_code_signature(&self) -> Result<Vec<u8>> {
+        let data = &self.data;
+        let invalid = |d: &str| crate::unsupported!("shared cache signature: {d}");
+        let word = |at: usize, count: usize, big: bool| -> Result<u64> {
+            if !(1..=8).contains(&count) || at > data.len().saturating_sub(count) {
+                return Err(invalid("truncated metadata"));
+            }
+            let mut value: u64 = 0;
+            for i in 0..count {
+                let byte = data[at + i] as u64;
+                value |= byte << (8 * if big { count - 1 - i } else { i });
+            }
+            Ok(value)
+        };
+        let signature = word(40, 8, false)? as usize;
+        let mut allocation = word(48, 8, false)? as usize;
+        if signature < 56 || signature > data.len().saturating_sub(12) {
+            return Err(invalid("missing signature"));
+        }
+        if allocation == 0 {
+            allocation = data.len() - signature;
+        }
+        if allocation < 12 || allocation > data.len() - signature || word(signature, 4, true)? != 0xfade0cc0 {
+            return Err(invalid("invalid signature extent"));
+        }
+        let length = word(signature + 4, 4, true)? as usize;
+        let count = word(signature + 8, 4, true)? as usize;
+        if length < 12 || length > allocation || count > (length - 12) / 8 {
+            return Err(invalid("invalid signature index"));
+        }
+        struct Directory {
+            start: usize,
+            hashes: usize,
+            pages: usize,
+            limit: usize,
+            width: usize,
+            kind: u8,
+            page_size: usize,
+        }
+        let mut directories: Vec<Directory> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        for i in 0..count {
+            let relative = word(signature + 16 + i * 8, 4, true)? as usize;
+            if relative < 12 + count * 8 || relative > length - 8 {
+                return Err(invalid("invalid blob offset"));
+            }
+            let cd = signature + relative;
+            let size = word(cd + 4, 4, true)? as usize;
+            if size < 8 || size > length - relative {
+                return Err(invalid("truncated blob"));
+            }
+            spans.push((relative, relative + size));
+            if word(cd, 4, true)? != 0xfade0c02 {
+                continue;
+            }
+            if size < 44 {
+                return Err(invalid("truncated CodeDirectory"));
+            }
+            let version = word(cd + 8, 4, true)? as usize;
+            if !(0x20000..=0x20100).contains(&version) {
+                return Err(invalid("unsupported CodeDirectory version"));
+            }
+            let minimum = if version >= 0x20100 { 48 } else { 44 };
+            if size < minimum {
+                return Err(invalid("truncated CodeDirectory header"));
+            }
+            let hashes = word(cd + 16, 4, true)? as usize;
+            let identifier = word(cd + 20, 4, true)? as usize;
+            let special = word(cd + 24, 4, true)? as usize;
+            let pages = word(cd + 28, 4, true)? as usize;
+            let limit = word(cd + 32, 4, true)? as usize;
+            let width = data[cd + 36] as usize;
+            let kind = data[cd + 37];
+            let exponent = data[cd + 39] as usize;
+            if !((kind == 1 && width == 20) || (kind == 2 && width == 32))
+                || !(1..=20).contains(&exponent)
+                || limit == 0
+                || limit > signature
+                || hashes < minimum + special * width
+                || hashes > size
+                || pages > (size - hashes) / width
+            {
+                return Err(invalid("unsupported code-page layout"));
+            }
+            let page_size = 1usize << exponent;
+            let metadata_end = hashes - special * width;
+            if pages != (limit + page_size - 1) / page_size
+                || identifier < minimum
+                || identifier >= metadata_end
+                || !data[cd + identifier..cd + metadata_end].contains(&0)
+            {
+                return Err(invalid("invalid code-page coverage or identifier"));
+            }
+            if version >= 0x20100 {
+                let scatter = word(cd + 44, 4, true)? as usize;
+                if scatter != 0 {
+                    if scatter < minimum {
+                        return Err(invalid("invalid scatter vector"));
+                    }
+                    let mut entry = scatter;
+                    let mut previous_end = 0usize;
+                    loop {
+                        if entry > metadata_end.saturating_sub(24) {
+                            return Err(invalid("unterminated scatter vector"));
+                        }
+                        let amount = word(cd + entry, 4, true)? as usize;
+                        let first = word(cd + entry + 4, 4, true)? as usize;
+                        let target = word(cd + entry + 8, 8, true)?;
+                        let spare = word(cd + entry + 16, 8, true)?;
+                        if spare != 0 {
+                            return Err(invalid("unsupported scatter record"));
+                        }
+                        if amount == 0 {
+                            if first != 0 || target != 0 {
+                                return Err(invalid("invalid scatter terminator"));
+                            }
+                            break;
+                        }
+                        if first < previous_end
+                            || amount > pages
+                            || first > pages - amount
+                            || target == 0
+                            || target % page_size as u64 != 0
+                        {
+                            return Err(invalid("invalid scatter mapping"));
+                        }
+                        previous_end = first + amount;
+                        entry += 24;
+                    }
+                }
+            }
+            directories.push(Directory { start: cd, hashes, pages, limit, width, kind, page_size });
+        }
+        spans.sort_unstable();
+        for pair in spans.windows(2) {
+            if pair[0].1 > pair[1].0 {
+                return Err(invalid("overlapping signature blobs"));
+            }
+        }
+        if directories.is_empty() {
+            return Err(invalid("no supported CodeDirectory"));
+        }
+        let mut result = data.clone();
+        for cd in directories {
+            for page in 0..cd.pages {
+                let lo = page * cd.page_size;
+                let hi = cd.limit.min((page + 1) * cd.page_size);
+                let digest: Vec<u8> = if cd.kind == 1 {
+                    Sha1::digest(&data[lo..hi]).to_vec()
+                } else {
+                    Sha256::digest(&data[lo..hi]).to_vec()
+                };
+                let at = cd.start + cd.hashes + page * cd.width;
+                if data[at..at + cd.width] != digest[..] {
+                    result[at..at + cd.width].copy_from_slice(&digest);
+                }
+            }
+        }
+        Ok(result)
+    }
 }
 
 /// The amfid half of AppSync: MISValidateSignature -> `movs r0,#0; bx lr`, located by symbol and byte-checked (a
@@ -239,6 +405,7 @@ pub mod app_sync_cache_patch {
         }
         Ok((va, foff, cur))
     }
+
 }
 
 #[cfg(test)]

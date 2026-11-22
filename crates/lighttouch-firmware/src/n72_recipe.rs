@@ -481,7 +481,7 @@ impl N72Board {
         }
         let activation = {
             let log = |s: &str| c.log(s);
-            system_edits::activate(ed, &log)
+            system_edits::activate(ed, "armv7", &log)
                 .map_err(|f| Error { code: Code::ActivationFailed, message: f.0, piece: None })?
         };
         c.activation = Some(activation);
