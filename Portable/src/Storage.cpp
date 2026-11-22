@@ -1845,10 +1845,13 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         }
         d->args.insert(d->args.end(), {"-netdev", network});
         if (a6) {
-            // Its Wi-Fi is a USB HSIC device on the EHCI; its modem has a network of its own, off the LAN.
+            // Its Wi-Fi is a USB HSIC device on the EHCI; its modem has a network of its own.
             d->args.insert(d->args.end(), {"-device", "usb-bcm-hsic,bus=usb-bus.0,port=4" +
                                                           (wifi_mac.empty() ? "" : ",mac=" + escape(wifi_mac))});
-            d->args.insert(d->args.end(), {"-netdev", "user,id=cell0,lan=off"});
+            // The same policy as Wi-Fi (Off blocks it too), as BootRecipe.iPhone5 derives cell0 from wifi0.
+            std::string cellular = network;
+            cellular.replace(cellular.find("id=wifi0"), 8, "id=cell0");
+            d->args.insert(d->args.end(), {"-netdev", cellular});
             if (!imei.empty())
                 d->args.insert(d->args.end(), {"-global", "ios-baseband.imei=" + imei});
         }

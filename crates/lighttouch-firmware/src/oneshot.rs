@@ -205,7 +205,8 @@ fn run_wait(
             }
         })
     });
-    let (mut marker, mut stopping, mut asked) = (false, false, false);
+    let (mut marker, mut stopping) = (false, false);
+    let mut asked: Option<Instant> = None;
     let mut marker_at: Option<Instant> = None;
     let mut deadline: Option<Instant> = None;
     let status = loop {
@@ -234,11 +235,12 @@ fn run_wait(
         }
         let timeout_done = start.elapsed().as_secs_f64() > timeout;
         if let (Some(delay), Some(at)) = (powerdown, marker_at)
-            && !asked
             && at.elapsed() >= delay
+            && asked.is_none_or(|t| t.elapsed() >= Duration::from_secs(60))
         {
-            // One byte on the helper's stdin asks the guest to shut down (engine_main); QEMU then exits by itself.
-            asked = true;
+            // A byte on the helper's stdin asks the guest to shut down (engine_main); QEMU then exits by itself. A
+            // request before the guest agent is up is lost, so it is asked again each minute until then.
+            asked = Some(Instant::now());
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
                 let _ = stdin.write_all(b"p").and_then(|_| stdin.flush());
