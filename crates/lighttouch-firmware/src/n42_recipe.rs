@@ -1,13 +1,16 @@
 //! N42Board: the iPhone 5's (n42ap, recipe "n42") side of create.
 //!
-//! The store step is deliberately a boundary: `stage_store` writes every data input the restore boot
-//! consumes (A6DI stream, restore-ramdisk.hfs, kboot-restore.bin) and then stops with an explicit
-//! "restore boot required" error. The parent runs the one-shot and the first-boot seal; see
-//! `a6_restore` and the module docs in `IMPLEMENTATION.md`.
+//! A port of Light Touch for Mac's N42Recipe.swift. Its store isn't written on the host: the volumes step is the
+//! A6 bake (`a6_preparation`), and the store step formats new PPN media (`a6nand`) and restores it in the guest
+//! as a restore does: the volumes as an allocated-block A6DI stream, and one one-shot of the IPSW's own restore
+//! ramdisk with qemu-ios's it_initialize as its restored_external (`a6_restore`), which writes the stream through
+//! the guest's disk driver, formats Data, makes the system keybag, seeds Data and the MobileGestalt cache, and
+//! halts. Then kboot.bin, its kernel trusting the staged guest helpers (`a6_assets`), no NOR, and the first normal
+//! boot (the seal), to the Home screen and the guest's own shutdown.
 use crate::a6_assets;
-use crate::a6nand;
 use crate::a6_restore;
 use crate::a6_storage::A6StorageLayout;
+use crate::a6nand;
 use crate::boot::{self as machine, DeviceInfo};
 use crate::create::{self, Board, Context};
 use crate::entry::Recipe;
@@ -16,7 +19,7 @@ use crate::fitcheck;
 use crate::identity::UnitIdentity;
 use crate::system_edits;
 use crate::{files, kboot, oneshot};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,30 +32,22 @@ pub const BOOT_STEP: &str = "Writing the identity";
 pub const VOLUMES_STEP: &str = "Building the system and data volumes";
 pub const STORE_STEP: &str = "Restoring the flash";
 pub const KEYBAG_STEP: &str = "Creating the data-protection keybag";
-/// Restore boot args. `cpus=1`: the two A6 application cores spin on each
-/// other's locks against the timebase; under MTTCG host scheduling that trips
-/// xnu's 0.52 s hw_lock_bit timeout before launchd (the upstream vCPU-stall
-/// clock fix mitigates but does not eliminate it on a loaded phone). The IOP
-/// and AE2 cores still run; only the restore boot is uniprocessor.
-pub const PREPARATION_BOOT_ARGS: &str =
-    "serial=3 debug=0x8 amfi_allow_any_signature=1 cs_enforcement_disable=1 enable-hsic=1 amfi_get_out_of_my_way=1 cpus=1";
-pub const BOOT_ARGS: &str =
-    "serial=3 debug=0x8 amfi_allow_any_signature=1 cs_enforcement_disable=1 enable-hsic=1 amfi_get_out_of_my_way=1 rd=disk0s1";
-pub const GUEST_TOOLS: &[&str] = &[
-    "it_initialize",
-    "it_mobilegestalt",
-    "launchd-cache-template",
-    "it_agent",
-    "httpget-armv7",
-    "libappsync.dylib",
-];
-pub const BASE_MACHINE_OPTIONS: [(&str, &str); 3] =
-    [("ppn", "on"), ("camera", "on"), ("quiet-boot", "on")];
+/// A6Preparation.defaultBootArgs: kboot's (`kboot::DEFAULT_BOOT_ARGS`) and the AMFI setting the N42's boots use.
+pub const A6_BOOT_ARGS: &str =
+    "serial=3 debug=0x8 amfi_allow_any_signature=1 cs_enforcement_disable=1 enable-hsic=1 amfi_get_out_of_my_way=1";
+/// The normal boot's: root on the LwVM System partition.
+pub const BOOT_ARGS: &str = "serial=3 debug=0x8 amfi_allow_any_signature=1 cs_enforcement_disable=1 enable-hsic=1 amfi_get_out_of_my_way=1 rd=disk0s1";
+pub const GUEST_TOOLS: &[&str] =
+    &["it_initialize", "it_mobilegestalt", "launchd-cache-template", "it_agent", "httpget-armv7", "libappsync.dylib"];
+pub const BASE_MACHINE_OPTIONS: [(&str, &str); 3] = [("ppn", "on"), ("camera", "on"), ("quiet-boot", "on")];
 pub const FIRST_BOOT_DONE: &str = "Process SpringBoard (";
-// Swift's 1200 s budget is for an M-series Mac; the same restore on a phone-class host is
-// several times slower, so the one-shot gets 40 minutes rather than failing a working stream.
+/// The restore boot's limit: 14G61's took 157 s on an M4 Max, unloaded; a phone is several times slower.
 pub const RESTORE_TIMEOUT: f64 = 2400.0;
-pub const FIRST_BOOT_TIMEOUT: f64 = 2400.0;
+/// The first boot's limit: 14G61's migration lit SpringBoard after 380-430 s at a host load of 5 on a Mac, 800 s
+/// at 30; a phone is slower again.
+pub const FIRST_BOOT_TIMEOUT: f64 = 3600.0;
+/// How long after SpringBoard starts the first boot asks the guest to shut down (Swift's powerdown delay).
+pub const FIRST_BOOT_POWERDOWN_DELAY: Duration = Duration::from_secs(30);
 
 pub struct N42Board {
     pub recipe: Recipe,
@@ -65,19 +60,8 @@ pub struct N42Board {
 
 impl N42Board {
     pub fn new(o: &create::Options) -> Result<N42Board> {
-        let recipe = o
-            .entry
-            .recipe
-            .clone()
-            .ok_or_else(|| crate::unsupported!("{}: no recipe", o.entry.id))?;
-        Ok(N42Board {
-            recipe,
-            helper_hardware: None,
-            ident: None,
-            vols: None,
-            records: None,
-            restore_ramdisk: None,
-        })
+        let recipe = o.entry.recipe.clone().ok_or_else(|| crate::unsupported!("{}: no recipe", o.entry.id))?;
+        Ok(N42Board { recipe, helper_hardware: None, ident: None, vols: None, records: None, restore_ramdisk: None })
     }
 
     pub fn machine_options(&self) -> BTreeMap<String, String> {
@@ -101,8 +85,36 @@ impl N42Board {
         self.ident.as_ref().ok_or_else(|| create::filled("the identity"))
     }
 
-    /// Write all data inputs the parent's restore boot needs, then stop. `a6_restore::Staged`
-    /// names every file; no boot is faked.
+    /// A preparation boot of `kboot` on the store at `nand` (BootRecipe.iPhone5 with Wi-Fi off, one-shot).
+    fn one_shot_config(
+        &self,
+        kboot: &Path,
+        nand: &Path,
+        options: BTreeMap<String, String>,
+        imei: Option<&str>,
+        serial: &Path,
+    ) -> Result<machine::BootConfig> {
+        let hardware = self.helper_hardware.clone().ok_or_else(|| create::filled("the board's hardware"))?;
+        let d = machine::IPad {
+            boot: machine::IPadBoot::Kernel { image: kboot.to_string_lossy().into_owned(), writable_nor: None },
+            nand: nand.to_string_lossy().into_owned(),
+            overlay: None,
+            die_id: None,
+            wifi: false,
+            machine_options: options,
+        };
+        Ok(machine::iphone5(
+            &d,
+            &hardware,
+            &format!("file:{}", serial.display()),
+            &["-audio".into(), "driver=none".into()],
+            None,
+            &[],
+            imei,
+        ))
+    }
+
+    /// Write every input the restore boot reads (`a6_restore::Staged` names them) and kboot.bin.
     pub fn stage_store(&mut self, c: &mut Context) -> Result<a6_restore::Staged> {
         self.restore_ramdisk = Some(a6_restore::RESTORE_RAMDISK.to_string());
         let vols = self.vols()?;
@@ -142,22 +154,6 @@ impl N42Board {
         let _ = std::fs::remove_file(&vols.data);
         Ok(staged)
     }
-}
-
-
-/// The preparation boots' accelerator. MTTCG runs the machine's four CPUs on four host threads, which is
-/// where the phone's engine has crashed at random early-boot points while the same code on a host never
-/// did; the restore and seal do not need the parallelism, so they run one TCG thread unless
-/// `LT_PREP_MTTCG=1` asks for the old behaviour.
-fn prep_config(mut c: machine::BootConfig) -> machine::BootConfig {
-    // Single-threaded TCG was tried against the phone's SIGILL and made no difference, so the
-    // preparation boots keep MTTCG (four vCPUs) and `LT_PREP_TCG_SINGLE=1` remains for an A/B.
-    if std::env::var("LT_PREP_TCG_SINGLE").as_deref() == Ok("1") {
-        if let Some(i) = c.argv.iter().position(|a| a == "-accel") {
-            c.argv[i + 1] = "tcg,thread=single".to_string();
-        }
-    }
-    c
 }
 
 impl Board for N42Board {
@@ -200,14 +196,9 @@ impl Board for N42Board {
             ));
         }
         self.helper_hardware = Some(c.o.helper.hardware(machine::Board::N42)?);
-        let missing: Vec<&str> =
-            GUEST_TOOLS.iter().copied().filter(|n| !c.o.guest_tools.join(n).is_file()).collect();
+        let missing: Vec<&str> = GUEST_TOOLS.iter().copied().filter(|n| !c.o.guest_tools.join(n).is_file()).collect();
         if !missing.is_empty() {
-            return Err(crate::internal!(
-                "--guest-tools {} lacks {}",
-                c.o.guest_tools.display(),
-                missing.join(", ")
-            ));
+            return Err(crate::internal!("--guest-tools {} lacks {}", c.o.guest_tools.display(), missing.join(", ")));
         }
         Ok(())
     }
@@ -254,82 +245,24 @@ impl Board for N42Board {
         self.vols = Some(vols);
         Ok(())
     }
+    /// The restore boot: the IPSW's own restore ramdisk with it_initialize as its restored_external writes the
+    /// A6DI stream through the guest's disk driver, formats Data, makes the system keybag, seeds Data and the
+    /// MobileGestalt cache, and halts (A6RESTORE DONE). Then kboot.bin stays for the normal boot.
     fn store(&mut self, c: &mut Context) -> Result<()> {
         let staged = self.stage_store(c)?;
-        let ident = self.ident()?;
-        let imei = ident.get("imei").map(str::to_string);
         let mut options = self.machine_options();
-        options.remove("imei");
-        // The initializer reads the A6DI stream through the machine's restore-image service (QC 0x500).
+        let imei = options.remove("imei");
         options.insert("restore-image".to_string(), staged.stream.to_string_lossy().into_owned());
         let serial = c.work.join("restore.log");
-        let hardware = self.helper_hardware.clone().ok_or_else(|| create::filled("the board's hardware"))?;
-        let d = machine::IPad {
-            boot: machine::IPadBoot::Kernel {
-                image: staged.kboot_restore.to_string_lossy().into_owned(),
-                writable_nor: None,
-            },
-            nand: c.nand.to_string_lossy().into_owned(),
-            overlay: None,
-            die_id: None,
-            wifi: false,
-            machine_options: options,
-        };
-        let config = prep_config(machine::iphone5_net(
-            &d,
-            &hardware,
-            &format!("file:{}", serial.display()),
-            &["-audio".into(), "driver=none".into()],
-            None,
-            &[],
-            imei.as_deref(),
-            false,
-        ));
-        if let Some(dir) = serial.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        // The restore boot is the one stage that runs two guest CPUs against a software TCG host; xnu's
-        // hw_lock_bit timeout can fire before launchd even with cpus=1, and the failure is a panic in the
-        // serial, not a wrong image. A panic before the initializer has started has written nothing, so
-        // the same factory NAND can be booted again; a run that reached A6RESTORE is never repeated.
-        let mut attempt = 0;
-        let (r, text) = loop {
-            attempt += 1;
-            let (r, text) = oneshot::run(
-                &c.o.helper,
-                &config.argv,
-                &serial,
-                None,
-                None,
-                RESTORE_TIMEOUT,
-                &|l| c.log(l),
-                None,
-            )?;
-            let panicked_early = text.contains("panic(") && !text.contains(a6_restore::RESTORE_START);
-            if panicked_early && attempt == 1 {
-                c.log("restore boot: the guest panicked before the initializer ran; booting it once more");
-                continue;
-            }
-            break (r, text);
-        };
-        for line in text.lines().filter(|l| {
-            l.contains("A6RESTORE") || l.contains("A6NATIVE") || l.contains("it_keybag:")
-        }) {
+        let config = self.one_shot_config(&staged.kboot_restore, &c.nand, options, imei.as_deref(), &serial)?;
+        let (r, text) =
+            oneshot::run(&c.o.helper, &config.argv, &serial, None, None, RESTORE_TIMEOUT, &|l| c.log(l), None)?;
+        for line in
+            text.lines().filter(|l| l.contains("A6RESTORE") || l.contains("A6NATIVE") || l.contains("it_keybag:"))
+        {
             c.log(line);
         }
         if !(r.exited && text.contains(a6_restore::RESTORE_DONE) && text.contains(a6_restore::KEYBAG_DONE)) {
-            // The serial is the only place a guest-side refusal is explained; keep its tail in the log the
-            // app shows, so a failed preparation on a phone says why instead of just "halted".
-            let tail: Vec<&str> = text
-                .lines()
-                .map(str::trim_end)
-                .filter(|l| !l.is_empty() && !l.contains("ApplePMGRTempSensor"))
-                .rev()
-                .take(12)
-                .collect();
-            for line in tail.into_iter().rev() {
-                c.log(&format!("restore serial: {line}"));
-            }
             let why = text
                 .lines()
                 .find_map(|line| {
@@ -339,91 +272,12 @@ impl Board for N42Board {
                 })
                 .unwrap_or_else(|| {
                     if r.exited {
-                        let how = if r.exit_code < 0 {
-                            format!("killed by signal {} after {:.0} s", -r.exit_code, r.seconds)
-                        } else {
-                            format!("exit {} after {:.0} s", r.exit_code, r.seconds)
-                        };
-                        format!("halted without the keybag ({how})")
+                        format!("halted without the keybag (exit {})", r.exit_code)
                     } else {
                         format!("no halt after {} s", r.seconds as i64)
                     }
                 });
-            // The app shows this message and nothing else of the guest's own output, so the reason a
-            // guest halted (a panic, a refusal, a missing device) has to travel inside it.
-            let tail: Vec<&str> = text
-                .lines()
-                .map(str::trim_end)
-                .filter(|l| !l.is_empty() && !l.contains("ApplePMGRTempSensor"))
-                .rev()
-                .take(4)
-                .collect();
-            // The engine's own last words are worth more than the guest's when it is the engine that died.
-            let engine = std::fs::read_to_string(serial.with_file_name("restore.log.engine.log")).unwrap_or_default();
-            // A crash report ("qemu: fatal signal ...") is worth every line it prints: signal, pc, lr
-            // and the backtrace. Otherwise the last couple of lines say what the engine was doing.
-            let all: Vec<&str> = engine.lines().collect();
-            let crash_at = all.iter().rposition(|l| l.contains("qemu: fatal signal"));
-            let engine_tail: Vec<String> = match crash_at {
-                Some(at) => all[at..].iter().filter(|l| !l.trim().is_empty()).take(26).map(|l| (*l).to_string()).collect(),
-                None => engine
-                    .lines()
-                    .map(str::trim_end)
-                    .filter(|l| !l.is_empty())
-                    .rev()
-                    .take(2)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect(),
-            };
-            let guest = tail.into_iter().rev().collect::<Vec<_>>().join(" | ");
-            let detail = if engine_tail.is_empty() {
-                guest
-            } else {
-                let mut lines: Vec<String> = engine_tail;
-                if crash_at.is_none() {
-                    lines.reverse();
-                }
-                format!("{guest} ‖ engine: {}", lines.join(" | "))
-            };
-            let detail: String = detail.chars().take(600).collect();
-            let message = if detail.is_empty() {
-                // Nothing in the serial at all: the engine never got the guest to its first print, and its
-                // stderr says why (an unknown option, a name it could not open, a machine it refused).
-                let engine = std::fs::read_to_string(serial.with_file_name("restore.log.engine.log"))
-                    .unwrap_or_default();
-                let engine_tail: Vec<String> = engine
-                    .lines()
-                    .map(str::trim_end)
-                    .filter(|l| !l.is_empty())
-                    .rev()
-                    .take(3)
-                    .map(str::to_string)
-                    .collect();
-                if engine_tail.is_empty() {
-                    // Not even the engine said anything: name the machine line it was given, which is the
-                    // one thing that differs between a host that works and a phone that does not.
-                    let machine = config
-                        .argv
-                        .iter()
-                        .position(|a| a == "-M")
-                        .and_then(|i| config.argv.get(i + 1))
-                        .cloned()
-                        .unwrap_or_default();
-                    let machine: String = machine.chars().take(220).collect();
-                    format!("restore boot: {why} (no guest or engine output; -M {machine})")
-                } else {
-                    format!(
-                        "restore boot: {why} (no guest output; engine: {})",
-                        engine_tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
-                    )
-                }
-            } else {
-                format!("restore boot: {why} — {detail}")
-            };
-            return Err(Error::new(Code::OneshotFailed, message));
+            return Err(Error::new(Code::OneshotFailed, format!("restore boot: {why}")));
         }
         for n in [a6_restore::STREAM, a6_restore::RESTORE_RAMDISK, a6_restore::KBOOT_RESTORE] {
             let _ = std::fs::remove_file(c.work.join(n));
@@ -431,44 +285,22 @@ impl Board for N42Board {
         Ok(())
     }
 
+    /// The first normal boot (the other boards' seal boot): kboot.bin on the restored store until SpringBoard is
+    /// up, then the guest's own shutdown, so the store keeps iOS's minutes-long data migration done and a clean
+    /// FTL, and a new device's first Start fits the app's boot budget. Fails unless the guest halted by itself.
     fn seal(&mut self, c: &mut Context) -> Result<()> {
-        let ident = self.ident()?;
-        let imei = ident.get("imei").map(str::to_string);
         let mut options = self.machine_options();
-        options.remove("imei");
+        let imei = options.remove("imei");
         let serial = c.work.join("seal.log");
-        let hardware = self.helper_hardware.clone().ok_or_else(|| create::filled("the board's hardware"))?;
-        let d = machine::IPad {
-            boot: machine::IPadBoot::Kernel {
-                image: c.file("kboot.bin").to_string_lossy().into_owned(),
-                writable_nor: None,
-            },
-            nand: c.nand.to_string_lossy().into_owned(),
-            overlay: None,
-            die_id: None,
-            wifi: false,
-            machine_options: options,
-        };
-        let config = prep_config(machine::iphone5_net(
-            &d,
-            &hardware,
-            &format!("file:{}", serial.display()),
-            &["-audio".into(), "driver=none".into()],
-            None,
-            &[],
-            imei.as_deref(),
-            false,
-        ));
-        let (r, text) = oneshot::run_wait(
+        let config = self.one_shot_config(&c.file("kboot.bin"), &c.nand, options, imei.as_deref(), &serial)?;
+        let (r, text) = oneshot::run_powerdown(
             &c.o.helper,
             &config.argv,
             &serial,
-            Some(FIRST_BOOT_DONE),
-            None,
+            FIRST_BOOT_DONE,
+            FIRST_BOOT_POWERDOWN_DELAY,
             FIRST_BOOT_TIMEOUT,
-            Duration::from_secs(30),
             &|l| c.log(l),
-            None,
         )?;
         if !(r.exited && text.contains(FIRST_BOOT_DONE)) {
             return Err(Error::new(
@@ -533,6 +365,11 @@ mod tests {
     #[test]
     fn release_noon_14g61() {
         assert_eq!(release_noon("2019-07-22"), Some(1_563_796_800));
+    }
+    #[test]
+    fn a6_boot_args_extend_kboots() {
+        assert_eq!(A6_BOOT_ARGS, format!("{} amfi_get_out_of_my_way=1", crate::kboot::DEFAULT_BOOT_ARGS));
+        assert_eq!(BOOT_ARGS, format!("{A6_BOOT_ARGS} rd=disk0s1"));
     }
     #[test]
     fn boot_args_are_the_swift_ones() {

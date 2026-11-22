@@ -17,9 +17,9 @@ use crate::identity::UnitIdentity;
 use crate::posio;
 use crate::{files, kboot};
 use plist::Value;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const RESTORE_START: &str = "A6RESTORE START";
@@ -76,7 +76,16 @@ fn allocation(path: &Path, bytes: u64) -> Result<Allocation> {
     }
     let be32 = |o: usize| u32::from_be_bytes([header[o], header[o + 1], header[o + 2], header[o + 3]]) as u64;
     let be64 = |o: usize| {
-        u64::from_be_bytes([header[o], header[o + 1], header[o + 2], header[o + 3], header[o + 4], header[o + 5], header[o + 6], header[o + 7]])
+        u64::from_be_bytes([
+            header[o],
+            header[o + 1],
+            header[o + 2],
+            header[o + 3],
+            header[o + 4],
+            header[o + 5],
+            header[o + 6],
+            header[o + 7],
+        ])
     };
     let block_size = be32(40);
     let blocks = be32(44);
@@ -112,12 +121,7 @@ fn allocation(path: &Path, bytes: u64) -> Result<Allocation> {
 
 /// `A6DI` v1 initial stream: header, 4096-byte MBR, then records of allocated blocks. Every record
 /// is offset + length + CRC-32 + bytes; records are at most 64 KiB.
-pub fn write_initial(
-    system: &Path,
-    data: &Path,
-    output: &Path,
-    layout: &A6StorageLayout,
-) -> Result<()> {
+pub fn write_initial(system: &Path, data: &Path, output: &Path, layout: &A6StorageLayout) -> Result<()> {
     if output.exists() {
         return Err(invalid("output already exists"));
     }
@@ -176,7 +180,11 @@ pub fn write_initial(
         let file = File::open(path)?;
         for (offset, len) in list {
             let bytes = &mut buf[..*len];
-            posio::read_exact_at(&file, bytes, offset - if *offset >= layout.data_offset { layout.data_offset } else { layout.system_offset })?;
+            posio::read_exact_at(
+                &file,
+                bytes,
+                offset - if *offset >= layout.data_offset { layout.data_offset } else { layout.system_offset },
+            )?;
             let mut record = Vec::with_capacity(16 + len);
             append_u64(&mut record, *offset);
             append_u32(&mut record, *len as u32);
@@ -209,7 +217,10 @@ pub fn validate_restore_cache(plan: &[u8], original_library: &[u8], helper: &[u8
         .and_then(Value::into_dictionary)
         .ok_or_else(|| invalid("unqualified build or invalid plan"))?;
     let build = p.get("Build").and_then(Value::as_string).unwrap_or("");
-    let overrides = p.get("Overrides").and_then(Value::as_dictionary).ok_or_else(|| invalid("unqualified build or invalid plan"))?;
+    let overrides = p
+        .get("Overrides")
+        .and_then(Value::as_dictionary)
+        .ok_or_else(|| invalid("unqualified build or invalid plan"))?;
     if !["12A365", "13A344", "14G61"].contains(&build)
         || overrides.is_empty()
         || overrides.len() > 32
@@ -248,7 +259,9 @@ pub fn validate_restore_cache(plan: &[u8], original_library: &[u8], helper: &[u8
 fn allows_private_mapping(helper: &[u8]) -> bool {
     let Some(images) = codesign::images(helper) else { return false };
     let Some(image) = images.iter().find(|i| i.cputype == 12 && !i.is_64bit) else { return false };
-    let Some((off, size)) = codesign::code_signature(&helper[image.base..image.base + image.size]) else { return false };
+    let Some((off, size)) = codesign::code_signature(&helper[image.base..image.base + image.size]) else {
+        return false;
+    };
     let (start, size) = (image.base + off, size);
     if size < 12 || start > helper.len() - size || be32(helper, start) != 0xfade0cc0 {
         return false;
@@ -391,7 +404,8 @@ pub fn write_bundle(i: &BundleInputs<'_>, now: i64, log: &dyn Fn(&str)) -> Resul
     owners.entry((0, 0)).or_default().push("usr/local/bin/restored_external".into());
     stage_seed(i.data_seed, Some(i.seed_base_system), &mut w, &mut owners)?;
     if let Some(plan_path) = i.activation_plan {
-        let worker = i.mobile_gestalt.ok_or_else(|| crate::internal!("An activation plan needs the MobileGestalt worker"))?;
+        let worker =
+            i.mobile_gestalt.ok_or_else(|| crate::internal!("An activation plan needs the MobileGestalt worker"))?;
         let plan = std::fs::read(plan_path)?;
         let worker_data = std::fs::read(worker)?;
         let library = source.contents(&source.record("usr/lib/libMobileGestalt.dylib")?)?;
@@ -415,16 +429,20 @@ pub fn write_bundle(i: &BundleInputs<'_>, now: i64, log: &dyn Fn(&str)) -> Resul
     let assets = a6_assets::prepare(&original_kernel, i.guest_assets_system, Some(&rd))?;
     let mut restore_kernel = assets.kernel.clone();
     if i.factory_format {
-        let version = plist::Value::from_reader(Cursor::new(source.contents(
-            &source.record("System/Library/CoreServices/SystemVersion.plist")?,
-        )?))
+        let version = plist::Value::from_reader(Cursor::new(
+            source.contents(&source.record("System/Library/CoreServices/SystemVersion.plist")?)?,
+        ))
         .ok()
         .and_then(Value::into_dictionary)
         .and_then(|d| d.get("ProductBuildVersion").and_then(Value::as_string).map(str::to_string))
         .ok_or_else(|| crate::unsupported!("Native restore build identity missing"))?;
         restore_kernel = restore_kernel_patch(&restore_kernel, &version)?;
     }
-    let args = format!("{} -v nand-enable-reformat=1", crate::n42_recipe::PREPARATION_BOOT_ARGS);
+    let args = format!(
+        "{} -v{}",
+        crate::n42_recipe::A6_BOOT_ARGS,
+        if i.factory_format { " nand-enable-reformat=1" } else { "" }
+    );
     let kboot_restore = i.work.join(KBOOT_RESTORE);
     kboot::write_rooted(dec, &kboot_restore, i.identity, &args, Some(&rd), Some(&restore_kernel), None)?;
     log(&format!("restore bundle: {} and {}", rd.display(), kboot_restore.display()));
@@ -492,12 +510,7 @@ fn stage_seed(
 
 /// Stage the A6DI stream and return the restore boot inputs. N42Board::store calls this and stops:
 /// the parent boots `staged.kboot_restore` on `nand/`, then resumes with kboot.bin + seal.
-pub fn stage(
-    system: &Path,
-    data: &Path,
-    work: &Path,
-    layout: &A6StorageLayout,
-) -> Result<PathBuf> {
+pub fn stage(system: &Path, data: &Path, work: &Path, layout: &A6StorageLayout) -> Result<PathBuf> {
     let stream = work.join(STREAM);
     write_initial(system, data, &stream, layout)?;
     Ok(stream)
