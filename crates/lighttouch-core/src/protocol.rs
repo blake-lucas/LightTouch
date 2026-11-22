@@ -1,5 +1,6 @@
 //! The worker protocol: one JSON object per line. Commands go to the worker's stdin, events come from its stdout,
 //! and its stderr is the session log. Frames travel separately through shared memory (`frames`).
+use crate::carrier::{ModemAction, ModemStatus};
 use crate::network::NetworkConfig;
 use crate::runtime::{BoardInfo, Contact, State, StorageCounters};
 use serde::{Deserialize, Serialize};
@@ -104,6 +105,12 @@ pub enum Command {
     Network {
         config: NetworkConfig,
     },
+    /// The device's carrier settings changed (saved already): write what changed to the modem.
+    ReloadCarrier,
+    /// A network-side event for the modem: a call, the other end answering or hanging up, a text.
+    Modem {
+        action: ModemAction,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +159,10 @@ pub enum Event {
     },
     /// The session's networking, sent when it changes.
     Network(NetworkStatus),
+    /// The modem's state (devices with one), sent when it changes.
+    Modem {
+        status: ModemStatus,
+    },
     /// The worker is about to exit. `clean` means iOS confirmed shutdown and the state is clean.
     Exit {
         clean: bool,

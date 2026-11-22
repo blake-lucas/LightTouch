@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include "Carrier.hpp"
 #include <algorithm>
 #include <array>
 #include <fcntl.h>
@@ -1866,6 +1867,11 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         // The SIM keeps its PIN, PUK and tries left with the device's own state, as a card in the tray does.
         if (route.modem)
             d->args.insert(d->args.end(), {"-global", "ios-baseband.sim-file=" + (d->state / "sim").string()});
+        // The fake network the device was set up with (Carrier.hpp): saved with its record, the defaults otherwise.
+        if (lt::carrier::board_has_modem(board)) {
+            const auto globals = lt::carrier::globals(lt::carrier::load(d->carrier));
+            d->args.insert(d->args.end(), globals.begin(), globals.end());
+        }
         d->args.insert(d->args.end(),
                        {"-display", "none", "-no-shutdown", "-audio", "driver=none", "-serial",
                         c->serial_path && *c->serial_path ? std::string("file:") + c->serial_path : "null"});

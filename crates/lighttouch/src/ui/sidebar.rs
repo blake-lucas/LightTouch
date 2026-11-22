@@ -104,8 +104,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {
-                    let settings_open =
-                        matches!(app.page, Page::Settings | Page::Licenses | Page::Network | Page::IpadSize);
+                    let settings_open = matches!(
+                        app.page,
+                        Page::Settings | Page::Licenses | Page::Network | Page::Carrier | Page::IpadSize
+                    );
                     if nav_button(ui, &p, icons::GEAR, "Settings", settings_open).clicked() {
                         app.page = if settings_open { Page::Device } else { Page::Settings };
                     }

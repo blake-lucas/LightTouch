@@ -71,6 +71,9 @@ void clean_device(lt_device *, bool);
 } // namespace lt
 struct lt_device {
     std::filesystem::path base, state;
+    // Opened from a library record: its board, and its carrier settings (Carrier.hpp), read at every boot.
+    std::string board;
+    std::filesystem::path carrier;
     int lease = -1;
     lt::Json lock;
     std::atomic<bool> dirty{false}, active{false};
