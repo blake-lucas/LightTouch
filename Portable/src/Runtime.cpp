@@ -328,6 +328,10 @@ struct lt_runtime {
     lt::carrier::Settings carrier_applied;
     bool carrier_pending = false;
     uint64_t modem_writes = 0, modem_reflected = 0, modem_asked = 0;
+    // The engine keeps one refresh queued at most, so a snapshot taken before a write can still come back after the
+    // next call: one identical to the last snapshot before the write counts as not reflecting it, for a while.
+    std::string modem_last_raw, modem_before_write;
+    uint64_t modem_write_ns = 0;
     std::string fault;
     explicit lt_runtime(lt_device *d) : device(d) {}
     ~lt_runtime() {
@@ -602,6 +606,8 @@ static void apply_carrier(lt_runtime *r) {
         require(r->engine->modem_set(want[i].first.c_str(), want[i].second.c_str()),
                 "the modem did not take " + want[i].first, LT_ENGINE);
         r->modem_writes++;
+        r->modem_before_write = r->modem_last_raw;
+        r->modem_write_ns = now_ns();
     }
     r->carrier_applied = target;
     r->carrier_pending = false;
@@ -1040,6 +1046,8 @@ lt_status lt_runtime_modem(lt_runtime *r, const char *action, const char *value,
         lt::require(r->engine->modem_set(name.c_str(), name == "remote-answer" || name == "remote-hangup" ? "1" : v.c_str()),
                     "the modem is not available", LT_AGAIN);
         r->modem_writes++;
+        r->modem_before_write = r->modem_last_raw;
+        r->modem_write_ns = lt::now_ns();
     });
 }
 lt_status lt_runtime_modem_status(lt_runtime *r, char *out, uint32_t capacity, lt_error *e) {
@@ -1058,9 +1066,11 @@ lt_status lt_runtime_modem_status(lt_runtime *r, char *out, uint32_t capacity, l
         lt::require(raw, "no modem state yet", LT_AGAIN);
         std::string json(raw);
         r->engine->modem_free(raw);
+        r->modem_last_raw = json;
+        const bool unchanged = json == r->modem_before_write && lt::now_ns() - r->modem_write_ns < 2000000000ull;
         lt::Json status = lt::parse(json);
         lt::require(status.kind == lt::Json::Object, "invalid modem status");
-        if (r->modem_reflected < r->modem_writes) {
+        if (r->modem_reflected < r->modem_writes || unchanged) {
             // Its error, if any, is an older write's.
             status.object.erase("error");
             lt::Json pending;
