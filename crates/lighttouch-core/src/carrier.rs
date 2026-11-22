@@ -179,6 +179,15 @@ impl ModemStatus {
     }
 }
 
+/// The modem's refusal in words for people: the engine's own sentences name AT-level conditions.
+pub fn refusal_text(error: &str) -> String {
+    if error.starts_with("the modem is not in a state") {
+        "The device isn't on the network yet: iOS may still be starting, or Registered or SIM card is off".into()
+    } else {
+        error.to_string()
+    }
+}
+
 /// A network-side event for the running modem (`lt_runtime_modem`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]

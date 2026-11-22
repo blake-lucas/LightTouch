@@ -849,8 +849,15 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
         out->frames = r->frame_count;
         if (out->state == LT_RUNNING || out->state == LT_PAUSED) {
             std::lock_guard<std::mutex> carrier(r->carrier_mutex);
-            if (r->carrier_pending)
-                lt::apply_carrier(r);
+            // A saved change that waited for the engine. Its failure is the modem's to report, not the session's:
+            // the status poll goes on, and the next save tries again.
+            if (r->carrier_pending) {
+                try {
+                    lt::apply_carrier(r);
+                } catch (const std::exception &) {
+                    r->carrier_pending = false;
+                }
+            }
         }
         std::lock_guard<std::mutex> lock(r->mutex);
         if (!r->fault.empty())

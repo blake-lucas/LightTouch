@@ -149,7 +149,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val devices: List<DeviceSummary> get() { catalogVersion; return records.map { DeviceSummary.of(it, firmwareTargets) } }
     override val selected: DeviceSummary? get() = devices.firstOrNull { it.selected }
     override val settings by lazy { AppSettings(this) }
-    override val carrier by lazy { CarrierController({ engine }, handler) }
+    // Refusals show as a notice: the status poll replaces the error banner while the device runs.
+    override val carrier by lazy { CarrierController({ engine }, handler) { notice = it } }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
     override val storeInstalling get() = store.committed

@@ -151,9 +151,42 @@ pub fn take_status(
     if !status.pending {
         if let Some(refusal) = status.error.clone() {
             if modem.as_ref().is_none_or(|old| old.error.as_ref() != Some(&refusal) || old.pending) {
-                *error = Some(refusal);
+                *error = Some(carrier::refusal_text(&refusal));
             }
         }
     }
     *modem = Some(status);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(error: Option<&str>, pending: bool, sent: (&str, u64)) -> ModemStatus {
+        ModemStatus {
+            error: error.map(str::to_string),
+            pending,
+            last_mo_sms: sent.0.into(),
+            mo_sms_count: sent.1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn refusals_show_once_and_sent_texts_are_kept() {
+        let (mut modem, mut error, mut sent) = (None, None, Vec::new());
+        take_status(&mut modem, &mut error, &mut sent, status(None, false, ("|", 0)));
+        // A write's snapshot that doesn't reflect it yet carries no verdict.
+        take_status(&mut modem, &mut error, &mut sent, status(None, true, ("|", 0)));
+        assert_eq!(error, None);
+        let refusal = "the modem is not in a state to ring (registered, radio on, channel open?)";
+        take_status(&mut modem, &mut error, &mut sent, status(Some(refusal), false, ("|", 0)));
+        assert!(error.as_deref().is_some_and(|e| e.starts_with("The device isn't on the network yet")));
+        // The same refusal reported again (the engine keeps it until the next write) doesn't come back once cleared.
+        error = None;
+        take_status(&mut modem, &mut error, &mut sent, status(Some(refusal), false, ("|", 0)));
+        assert_eq!(error, None);
+        take_status(&mut modem, &mut error, &mut sent, status(None, false, ("5551234|hi", 1)));
+        assert_eq!(sent, vec![("5551234".to_string(), "hi".to_string())]);
+    }
 }

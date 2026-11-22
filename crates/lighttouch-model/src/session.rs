@@ -321,12 +321,20 @@ impl Session {
                     self.timeline.published(sequence, published_ns);
                 }
             }
+            // The modem's refusals show in the header too, wherever the call or text was asked for.
             Event::Error { command, message } if command == "modem" || command == "reload_carrier" => {
+                self.last_error = Some(format!("Carrier: {message}"));
                 self.modem_error = Some(message)
             }
             Event::Error { command, message } => self.last_error = Some(format!("{command}: {message}")),
             Event::Modem { status } => {
-                crate::carrier::take_status(&mut self.modem, &mut self.modem_error, &mut self.sent_texts, status)
+                let before = self.modem_error.clone();
+                crate::carrier::take_status(&mut self.modem, &mut self.modem_error, &mut self.sent_texts, status);
+                if self.modem_error != before {
+                    if let Some(refusal) = &self.modem_error {
+                        self.last_error = Some(format!("Carrier: {refusal}"));
+                    }
+                }
             }
             Event::InputRejected { message } => self.last_error = Some(message),
             Event::GuestResult { state, status, output, .. } if self.frontmost_asked.is_some() => {

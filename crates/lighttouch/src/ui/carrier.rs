@@ -62,10 +62,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let gps = device.board == "n88ap" || status.as_ref().is_some_and(|s| s.gps);
     let mut edited = saved.clone();
     let mut problem: Option<String> = None;
-    let mut open_call = false;
-    let mut open_text = false;
-    let mut answer = false;
-    let mut hang_up = false;
     egui::ScrollArea::vertical().id_salt("carrier-page").auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(18.0);
         let width = (ui.available_width() - 48.0).clamp(200.0, 640.0);
@@ -231,10 +227,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 );
             });
 
-            widgets::section(ui, &p, "Calls and texts");
+            // The calls and texts themselves are the dock button's (one control per action): this shows how they stand.
+            widgets::section(ui, &p, "This session");
             widgets::card(ui, &p, |ui| {
                 if !live {
-                    ui.label(widgets::muted(&p, "Start the device to call it or send it a text."));
+                    ui.label(widgets::muted(&p, "Start the device to see its calls and texts here."));
                     return;
                 }
                 let call = status.as_ref().map_or("No call", |s| s.call_label());
@@ -243,31 +240,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     .filter(|s| s.in_call() && !s.last_dialed.is_empty() && s.can_answer())
                     .map(|s| format!("{call}: {}", s.last_dialed))
                     .unwrap_or_else(|| call.to_string());
-                widgets::setting_row(ui, &p, icons::PHONE_INCOMING, "Call", &detail, |ui| {
-                    let in_call = status.as_ref().is_some_and(|s| s.in_call());
-                    if in_call && widgets::tonal(ui, &p, "Hang up").on_hover_text("The other end ends the call").clicked()
-                    {
-                        hang_up = true;
-                    }
-                    if status.as_ref().is_some_and(|s| s.can_answer())
-                        && widgets::tonal(ui, &p, "Answer")
-                            .on_hover_text("The other end picks up the call the device is making")
-                            .clicked()
-                    {
-                        answer = true;
-                    }
-                    if !in_call && widgets::tonal_enabled(ui, &p, "Call…", saved.registered && saved.sim_present).clicked()
-                    {
-                        open_call = true;
-                    }
-                });
-                widgets::setting_row(ui, &p, icons::CHAT_TEXT, "Text", "A text message arrives in Messages", |ui| {
-                    if widgets::tonal_enabled(ui, &p, "Send text…", saved.registered && saved.sim_present).clicked() {
-                        open_text = true;
-                    }
-                });
-                if !sent.is_empty() {
-                    ui.add_space(6.0);
+                let how = if saved.dock_button {
+                    "The dock's Carrier button calls the device, sends it texts, answers and hangs up"
+                } else {
+                    "Turn on Show Carrier button to call and text the device from the dock"
+                };
+                widgets::setting_row(ui, &p, icons::PHONE_INCOMING, &detail, how, |_| {});
+                if sent.is_empty() {
+                    ui.label(widgets::muted(&p, "Texts the device sends appear here.").size(12.5));
+                } else {
                     ui.label(widgets::muted(&p, "Texts the device sent").size(12.5));
                     for (number, text) in sent.iter().rev().take(5) {
                         ui.horizontal_wrapped(|ui| {
@@ -292,10 +273,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     if let Some(problem) = problem {
         app.model.error = Some(problem);
     }
-    act(app, open_call, open_text, answer, hang_up);
 }
 
-/// The controls' actions, shared by the page, the dock's menu and full screen's.
+/// The menu's actions (the dock's and full screen's).
 fn act(app: &mut App, open_call: bool, open_text: bool, answer: bool, hang_up: bool) {
     let saved = app.model.carrier_settings().unwrap_or_default();
     if open_call {

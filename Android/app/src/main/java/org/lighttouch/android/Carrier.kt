@@ -78,6 +78,10 @@ data class ModemStatus(
     }
 }
 
+/** The modem's refusal in words for people: the engine's own sentences name AT-level conditions. */
+internal fun refusalText(error: String) = if (error.startsWith("the modem is not in a state"))
+    "The device isn't on the network yet: iOS may still be starting, or Registered or SIM card is off" else error
+
 /** The modem's rules (Portable Carrier.hpp), for hints while typing; the core checks again when saving or sending. */
 internal object CarrierRules {
     fun numberOk(s: String): Boolean { val d = s.removePrefix("+"); return d.length in 1..20 && d.all { it in '0'..'9' } }
@@ -99,7 +103,7 @@ internal object CarrierRules {
 }
 
 /** The carrier controls' state for the current device, held by the activity. Engine calls run on a background thread. */
-class CarrierController(private val engine: () -> IEngine?, private val handler: Handler) {
+class CarrierController(private val engine: () -> IEngine?, private val handler: Handler, private val onError: (String) -> Unit) {
     var deviceId by mutableStateOf(""); private set
     var settings by mutableStateOf<CarrierSettings?>(null); private set
     var status by mutableStateOf<ModemStatus?>(null); private set
@@ -112,7 +116,7 @@ class CarrierController(private val engine: () -> IEngine?, private val handler:
         val worker = engine() ?: return
         Thread({
             val result = try { work(worker) } catch (e: RemoteException) { e.message ?: "Worker unavailable" }
-            handler.post { if (result.isNotEmpty()) message = result }
+            handler.post { if (result.isNotEmpty()) { message = result; onError("Carrier: $result") } }
         }, name).start()
     }
 
@@ -137,7 +141,7 @@ class CarrierController(private val engine: () -> IEngine?, private val handler:
         val worker = engine() ?: return
         Thread({
             val result = try { worker.setCarrier(id, next.toBundle()) } catch (e: RemoteException) { e.message ?: "Worker unavailable" }
-            handler.post { if (result.isNotEmpty() && deviceId == id) { message = result; if (settings == next) settings = previous } }
+            handler.post { if (result.isNotEmpty() && deviceId == id) { message = result; onError("Carrier: $result"); if (settings == next) settings = previous } }
         }, "carrier-save").start()
     }
 
@@ -164,7 +168,9 @@ class CarrierController(private val engine: () -> IEngine?, private val handler:
         handler.post {
             val old = status
             if (next != null && old != null && next.moSmsCount > old.moSmsCount) next.lastSent?.let { sent.add(it); if (sent.size > 20) sent.removeAt(0) }
-            if (next != null && !next.pending && next.error != null && (old?.error != next.error || old.pending)) message = next.error
+            if (next != null && !next.pending && next.error != null && (old?.error != next.error || old.pending)) {
+                message = refusalText(next.error); onError("Carrier: $message")
+            }
             status = next
         }
     }
@@ -172,7 +178,7 @@ class CarrierController(private val engine: () -> IEngine?, private val handler:
 
 private enum class CarrierDialog { CALL, TEXT }
 
-/** Call… and Send text…, asked from the dock's menu, full screen's, or the Carrier page. */
+/** Call… and Send text…, asked from the dock's menu or full screen's. */
 @Composable
 private fun CarrierDialogs(carrier: CarrierController, dialog: CarrierDialog?, onDismiss: () -> Unit) {
     val saved = carrier.settings ?: return
@@ -282,8 +288,6 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
     val carrier = host.carrier
     val device = host.selected
     val saved = carrier.settings
-    var dialog by remember { mutableStateOf<CarrierDialog?>(null) }
-    CarrierDialogs(carrier, dialog) { dialog = null }
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -307,39 +311,32 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
                     SwitchRow(LtIcons.Signal, "Show Carrier button", "A dock button for calling the device, sending it texts and these settings",
                         saved.dockButton, "carrier_dock_toggle") { carrier.save(saved.copy(dockButton = it)) }
                 }
-                SettingsGroup("Calls and texts") {
-                    val live = host.status in listOf("running", "paused")
-                    if (!live) Text("Start the device to call it or send it a text.", style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp))
+                // The calls and texts themselves are the dock button's (one control per action): this shows how they stand.
+                SettingsGroup("This session") {
+                    if (host.status !in listOf("running", "paused")) Text("Start the device to see its calls and texts here.",
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
                     else {
                         val status = carrier.status
-                        val onNetwork = saved.registered && saved.simPresent
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(LtIcons.Call, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(16.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Call", style = MaterialTheme.typography.bodyLarge)
                                 Text(status?.let { if (it.canAnswer && it.lastDialed.isNotEmpty()) "${it.callLabel}: ${it.lastDialed}" else it.callLabel } ?: "No call",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("carrier_page_call_state"))
+                                    style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("carrier_page_call_state"))
+                                Text(if (saved.dockButton) "The dock's Carrier button calls the device, sends it texts, answers and hangs up"
+                                    else "Turn on Show Carrier button to call and text the device from the dock",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (status?.canAnswer == true) FilledTonalButton({ carrier.answer() }, Modifier.padding(start = 6.dp)) { Text("Answer") }
-                            if (status?.inCall == true) FilledTonalButton({ carrier.hangUp() }, Modifier.padding(start = 6.dp)) { Text("Hang up") }
-                            else FilledTonalButton({ dialog = CarrierDialog.CALL }, Modifier.padding(start = 6.dp), enabled = onNetwork) { Text("Call…") }
                         }
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(LtIcons.Sms, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.width(16.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Text", style = MaterialTheme.typography.bodyLarge)
-                                Text("A text message arrives in Messages", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            FilledTonalButton({ dialog = CarrierDialog.TEXT }, enabled = onNetwork) { Text("Send text…") }
-                        }
-                        if (carrier.sent.isNotEmpty()) Column(Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp)) {
-                            Text("Texts the device sent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            for ((number, text) in carrier.sent.takeLast(5).reversed()) {
-                                Text("To $number", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-                                Text(text, style = MaterialTheme.typography.bodyMedium)
+                        Column(Modifier.padding(start = 54.dp, end = 16.dp, bottom = 12.dp)) {
+                            if (carrier.sent.isEmpty()) Text("Texts the device sends appear here.", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else {
+                                Text("Texts the device sent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                for ((number, text) in carrier.sent.takeLast(5).reversed()) {
+                                    Text("To $number", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                                    Text(text, style = MaterialTheme.typography.bodyMedium)
+                                }
                             }
                         }
                     }
