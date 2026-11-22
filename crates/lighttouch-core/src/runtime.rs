@@ -467,6 +467,25 @@ impl Runtime {
         self.call(|r, e| unsafe { sys::lt_runtime_mic_flush(r, e) })
     }
 
+    /// Write the record's saved carrier settings that changed to the modem (after the engine is ready, if it isn't).
+    pub fn reload_carrier(&self) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_reload_carrier(r, e) })
+    }
+
+    /// A network-side event for the modem. Its own refusal shows in a later `modem_status`.
+    pub fn modem(&self, action: &crate::carrier::ModemAction) -> Result<()> {
+        let (name, value) = action.wire();
+        let (name, value) = (cstring(name)?, cstring(&value)?);
+        self.call(|r, e| unsafe { sys::lt_runtime_modem(r, name.as_ptr(), value.as_ptr(), e) })
+    }
+
+    /// The modem's state as of the previous call (each call asks for a fresh one); `LT_AGAIN` before the first.
+    pub fn modem_status(&self) -> Result<String> {
+        let mut buffer = vec![0 as std::ffi::c_char; 8192];
+        self.call(|r, e| unsafe { sys::lt_runtime_modem_status(r, buffer.as_mut_ptr(), buffer.len() as u32, e) })?;
+        Ok(chars(&buffer))
+    }
+
     pub fn profile(&self, path: Option<&Path>) -> Result<()> {
         let path = match path {
             Some(p) => cpath(p)?,

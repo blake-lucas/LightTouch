@@ -1,5 +1,6 @@
 //! The egui frontend. It only draws `lighttouch_model::Model` and calls its methods; behaviour lives in the model so
 //! another toolkit could replace this module.
+mod carrier;
 mod controller;
 mod device_frame;
 mod devshot;
@@ -36,6 +37,8 @@ pub enum Page {
     Licenses,
     /// Settings → Network.
     Network,
+    /// Settings → Carrier, or the dock's Carrier menu (devices with a modem; `App::carrier` holds its fields).
+    Carrier,
     /// Settings → iPad size (its unsaved measure is `App::ipad_size`).
     IpadSize,
     /// The frame inspector (the guest is paused; its state is `App::inspector`).
@@ -68,6 +71,15 @@ pub enum Dialog {
         bundle_id: String,
         name: String,
     },
+    /// Carrier: ring the running device from a number.
+    CarrierCall {
+        number: String,
+    },
+    /// Carrier: a text arrives on the running device.
+    CarrierText {
+        number: String,
+        text: String,
+    },
 }
 
 pub struct App {
@@ -83,6 +95,7 @@ pub struct App {
     pub licenses: licenses::LicenseState,
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
+    pub carrier: carrier::CarrierUi,
     pub ipad_size: ipad_size::IpadSizeState,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
@@ -322,6 +335,7 @@ impl App {
             licenses: licenses::LicenseState::default(),
             inspector: None,
             controller: controller::ControllerUi::default(),
+            carrier: carrier::CarrierUi::default(),
             ipad_size: Default::default(),
             paused_for_hidden: false,
             pulse_release: None,
@@ -679,6 +693,20 @@ impl App {
                         }
                     });
                 }
+                Dialog::CarrierCall { mut number } => {
+                    if carrier::call_dialog(self, ui, &mut number) {
+                        close = true;
+                    } else if matches!(self.dialog, Some(Dialog::CarrierCall { .. })) {
+                        self.dialog = Some(Dialog::CarrierCall { number });
+                    }
+                }
+                Dialog::CarrierText { mut number, mut text } => {
+                    if carrier::text_dialog(self, ui, &mut number, &mut text) {
+                        close = true;
+                    } else if matches!(self.dialog, Some(Dialog::CarrierText { .. })) {
+                        self.dialog = Some(Dialog::CarrierText { number, text });
+                    }
+                }
                 Dialog::RemoveApp { bundle_id, name } => {
                     ui.label(widgets::icon_text(icons::TRASH, 26.0).color(theme::DANGER));
                     ui.add_space(6.0);
@@ -773,6 +801,7 @@ impl eframe::App for App {
                     Page::Settings => settings::show(self, ui),
                     Page::Licenses => licenses::show(self, ui),
                     Page::Network => network::show(self, ui),
+                    Page::Carrier => carrier::show(self, ui),
                     Page::IpadSize => ipad_size::show(self, ui),
                     Page::Inspector => inspector::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),

@@ -69,6 +69,12 @@ pub struct Session {
     pub usb_error: Option<String>,
     /// The session's networking as the worker reports it (`None` until it does, or when this build has none).
     pub network: Option<NetworkStatus>,
+    /// The modem's state (devices with one), as the worker last reported it.
+    pub modem: Option<lighttouch_core::carrier::ModemStatus>,
+    /// What the modem, or the core before it, refused last (cleared by the next call or text).
+    pub modem_error: Option<String>,
+    /// Texts the device sent this session (number, text), oldest first.
+    pub sent_texts: Vec<(String, String)>,
     child: Child,
     stdin: Option<ChildStdin>,
     events: Receiver<Event>,
@@ -214,6 +220,9 @@ impl Session {
             usb_socket: None,
             usb_error: None,
             network: None,
+            modem: None,
+            modem_error: None,
+            sent_texts: Vec::new(),
             child,
             stdin,
             events: rx,
@@ -312,7 +321,13 @@ impl Session {
                     self.timeline.published(sequence, published_ns);
                 }
             }
+            Event::Error { command, message } if command == "modem" || command == "reload_carrier" => {
+                self.modem_error = Some(message)
+            }
             Event::Error { command, message } => self.last_error = Some(format!("{command}: {message}")),
+            Event::Modem { status } => {
+                crate::carrier::take_status(&mut self.modem, &mut self.modem_error, &mut self.sent_texts, status)
+            }
             Event::InputRejected { message } => self.last_error = Some(message),
             Event::GuestResult { state, status, output, .. } if self.frontmost_asked.is_some() => {
                 let lines: Vec<&str> = output.trim_end().lines().collect();
@@ -494,6 +509,21 @@ impl Session {
 
     pub fn set_muted(&mut self, muted: bool) {
         self.send(&Command::Mute { muted });
+    }
+
+    /// The device's carrier settings were saved: the worker writes what changed to the modem.
+    pub fn reload_carrier(&mut self) {
+        if self.phase.active() {
+            self.send(&Command::ReloadCarrier);
+        }
+    }
+
+    /// A call, an answer or hang-up from the other end, or a text, for the modem.
+    pub fn modem(&mut self, action: lighttouch_core::carrier::ModemAction) {
+        if self.phase.active() {
+            self.modem_error = None;
+            self.send(&Command::Modem { action });
+        }
     }
 
     pub fn set_microphone(&mut self, on: bool) {

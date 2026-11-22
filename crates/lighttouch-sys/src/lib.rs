@@ -241,6 +241,18 @@ abi_struct!(lt_mic_info {
     pushed_frames: u64,
     dropped_frames: u64,
 });
+abi_struct!(lt_carrier {
+    carrier: [c_char; 64],
+    mcc_mnc: [c_char; 8],
+    registered: u32,
+    sim_present: u32,
+    bars: u32,
+    latitude: f64,
+    longitude: f64,
+    dock_button: u32,
+    last_caller: [c_char; 32],
+    last_sender: [c_char; 32],
+});
 abi_struct!(lt_guest_request { operation: u32, timeout_ms: u32, argument: *const c_char });
 abi_struct!(lt_guest_result {
     request_id: u64,
@@ -412,6 +424,36 @@ unsafe extern "C" {
     ) -> lt_status;
     pub fn lt_runtime_mic_info(runtime: *mut lt_runtime, info: *mut lt_mic_info, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_mic_flush(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_reload_carrier(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_modem(
+        runtime: *mut lt_runtime,
+        action: *const c_char,
+        value: *const c_char,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_modem_status(
+        runtime: *mut lt_runtime,
+        json: *mut c_char,
+        capacity: u32,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_board_has_modem(board: *const c_char) -> u32;
+    pub fn lt_carrier_defaults(carrier: *mut lt_carrier);
+    pub fn lt_carrier_check(carrier: *const lt_carrier, error: *mut lt_error) -> lt_status;
+    pub fn lt_carrier_number_ok(number: *const c_char) -> u32;
+    pub fn lt_carrier_sms_length(text: *const c_char, limit: *mut u32) -> u32;
+    pub fn lt_library_carrier(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        carrier: *mut lt_carrier,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_library_set_carrier(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        carrier: *const lt_carrier,
+        error: *mut lt_error,
+    ) -> lt_status;
     pub fn lt_runtime_guest_status(runtime: *mut lt_runtime, status: *mut u32, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_guest_request(
         runtime: *mut lt_runtime,
@@ -514,6 +556,7 @@ mod tests {
             size_of::<lt_mic_info>(),
             size_of::<lt_guest_request>(),
             size_of::<lt_guest_result>(),
+            size_of::<lt_carrier>(),
         ];
         let mut c = [0u32; 32];
         let count = unsafe { lt_rust_layout(c.as_mut_ptr(), c.len() as u32) } as usize;

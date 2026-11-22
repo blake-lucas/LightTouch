@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include "Carrier.hpp"
 #include "KernelRepair.hpp"
 #include <algorithm>
 #include <array>
@@ -503,6 +504,46 @@ lt_status lt_library_remove(lt_library *l, const char *id, lt_error *e) {
         lt::remove_record(l, id);
     });
 }
+uint32_t lt_board_has_modem(const char *board) { return board && lt::carrier::board_has_modem(board); }
+void lt_carrier_defaults(lt_carrier *c) {
+    if (c && c->size >= sizeof(*c) && c->version == LT_ABI_VERSION)
+        lt::carrier::to_abi(lt::carrier::Settings{}, c);
+}
+lt_status lt_carrier_check(const lt_carrier *c, lt_error *e) {
+    return lt::guard(e, [&] {
+        const auto problem = lt::carrier::problem(lt::carrier::from_abi(c));
+        lt::require(problem.empty(), problem);
+    });
+}
+uint32_t lt_carrier_number_ok(const char *number) { return number && lt::carrier::number_ok(number); }
+uint32_t lt_carrier_sms_length(const char *text, uint32_t *limit) {
+    uint32_t ignored = 0;
+    return lt::carrier::sms_length(text ? text : "", limit ? limit : &ignored);
+}
+lt_status lt_library_carrier(lt_library *l, const char *id, lt_carrier *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id, "record ID missing");
+        lt::abi(out);
+        lt_record_info info{sizeof(info), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+        lt::describe(l, id, &info);
+        lt::require(lt::carrier::board_has_modem(info.board), "this device has no cellular modem", LT_UNSUPPORTED);
+        lt::carrier::to_abi(lt::carrier::load(l->root / "records" / id / "carrier.json"), out);
+    });
+}
+lt_status lt_library_set_carrier(lt_library *l, const char *id, const lt_carrier *c, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id, "record ID missing");
+        const auto settings = lt::carrier::from_abi(c);
+        const auto problem = lt::carrier::problem(settings);
+        lt::require(problem.empty(), problem);
+        lt_record_info info{sizeof(info), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+        lt::describe(l, id, &info);
+        lt::require(lt::carrier::board_has_modem(info.board), "this device has no cellular modem", LT_UNSUPPORTED);
+        lt::atomic_write(l->root / "records" / id / "carrier.json", lt::carrier::to_json(settings));
+    });
+}
 lt_status lt_library_open(const lt_library_config *c, lt_library **out, lt_error *e) {
     return lt::guard(e, [&] {
         lt::abi(c);
@@ -606,6 +647,8 @@ lt_status lt_library_device_open_observed(lt_library *l, const char *id, uint32_
         lt_device_config cfg{sizeof(cfg), 1, info.base_path, info.state_path, recover};
         auto device = lt::open_device_checked(&cfg, observer, opaque, assets);
         lt::require(device->base_digest == info.base_sha256, "record base integrity pin mismatch");
+        device->board = info.board;
+        device->carrier = l->root / "records" / id / "carrier.json";
         *out = device.release();
     });
 }

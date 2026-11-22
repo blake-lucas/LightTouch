@@ -62,6 +62,34 @@ lt_status lt_library_rename(lt_library *, const char *record_id, const char *dis
 /* Permanently delete a stopped record: base, writable state and assets. LT_BUSY while its device
  * is open. If it was selected, the first remaining record (if any) becomes selected. */
 lt_status lt_library_remove(lt_library *, const char *record_id, lt_error *);
+/* The fake cellular network of a board with a modem (iPhone 3GS, iPhone 4; the original iPhone's has it built in), per
+ * device: saved in its record (carrier.json), applied at every boot as -global ios-baseband.<property>=<value>, and
+ * written to a running modem when it changes (lt_runtime_reload_carrier). Synthetic values; the defaults are the 3GPP
+ * test network (MCC/MNC 001/01). The rules are the modem's own (qemu-ios hw/misc/ios_baseband_core.c). */
+typedef struct {
+    uint32_t size, version;
+    char carrier[64];     /* 1-32 bytes of UTF-8, no control character or '"' */
+    char mcc_mnc[8];      /* MCC (3 digits) + MNC (2 or 3) */
+    uint32_t registered, sim_present;
+    uint32_t bars;        /* signal, 0-5 */
+    double latitude, longitude; /* where a modem with a GPS receiver (the 3GS's) says the phone is, in degrees */
+    uint32_t dock_button; /* the app shows a Carrier button in the session dock */
+    char last_caller[32], last_sender[32]; /* the numbers the app's Call and Send text last used ("" for none) */
+} lt_carrier;
+/* 1 when the board (lt_record_info.board) has a modem: only those devices take carrier settings. */
+uint32_t lt_board_has_modem(const char *board);
+void lt_carrier_defaults(lt_carrier *);
+/* LT_INVALID with a message for the user when the modem would refuse a value. */
+lt_status lt_carrier_check(const lt_carrier *, lt_error *);
+/* A caller or SMS sender: 1-20 digits, optionally after a '+'. */
+uint32_t lt_carrier_number_ok(const char *number);
+/* How much of one SMS a text takes: GSM 7-bit septets of 160 when every character is in that alphabet (escaped ones
+ * count twice), else UTF-16 units of 70. *limit is 0 for text the modem can't send (characters beyond U+FFFF). */
+uint32_t lt_carrier_sms_length(const char *utf8, uint32_t *limit);
+/* The record's saved settings, or the defaults. LT_UNSUPPORTED for a board without a modem. */
+lt_status lt_library_carrier(lt_library *, const char *record_id, lt_carrier *, lt_error *);
+/* Validate (lt_carrier_check) and save. Allowed while the device runs; lt_runtime_reload_carrier applies them. */
+lt_status lt_library_set_carrier(lt_library *, const char *record_id, const lt_carrier *, lt_error *);
 
 /* All paths UTF-8, absolute, private app-owned directories. Destination must not
  * exist. Imports stage beside destination and atomically publish after validation.
@@ -384,6 +412,23 @@ lt_status lt_runtime_mic_info(lt_runtime *, lt_mic_info *, lt_error *);
 /* Drop what was pushed and not yet taken: a recorder that stops does this, so the next recording starts at the
  * microphone and not with the tail of the last one. */
 lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *);
+/* The running modem (devices whose board lt_board_has_modem). LT_UNSUPPORTED without a modem or from engines without
+ * its hooks.
+ * reload_carrier: read the record's saved carrier settings again and write the properties that changed to the modem;
+ * before the engine is ready it waits and applies them at the next lt_runtime_poll that finds it ready.
+ * modem: a network-side event: "incoming-call" (value: the caller), "remote-answer" and "remote-hangup" (the other
+ * end picks up the call the phone is making, or ends any call; value ignored), "incoming-sms" (value "<sender>|<text>")
+ * and "gps-fix" (value "lat,lon[,alt[,speed[,course[,accuracy]]]]", "" for no fix). Values are checked with the
+ * modem's rules first (LT_INVALID). LT_AGAIN before the engine is ready. Queued: the modem's own refusal (no channel
+ * to ring on, not registered) shows as "error" in a later status.
+ * modem_status: the modem's state as a JSON object (carrier, mcc-mnc, registered, sim-present, signal-dbm,
+ * call-state: idle|dialing|alerting|incoming|active|held, emergency-call, last-dialed, last-mo-sms "<number>|<text>",
+ * mo-sms-count, gps, gps-fix, attached, power-offs, and error: the refusal of the last write it reflects). The engine
+ * refreshes it after each call, so poll it; "pending": true while a write since is not reflected yet (its error not
+ * known). LT_AGAIN before the first refresh. */
+lt_status lt_runtime_reload_carrier(lt_runtime *, lt_error *);
+lt_status lt_runtime_modem(lt_runtime *, const char *action, const char *value, lt_error *);
+lt_status lt_runtime_modem_status(lt_runtime *, char *json, uint32_t capacity, lt_error *);
 /* Small typed guest operations use the existing agent, never a host/guest shell.
  * Requests are async, at most one pending; caller polls completion. Lost/timeout
  * mutations are not retried. Launch builtin IDs are limited to com.apple.*;
