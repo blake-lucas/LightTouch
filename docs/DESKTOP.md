@@ -65,6 +65,10 @@ touch 2G prepares and starts from them, the next start reuses them, a second bui
 removes the first's, and a deleted engine DLL is unpacked again. The progress screen was checked on Linux under Xvfb
 (the VM can't open the app's window, v0.0.13's included). Open: stripping symbols would save ~10 MB of the 75 MB.
 
+On Linux the window opens on Wayland when the session has it, else X11; `LIGHTTOUCH_BACKEND=x11` or `wayland` picks one
+(the app log names it). GNOME's Wayland leaves the title bar to the app, which draws an Adwaita-style one (winit's
+`wayland-csd-adwaita`); KDE Plasma, wlroots compositors and X11 window managers draw their own.
+
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
 `~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
 To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_SHOT=file.png` saves the window after
