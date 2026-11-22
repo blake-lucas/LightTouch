@@ -168,6 +168,8 @@ pub fn run() -> eframe::Result {
         // Metal on macOS, where an OpenGL window is held to 60 Hz on ProMotion panels (Cargo.toml); OpenGL elsewhere.
         #[cfg(target_os = "macos")]
         renderer: eframe::Renderer::Wgpu,
+        #[cfg(target_os = "linux")]
+        event_loop_builder: linux_backend(),
         ..Default::default()
     };
     eframe::run_native(
@@ -178,6 +180,16 @@ pub fn run() -> eframe::Result {
                 lighttouch_core::app_log!("window GPU: {gpu}");
                 let _ = GPU.set(gpu);
             }
+            #[cfg(target_os = "linux")]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let backend = match cc.window_handle().map(|h| h.as_raw()) {
+                    Ok(RawWindowHandle::Wayland(_)) => "Wayland",
+                    Ok(RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_)) => "X11",
+                    _ => "unknown",
+                };
+                lighttouch_core::app_log!("window backend: {backend}");
+            }
             theme::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // The Windows single-file build unpacks its resources at a version's first start: show it doing so.
@@ -187,6 +199,26 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(Root::Ready(Box::new(ready_app(&cc.egui_ctx)))))
         }),
     )
+}
+
+/// LIGHTTOUCH_BACKEND=x11 or wayland picks the windowing system on Linux; otherwise winit's choice (Wayland when the
+/// session has it). On GNOME's Wayland the window draws an Adwaita-style title bar of its own; under X11 (XWayland)
+/// the window manager draws its usual one, for those who prefer it.
+#[cfg(target_os = "linux")]
+fn linux_backend() -> Option<eframe::EventLoopBuilderHook> {
+    use winit::platform::{wayland::EventLoopBuilderExtWayland, x11::EventLoopBuilderExtX11};
+    match std::env::var("LIGHTTOUCH_BACKEND").ok()?.to_ascii_lowercase().as_str() {
+        "x11" => Some(Box::new(|builder| {
+            builder.with_x11();
+        })),
+        "wayland" => Some(Box::new(|builder| {
+            builder.with_wayland();
+        })),
+        other => {
+            lighttouch_core::app_log!("LIGHTTOUCH_BACKEND={other} is neither x11 nor wayland; ignored");
+            None
+        }
+    }
 }
 
 fn ready_app(ctx: &egui::Context) -> App {
@@ -341,6 +373,15 @@ impl App {
         if self.applied != Some(key) {
             self.palette = if dark { theme::DARK } else { theme::LIGHT };
             theme::apply(ctx, &self.palette);
+            // The title bar LightTouch draws itself on GNOME's Wayland follows the app's theme too.
+            #[cfg(target_os = "linux")]
+            if self.applied.is_none_or(|(old, _)| old != self.model.settings.theme) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(match self.model.settings.theme {
+                    Theme::Dark => egui::SystemTheme::Dark,
+                    Theme::Light => egui::SystemTheme::Light,
+                    Theme::System => egui::SystemTheme::SystemDefault,
+                }));
+            }
             self.applied = Some(key);
         }
     }
