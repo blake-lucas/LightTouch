@@ -95,7 +95,43 @@ tasks.named("preBuild").configure { dependsOn(prepareNetworkNotices) }
 // bakes the helpers beside them into each system it prepares.
 providers.gradleProperty("guestToolsDir").orNull?.let { input ->
     val packs = file(input)
-    require(listOf("armv6.itpack", "armv7.itpack", "it_seal", "ittrust", "itproxy").all { packs.resolve(it).isFile }) { "guestToolsDir must hold the guest packages and network helpers (scripts/build.sh firmware-tools)" }
+    // The whole set scripts/build.sh firmware-tools exports (serial 46): firmwarekit reads these by name while it
+    // prepares a device, so a partial set made an APK that installed and then failed preparing (Un1box 4f6eba2c).
+    val guestToolFiles = listOf(
+        "OpenGLES",
+        "OpenGLES-1x",
+        "appsync-launch",
+        "armv6.itpack",
+        "armv7.itpack",
+        "com.qemu.it-agent.plist",
+        "com.qemu.it-gltest.plist",
+        "com.qemu.it-pbd.plist",
+        "com.qemu.it-prefs.plist",
+        "com.qemu.it-seal.plist",
+        "gles-names.h",
+        "it_agent",
+        "it_gltest",
+        "it_keybag",
+        "it_keybag-armv6",
+        "it_msmquiet-legacy.dylib",
+        "it_msmquiet.dylib",
+        "it_pbd",
+        "it_pbd-legacy",
+        "it_prefs",
+        "it_prefs-legacy",
+        "it_seal",
+        "it_seal-legacy",
+        "it_typein.dylib",
+        "itproxy",
+        "ittrust",
+        "libappsync-legacy.dylib",
+        "libappsync.dylib",
+        "opengles-1x.exports",
+        "sbdlicon",
+        "sblaunch",
+    )
+    val missingGuestTools = guestToolFiles.filterNot { packs.resolve(it).exists() }
+    require(missingGuestTools.isEmpty()) { "guestToolsDir $packs lacks ${missingGuestTools.joinToString()} (scripts/build.sh firmware-tools exports the whole set)" }
     val guestToolAssets = layout.buildDirectory.dir("generated/guestToolAssets")
     val stage = tasks.register<Copy>("prepareGuestTools") {
         from(packs)
