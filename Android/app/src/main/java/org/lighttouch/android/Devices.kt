@@ -7,6 +7,8 @@ data class DeviceSummary(
     val id: String, val name: String, val board: String, val build: String,
     val selected: Boolean, val dirty: Boolean, val contacts: String, val accelerometer: Boolean, val gyroscope: Boolean,
     val target: StoreTarget?,
+    /** The board has a cellular modem (iPhone 3GS, iPhone 4): it takes carrier settings. */
+    val cellular: Boolean = false,
 ) {
     /** "iPod touch 2G" from the catalog, else the board. */
     val model get() = target?.let { shortProductName(it.productType) } ?: board
@@ -18,7 +20,7 @@ data class DeviceSummary(
             record.getString("id") ?: "", record.getString("name") ?: "", record.getString("board") ?: "", record.getString("build") ?: "",
             record.getBoolean("selected"), record.getBoolean("dirty"), record.getString("contacts") ?: "1",
             record.getBoolean("acceleration"), record.getBoolean("gyro"),
-            targets["${record.getString("board")}-${record.getString("build")}"])
+            targets["${record.getString("board")}-${record.getString("build")}"], record.getBoolean("cellular"))
     }
 }
 

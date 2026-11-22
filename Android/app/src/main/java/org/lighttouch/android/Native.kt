@@ -15,6 +15,16 @@ internal object Native {
     external fun select(libraryRoot: String, id: String): String
     external fun rename(libraryRoot: String, id: String, name: String): String
     external fun remove(libraryRoot: String, id: String): String
+    /** A device's carrier settings: [error, carrier, mccMnc, registered, simPresent, bars, latitude, longitude,
+     *  dockButton, lastCaller, lastSender] ("1"/"0" for flags; error "" when it worked). */
+    external fun carrierGet(libraryRoot: String, id: String): Array<String>
+    /** Check and save them (the same fields without the error); returns the error or "". */
+    external fun carrierSet(libraryRoot: String, id: String, fields: Array<String>): String
+    external fun reloadCarrier(): String
+    /** A network-side event: incoming-call, remote-answer, remote-hangup, incoming-sms ("number|text"). */
+    external fun modem(action: String, value: String): String
+    /** The modem's state as JSON, "" when there is none yet. */
+    external fun modemStatus(): String
     external fun frameTimeline(since: Long): LongArray
     external fun storageStats(): LongArray
     external fun setPresentScale(mode: Int)

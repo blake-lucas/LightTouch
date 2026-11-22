@@ -25,7 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-enum class Screen { LOADING, SETUP, HOME, FULLSCREEN, SETTINGS, STORE, HITCH, DETAILS }
+enum class Screen { LOADING, SETUP, HOME, FULLSCREEN, SETTINGS, STORE, HITCH, DETAILS, CARRIER }
 
 /** What the screens read from and ask of the activity, which owns the worker and its lifecycle. */
 interface GuestHost {
@@ -39,6 +39,8 @@ interface GuestHost {
     val networkSessionStatus: NetworkSessionStatus
     val networkChangeNotice: String
     val settings: AppSettings
+    /** Carrier controls for the current device (devices with a modem; Carrier.kt). */
+    val carrier: CarrierController
     val perf: PerfSnapshot
     val profileRecording: Boolean
     val profileAutomatic: Boolean

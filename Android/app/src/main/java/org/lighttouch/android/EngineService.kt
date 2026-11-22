@@ -16,6 +16,8 @@ class EngineService : Service() {
     @Volatile private var focusPaused = false
     /** The running device's name, for the notification; set by start. */
     @Volatile private var deviceName = ""
+    /** The record this worker's session runs (one per worker), for carrier changes made while it runs. */
+    @Volatile private var sessionRecord = ""
     /** startForeground has run in this worker, so the notification may be updated. */
     @Volatile private var foregrounded = false
     private val started = WorkerStartAdmission()
@@ -63,6 +65,26 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
+        override fun carrier(recordId: String): Bundle = Native.carrierGet(File(filesDir, "library").absolutePath, recordId).let { v ->
+            Bundle().apply {
+                putString("error", v[0]); putString("carrier", v[1]); putString("mccMnc", v[2])
+                putBoolean("registered", v[3] == "1"); putBoolean("simPresent", v[4] == "1"); putInt("bars", v[5].toIntOrNull() ?: 5)
+                putDouble("latitude", v[6].toDoubleOrNull() ?: 0.0); putDouble("longitude", v[7].toDoubleOrNull() ?: 0.0)
+                putBoolean("dockButton", v[8] == "1"); putString("lastCaller", v[9]); putString("lastSender", v[10])
+            }
+        }
+        override fun setCarrier(recordId: String, settings: Bundle): String {
+            val flag = { key: String -> if (settings.getBoolean(key)) "1" else "0" }
+            val error = Native.carrierSet(File(filesDir, "library").absolutePath, recordId, arrayOf(
+                settings.getString("carrier") ?: "", settings.getString("mccMnc") ?: "", flag("registered"), flag("simPresent"),
+                settings.getInt("bars").toString(), settings.getDouble("latitude").toString(), settings.getDouble("longitude").toString(),
+                flag("dockButton"), settings.getString("lastCaller") ?: "", settings.getString("lastSender") ?: ""))
+            // A running device takes what changed at once (or once its engine is ready).
+            return if (error.isEmpty() && recordId == sessionRecord && started.isConsumed() && !stopping.get()) Native.reloadCarrier() else error
+        }
+        override fun modem(action: String, value: String): String = Native.modem(action, value)
+        override fun modemStatus(): String = Native.modemStatus()
+
         override fun importProgress(): Bundle = Native.importProgress().let { p ->
             Bundle().apply { putString("phase", p[0]); putLong("done", p[1].toLongOrNull() ?: 0); putLong("total", p[2].toLongOrNull() ?: 0) }
         }
@@ -155,6 +177,7 @@ class EngineService : Service() {
                 putBoolean("selected", row[4] == "1"); putBoolean("dirty", row[5] == "1")
                 putBoolean("bootromAvailable", row.getOrElse(9) { "0" } == "1"); putBoolean("guestPackageAvailable", row.getOrElse(10) { "0" } == "1")
                 putString("contacts", row[6]); putBoolean("gyro", row[7] == "1"); putBoolean("acceleration", row[8] == "1")
+                putBoolean("cellular", row.getOrElse(11) { "0" } == "1")
             }
         }.toTypedArray()
         override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
@@ -177,6 +200,7 @@ class EngineService : Service() {
                 putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
             }
             val libraryRoot = File(filesDir, "library").absolutePath
+            sessionRecord = recordId
             deviceName = Native.records(libraryRoot).firstOrNull { it[0] == recordId }?.getOrNull(1) ?: ""
             foreground()
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.

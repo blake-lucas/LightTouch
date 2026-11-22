@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
     var networkOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     if (networkOpen) { NetworkSettingsScreen(host) { networkOpen = false }; return }
+    var carrierOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (carrierOpen) { CarrierScreen(host) { carrierOpen = false }; return }
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
@@ -62,6 +64,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 }
                 SettingsGroup("Connection") {
                     ActionRow(LtIcons.Network, "Network", s.network.summary, tag = "open_network") { networkOpen = true }
+                }
+                if (host.selected?.cellular == true) SettingsGroup("Carrier") {
+                    ActionRow(LtIcons.Signal, "Carrier", host.carrier.settings?.summary ?: "Calls, texts and the network of ${host.selected?.name}",
+                        tag = "open_carrier") { carrierOpen = true }
                 }
                 SettingsGroup("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
