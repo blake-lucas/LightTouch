@@ -118,6 +118,17 @@ impl StepPlan {
     pub fn plan(name: &str, major: u32) -> StepPlan {
         let seal = "seal.log";
         match (name, major) {
+            // The iPhone 5's 10.x first start (N42), which prints none of the 7.x lines: most of it is iOS setting
+            // itself up with little on the console. 14G61 on a Ryzen 7 3700X, 2026-11-22: backboardd 24 s, the
+            // cameras 222 s, USB 308 s, SpringBoard 595 s, the agent's shutdown 626 s, done 644 s.
+            (SEAL_STEP, 10..) => StepPlan::new(644.0, "First start: loading iOS", vec![
+                m(seal, "FTL_Open", 4.0, "First start: opening the flash"),
+                m(seal, "Process backboardd (", 24.0, "First start: setting up iOS"),
+                m(seal, "ISP_LoadFirmware", 222.0, "First start: setting up iOS"),
+                m(seal, "AppleSynopsysOTGDevice - Configuration", 308.0, "First start: setting up iOS"),
+                m(seal, "Process SpringBoard (", 595.0, "First start: starting the Home screen"),
+                m(seal, "System shutdown initiated", 626.0, "First start: shutting down"),
+            ]),
             (SEAL_STEP, 7..) => StepPlan::new(331.0, "First start: loading iOS", vec![
                 m(seal, "FTL_Open", 4.0, "First start: opening the flash"),
                 m(seal, "launchd[1] has started", 8.0, "First start: starting iOS"),
@@ -401,5 +412,25 @@ mod tests {
         assert!(early > 0.0 && early < 0.1);
         let seen = [Some(4.0), Some(9.0), Some(42.0), Some(68.0), Some(125.0)];
         assert!(p.fraction(1e6, &seen) <= 0.99);
+    }
+
+    #[test]
+    fn ios10_first_start_moves_on_its_own_lines() {
+        // One line per milestone from a 14G61 first start's serial log (the first of each in it).
+        let log = "[NAND] WMR_Open:425 FTL_Open    [OK]
+Security: Process backboardd (64) creating global IOSurfaces accessible to any other process
+AppleH4CamIn::ISP_LoadFirmware_gated: fw len=1421316
+AppleSynopsysOTGDevice - Configuration: PTP
+Security: Process SpringBoard (49) creating global IOSurfaces accessible to any other process
+launchd[1] (com.apple.xpc.launchd.domain.system) <Notice>: System shutdown initiated by: it_agent.54<-launchd.1";
+        let p = StepPlan::plan(SEAL_STEP, 10);
+        assert_eq!(p.seconds, 644.0);
+        for m in &p.milestones {
+            assert!(log.contains(m.marker), "{} not in a 14G61 first start", m.marker);
+        }
+        // In the quiet stretch before SpringBoard the bar still moves, well short of the end.
+        let seen = [Some(4.0), Some(24.0), Some(222.0), Some(308.0), None, None];
+        let (a, b) = (p.fraction(400.0, &seen), p.fraction(450.0, &seen));
+        assert!(a < b && b < 0.8, "{a} {b}");
     }
 }
