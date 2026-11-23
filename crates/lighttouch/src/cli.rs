@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! lighttouch list
-//! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME] [--jailbreak] [--ipa FILE]...
+//! lighttouch prepare <firmware id> [--ipsw FILE [--unchecked-ipsw]] [--rom FILE] [--name NAME] [--jailbreak] [--ipa FILE]...
 //!                    [--no-game-center]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
@@ -405,6 +405,7 @@ fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
         jailbreak: args.iter().any(|a| a == "--jailbreak"),
         ipas: args.windows(2).filter(|w| w[0] == "--ipa").map(|w| PathBuf::from(&w[1])).collect(),
         no_game_center: args.iter().any(|a| a == "--no-game-center"),
+        unchecked_ipsw: args.iter().any(|a| a == "--unchecked-ipsw"),
     };
     let mut model = lighttouch_model::Model::new(dirs, Resources::locate(), std::sync::Arc::new(|| {}));
     lighttouch_model::prepare::availability(&model.resources)?;

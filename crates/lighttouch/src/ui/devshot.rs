@@ -4,7 +4,8 @@
 //! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
-//! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
+//! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
+//! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
 //! saved, and closes once they are written. `LIGHTTOUCH_UI_TRANSFER=export:ID:FILE` or `import:FILE` starts a device
 //! export or import (no file dialog).
 use super::{App, Page};
@@ -78,6 +79,8 @@ pub fn start(app: &mut App) {
         app.prepare.firmware = Some(firmware.id.clone());
         app.prepare.step = super::prepare::Step::Files;
         app.page = Page::Prepare;
+        // LIGHTTOUCH_UI_PICK=file chooses it as the file dialog would (its check, then what it is).
+        app.prepare.dev_pick = std::env::var_os("LIGHTTOUCH_UI_PICK").map(PathBuf::from);
         // LIGHTTOUCH_UI_IPSW=file also starts preparing from it, and shows the device page meanwhile.
         if let Some(ipsw) = std::env::var_os("LIGHTTOUCH_UI_IPSW").map(PathBuf::from) {
             app.prepare.ipsw_file = Some(ipsw.clone());
@@ -89,6 +92,7 @@ pub fn start(app: &mut App) {
                 jailbreak: false,
                 ipas: Vec::new(),
                 no_game_center: false,
+                unchecked_ipsw: false,
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;
