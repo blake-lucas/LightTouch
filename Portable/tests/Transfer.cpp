@@ -188,7 +188,6 @@ int main() {
     {
         const std::string bytes = read(root / "device.zip");
         assert(bytes.compare(0, 4, "PK\x03\x04") == 0 && bytes.find("lighttouch-device.json") == 30);
-        assert(bytes.find("\"unclean\":true") != std::string::npos || true);  // compressed: checked after import
     }
 
     // Import into another library, twice: a fresh id each time, the second named " (2)".
