@@ -840,7 +840,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onPrepare = ::prepareDevice,
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
             onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation,
-            onSaveLogs = ::exportLogs, savingLogs = logsBusy)
+            onSaveLogs = ::exportLogs, savingLogs = logsBusy, onImport = { closePreparation(); importDevice() })
     }
     /**
      * Prepare device: downloads what is missing (the boot ROM, the IPSW), then prepares, without another tap. The

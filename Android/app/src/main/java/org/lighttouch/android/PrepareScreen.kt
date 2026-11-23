@@ -99,7 +99,7 @@ private fun preparationCost(firmware: CatalogFirmware?) = when (firmware?.board)
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onChooseIpsw: () -> Unit,
                            onChooseRom: () -> Unit, onPrepare: () -> Unit,
                            onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit,
-                           onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false) {
+                           onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false, onImport: () -> Unit = {}) {
     val run = state.preparation?.getString("state")
     val showProgress = preparing || run in listOf("complete", "failed", "cancelled")
     val back = {
@@ -125,7 +125,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                 when {
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose, onSaveLogs, savingLogs)
-                    state.step == PrepareStep.DEVICE -> DeviceStep(state)
+                    state.step == PrepareStep.DEVICE -> DeviceStep(state, onImport)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
                     else -> FilesStep(state, busy, onChooseIpsw, onChooseRom, onPrepare)
                 }
@@ -175,8 +175,14 @@ private fun SupportBadge(support: Support) {
 }
 
 @Composable
-private fun DeviceStep(state: PrepareState) {
+private fun DeviceStep(state: PrepareState, onImport: () -> Unit) {
     Heading("Choose a device", "Pick the device to emulate. You'll choose its iOS version next.")
+    // The device list's ⋮ has this too; here for whoever came to add a device they already have elsewhere.
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Moving a device from another phone or computer?", Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = onImport, modifier = Modifier.testTag("prepare_import_device")) { Text("Import") }
+    }
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
     val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested } }
     for ((product, firmwares) in tested.sortedBy { (_, firmwares) -> firmwares.minOf { it.support } }) {

@@ -61,30 +61,32 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                         onExport = { onDismiss(); host.exportDevice(device) })
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = !host.busy && !host.active) { onDismiss(); host.addDevice() }.padding(12.dp).testTag("add_device").alpha(if (host.active) 0.38f else 1f),
-                verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-                Spacer(Modifier.width(16.dp))
-                Column {
-                    Text("Add device", style = MaterialTheme.typography.titleSmall)
-                    Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            // A device exported by LightTouch on another phone or computer; allowed while one runs.
+            // Add device, with a ⋮ for the other way in: a device exported by LightTouch on another phone or computer
+            // (allowed while one runs, so the ⋮ stays live when Add device is dimmed).
             val canImport = !host.busy && host.transfer == null
+            var addMenu by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = canImport) { onDismiss(); host.importDevice() }.padding(12.dp).testTag("import_device").alpha(if (canImport) 1f else 0.38f),
+                .clickable(enabled = !host.busy && !host.active) { onDismiss(); host.addDevice() }.padding(start = 12.dp, top = 12.dp, bottom = 12.dp)
+                .testTag("add_device"),
                 verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                    Icon(LtIcons.Download, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Row(Modifier.weight(1f).alpha(if (host.active) 0.38f else 1f), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text("Add device", style = MaterialTheme.typography.titleSmall)
+                        Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                Spacer(Modifier.width(16.dp))
-                Column {
-                    Text("Import device", style = MaterialTheme.typography.titleSmall)
-                    Text("Exported from LightTouch on another phone or computer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box {
+                    IconButton(onClick = { addMenu = true }, modifier = Modifier.testTag("add_device_more")) {
+                        Icon(Icons.Filled.MoreVert, "More ways to add a device")
+                    }
+                    DropdownMenu(addMenu, { addMenu = false }) {
+                        DropdownMenuItem(text = { Text("Import device") }, leadingIcon = { Icon(LtIcons.Download, null) }, enabled = canImport,
+                            onClick = { addMenu = false; onDismiss(); host.importDevice() }, modifier = Modifier.testTag("import_device"))
+                    }
                 }
             }
         }
