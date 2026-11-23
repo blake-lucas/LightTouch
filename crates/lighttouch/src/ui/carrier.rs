@@ -459,10 +459,38 @@ pub fn text_dialog(app: &mut App, ui: &mut Ui, number: &mut String, text: &mut S
     close
 }
 
-/// Settings' Carrier row (devices with a modem).
+/// Why the device Settings is about has no carrier settings: none selected, or a board without a modem we drive.
+fn unavailable_reason(app: &App) -> String {
+    match app.model.current() {
+        None => "Select an iPhone to change its carrier, calls and texts.".to_string(),
+        Some(d) if d.board == "n42ap" => {
+            "The iPhone 5's modem isn't supported yet. Carrier settings apply to the original iPhone, iPhone 3GS and \
+             iPhone 4."
+                .to_string()
+        }
+        Some(d) => format!(
+            "{} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4.",
+            d.model
+        ),
+    }
+}
+
+/// Settings' Carrier row: always shown, so Settings keeps its shape; greyed out with the reason when the device
+/// has no modem LightTouch drives.
 pub fn settings_row(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
-    let Some(settings) = app.model.carrier_settings() else { return };
+    let Some(settings) = app.model.carrier_settings() else {
+        let reason = unavailable_reason(app);
+        ui.add_enabled_ui(false, |ui| {
+            widgets::setting_row(ui, &p, icons::CELL_SIGNAL, "Carrier", "Not available for this device", |ui| {
+                widgets::tonal(ui, &p, "Open")
+            });
+        });
+        Frame::new().inner_margin(Margin { left: 38, right: 18, top: 0, bottom: 8 }).show(ui, |ui| {
+            ui.label(widgets::muted(&p, reason).size(12.5));
+        });
+        return;
+    };
     let summary = if !settings.sim_present {
         "No SIM".to_string()
     } else if !settings.registered {

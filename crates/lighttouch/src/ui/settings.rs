@@ -26,7 +26,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let mut export_logs = false;
             let mut open_ipad_size = false;
             let ipad_summary = super::ipad_size::summary(app);
-            let has_carrier = app.model.carrier_device().is_some();
             let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Display");
@@ -178,10 +177,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     }
                 });
             });
-            if has_carrier {
-                widgets::section(ui, &p, "Carrier");
-                widgets::card(ui, &p, |ui| super::carrier::settings_row(app, ui));
-            }
+            widgets::section(ui, &p, "Carrier");
+            widgets::card(ui, &p, |ui| super::carrier::settings_row(app, ui));
             let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Performance overlay");

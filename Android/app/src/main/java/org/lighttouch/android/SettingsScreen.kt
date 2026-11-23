@@ -65,9 +65,21 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Connection") {
                     ActionRow(LtIcons.Network, "Network", s.network.summary, tag = "open_network") { networkOpen = true }
                 }
-                if (host.selected?.cellular == true) SettingsGroup("Carrier") {
-                    ActionRow(LtIcons.Signal, "Carrier", host.carrier.settings?.summary ?: "Calls, texts and the network of ${host.selected?.name}",
-                        tag = "open_carrier") { carrierOpen = true }
+                // Always shown, so Settings keeps its shape; greyed out with the reason when the device has no modem
+                // LightTouch drives.
+                SettingsGroup("Carrier") {
+                    val device = host.selected
+                    if (device?.cellular == true) {
+                        ActionRow(LtIcons.Signal, "Carrier", host.carrier.settings?.summary ?: "Calls, texts and the network of ${device.name}",
+                            tag = "open_carrier") { carrierOpen = true }
+                    } else {
+                        val reason = when {
+                            device == null -> "Select an iPhone to change its carrier, calls and texts."
+                            device.board == "n42ap" -> "The iPhone 5's modem isn't supported yet. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
+                            else -> "${device.model} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
+                        }
+                        ActionRow(LtIcons.Signal, "Carrier", reason, enabled = false, tag = "open_carrier") {}
+                    }
                 }
                 SettingsGroup("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
