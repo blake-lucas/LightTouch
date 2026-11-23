@@ -46,6 +46,12 @@ class TransferState(val title: String, val exporting: Boolean) {
     }
 }
 
+/** The export or import running, held by the process rather than an activity, so a rotation (which recreates
+ *  MainActivity) keeps its dialog and Cancel. */
+internal object Transfers {
+    var current by mutableStateOf<TransferState?>(null)
+}
+
 /** The running export or import: a bar, what it is doing, and Cancel. Nothing else can be done until it ends. */
 @Composable
 internal fun TransferDialog(state: TransferState, onCancel: () -> Unit) {

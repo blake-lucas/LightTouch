@@ -522,8 +522,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun addDevice() = openPreparation()
 
     // Device transfer: export to a document the user names, import one they pick; both stream through the worker.
-    override var transfer by mutableStateOf<TransferState?>(null)
-        private set
+    override var transfer: TransferState?
+        get() = Transfers.current
+        private set(value) { Transfers.current = value }
     /** The device whose export waits for its document (kept across an activity recreated behind the picker). */
     private val transferPrefs get() = getSharedPreferences("device-transfer", MODE_PRIVATE)
     private val exportDocument = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->

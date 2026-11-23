@@ -499,7 +499,7 @@ private:
             for (; job < jobs.size() && jobs[job].entry == i; ++job) {
                 Slot s = take(job);
                 out.put(s.data);
-                crc = uint32_t(crc32_combine(crc, s.crc, z_off_t(jobs[job].length)));
+                crc = uint32_t(crc32_combine(crc, s.crc, static_cast<z_off_t>(jobs[job].length)));
                 observer.add(jobs[job].length);
             }
             static const uint8_t final_block[2] = {0x03, 0x00};
@@ -584,6 +584,20 @@ private:
     }
 };
 
+// The library lock, waited for: a list or select elsewhere holds it for moments, and a long import shouldn't fail
+// at its last step for that.
+std::unique_ptr<LibraryLock> wait_lock(lt_library *l) {
+    for (int attempt = 0;; ++attempt) {
+        try {
+            return std::make_unique<LibraryLock>(l);
+        } catch (const Failure &f) {
+            if (f.status != LT_BUSY || attempt >= 200)
+                throw;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
 void export_record(lt_library *l, const lt_export_config *c, Observer &observer) {
     abi(c);
     require(c->record_id, "record ID missing");
@@ -591,7 +605,7 @@ void export_record(lt_library *l, const lt_export_config *c, Observer &observer)
     record_id(id);
     const fs::path directory = l->root / "records" / id;
     {
-        LibraryLock lock(l);
+        auto lock = wait_lock(l);
         require(fs::is_directory(fs::symlink_status(directory)), "no such device");
     }
     auto metadata = parse(read_file(directory / "record.json", 65536));
@@ -935,6 +949,32 @@ struct Forward : Sink {
     void put(const uint8_t *p, size_t n) override { pipe.push(&target, p, n); }
 };
 
+void sync_files(const std::vector<fs::path> &files) {
+    std::atomic<size_t> next{0};
+    std::mutex guard;
+    std::exception_ptr failure;
+    auto work = [&] {
+        for (size_t i; (i = next++) < files.size();) {
+            try {
+                OwnedFd fd(lt::os::open(files[i].c_str(), O_RDWR | O_CLOEXEC));
+                io(fd.n >= 0 && lt::os::fsync(fd.n) == 0, "sync " + files[i].string());
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(guard);
+                if (!failure)
+                    failure = std::current_exception();
+            }
+        }
+    };
+    std::vector<std::thread> pool;
+    for (size_t t = 1; t < std::min<size_t>(8, files.size()); ++t)
+        pool.emplace_back(work);
+    work();
+    for (auto &t : pool)
+        t.join();
+    if (failure)
+        std::rethrow_exception(failure);
+}
+
 std::string unique_name(lt_library *l, const std::string &wanted) {
     std::set<std::string> taken;
     for (const auto &id : records(l)) {
@@ -963,20 +1003,6 @@ std::string unique_name(lt_library *l, const std::string &wanted) {
         }
         if (!taken.count(base + suffix))
             return base + suffix;
-    }
-}
-
-// The library lock, waited for: a list or select elsewhere holds it for moments, and a long import shouldn't fail
-// at its last step for that.
-std::unique_ptr<LibraryLock> wait_lock(lt_library *l) {
-    for (int attempt = 0;; ++attempt) {
-        try {
-            return std::make_unique<LibraryLock>(l);
-        } catch (const Failure &f) {
-            if (f.status != LT_BUSY || attempt >= 200)
-                throw;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
@@ -1075,6 +1101,7 @@ void import_device(lt_library *l, const lt_transfer_import_config *c, Observer &
         std::set<std::string> seen;
         std::map<std::string, std::string> digests;  // base files, by name relative to base/
         Pipe pipe;
+        std::vector<fs::path> unsynced;
         for (;;) {
             LocalHeader h = read_entry_header(in);
             if (h.central)
@@ -1097,7 +1124,12 @@ void import_device(lt_library *l, const lt_transfer_import_config *c, Observer &
                 throw;
             }
             io(lt::os::ftruncate(file.n, int64_t(size->second)) == 0, "size " + h.name);
-            io(lt::os::fsync(file.n) == 0, "sync " + h.name);
+            // A large file is synced now; small ones (a 2G's thousands of NAND page files) together at the end, on
+            // several threads: one at a time, Android's per-file syncs took minutes.
+            if (size->second >= (1u << 20))
+                io(lt::os::fsync(file.n) == 0, "sync " + h.name);
+            else
+                unsynced.push_back(path);
             file.reset();
             if (base)
                 digests.emplace(h.name.substr(5), hash.finish());
@@ -1105,6 +1137,7 @@ void import_device(lt_library *l, const lt_transfer_import_config *c, Observer &
                 check_boot_route(parse(read_file(path)));
         }
         require(seen.size() == sizes.size(), damaged);
+        sync_files(unsynced);
         observer.begin("finishing", 0);
         // The record's own pins: its lock, boot ROM and guest tools are the ones it names.
         auto metadata = parse(read_file(stage / "record.json", 65536));
