@@ -504,8 +504,15 @@ impl Store {
                         }
                         self.set_installed(apps);
                     }
-                    Err(e) if !self.installing() => self.message = format!("App services: {e}"),
-                    Err(_) => {}
+                    Err(e) => {
+                        // iOS 7 and later wait for Trust on the guest's screen, however long that takes: keep asking.
+                        if e.contains("tap Trust") {
+                            self.refresh_guest(socket.clone());
+                        }
+                        if !self.installing() {
+                            self.message = format!("App services: {e}");
+                        }
+                    }
                 }
             }
             Message::Results { generation, result } if generation == self.search_generation => {

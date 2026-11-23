@@ -215,7 +215,7 @@ impl Lockdown {
                 ]),
             )
             .map_err(|e| match e.0.contains("PairingDialogResponsePending") {
-                true => Error("Tap Trust on the guest's screen to let LightTouch install apps.".into()),
+                true => Error("Unlock the guest and tap Trust on its screen to let LightTouch install apps.".into()),
                 false => e,
             })?;
         record.insert("HostPrivateKey".into(), Value::Data(keys.host_private_key));
