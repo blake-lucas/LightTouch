@@ -213,7 +213,12 @@ impl Firmware {
 
     /// About how long preparation takes and how much room it needs, for the prepare screen.
     pub fn cost_hint(&self) -> (&'static str, &'static str) {
-        if self.board == "n72ap" { ("about a minute", "1.5 GB") } else { ("a few minutes", "5 GB") }
+        // The iPhone 5 (14G61): 752 s and a 8.0 GB peak on Linux (test4, 2026-11-23), plus the 2.0 GB IPSW.
+        match self.board.as_str() {
+            "n72ap" => ("about a minute", "1.5 GB"),
+            "n42ap" => ("10 to 20 minutes", "10 GB"),
+            _ => ("a few minutes", "5 GB"),
+        }
     }
 }
 

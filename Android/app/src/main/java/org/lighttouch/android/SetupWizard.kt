@@ -80,7 +80,7 @@ private fun Welcome(onPrepare: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         Need(LtIcons.Phone, "Choose a device and iOS version", "The iPod touch 2G on iOS 3.1.3 is the easiest place to start")
         Need(LtIcons.Download, "LightTouch downloads it", "iOS comes from Apple, or the Internet Archive when Apple no longer has it")
-        Need(LtIcons.Layers, "And prepares it", "A minute or a few, with 1.5 to 5 GB free")
+        Need(LtIcons.Layers, "And prepares it", "From a minute to half an hour, with 1.5 to 10 GB free")
         Spacer(Modifier.height(40.dp))
         Button(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
