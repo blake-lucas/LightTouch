@@ -35,12 +35,13 @@ internal object LogExport {
         val zip = File(dir, name)
         val logs = Logs.dir(context)
         val scrub = scrubber(context)
+        val blank = blanker(context)
         val listed = mutableListOf<Pair<String, Int>>()
         val missing = mutableListOf<String>()
         val entries = linkedMapOf<String, ByteArray>()
-        fun add(entry: String, bytes: ByteArray?, why: String) {
+        fun add(entry: String, bytes: ByteArray?, why: String, binary: Boolean = false) {
             if (bytes == null || bytes.isEmpty()) { missing += "$entry ($why)"; return }
-            entries[entry] = scrub(String(bytes, Charsets.UTF_8)).toByteArray()
+            entries[entry] = if (binary) blank(bytes) else scrub(String(bytes, Charsets.UTF_8)).toByteArray()
         }
         fun log(name: String, previous: Boolean) =
             Logs.files(logs, name, previous).takeIf { it.isNotEmpty() }?.let { ByteArrayOutputStream().also { out -> Logs.copyTo(it, out) }.toByteArray() }
@@ -65,7 +66,8 @@ internal object LogExport {
         add("android/logcat.txt", logcat(), "Android gave no log")
         add("android/exits.txt", exits(context)?.toByteArray(), "Android keeps no exit history before Android 11")
         File(context.filesDir, "worker-exits").listFiles { f -> f.name.endsWith(".trace") }?.sortedByDescending { it.lastModified() }?.take(3)?.forEach {
-            add("android/exits/${it.name}", tail(it, TRACE_TAIL), "empty")
+            // A trace is Android's tombstone protobuf: its bytes go in as they are (capped at capture).
+            add("android/exits/${it.name}", it.takeIf { f -> f.length() <= TRACE_TAIL }?.readBytes(), "empty", binary = true)
         }
 
         val summary = summary(context, inputs, time)
@@ -203,17 +205,48 @@ internal object LogExport {
         }
     }
 
-    /** The app's paths, which name the phone's user profile and the install, as placeholders. */
-    private fun scrubber(context: Context): (String) -> String {
+    /** The app's paths, which name the phone's user profile and the install, and their placeholders. */
+    private fun scrubPairs(context: Context): List<Pair<String, String>> {
         val data = context.filesDir.parentFile?.path
-        val pairs = listOfNotNull(
+        return listOfNotNull(
             data?.let { it to "<data>" },
             "/data/data/${context.packageName}" to "<data>",
             "/data/user/0/${context.packageName}" to "<data>",
             File(context.applicationInfo.sourceDir).parent?.let { it to "<apk>" },
             "/storage/emulated/0" to "<storage>",
         ).sortedByDescending { it.first.length }
+    }
+
+    /** The app's paths as placeholders. */
+    private fun scrubber(context: Context): (String) -> String {
+        val pairs = scrubPairs(context)
         return { text -> pairs.fold(text) { t, (from, to) -> t.replace(from, to) } }
+    }
+
+    /**
+     * The same paths in a binary file, overwritten in place: the placeholder padded with '_' to the path's length.
+     * A protobuf (an exit trace) keeps every length prefix valid; decoding it as text turned every byte >= 0x80
+     * into U+FFFD and left the tombstone unreadable.
+     */
+    private fun blanker(context: Context): (ByteArray) -> ByteArray {
+        val pairs = scrubPairs(context)
+        return { input -> blankPaths(input, pairs) }
+    }
+
+    internal fun blankPaths(input: ByteArray, pairs: List<Pair<String, String>>): ByteArray {
+        val out = input.copyOf()
+        for ((from, to) in pairs) {
+            val path = from.toByteArray()
+            if (path.isEmpty()) continue
+            val mask = to.toByteArray().copyOf(path.size).also { it.fill('_'.code.toByte(), minOf(to.length, path.size)) }
+            var i = 0
+            while (i <= out.size - path.size) {
+                var match = true
+                for (k in path.indices) if (out[i + k] != path[k]) { match = false; break }
+                if (match) { mask.copyInto(out, i); i += path.size } else i++
+            }
+        }
+        return out
     }
 
     private fun size(bytes: Long): String = when {

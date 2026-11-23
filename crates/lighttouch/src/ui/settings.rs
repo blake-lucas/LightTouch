@@ -64,6 +64,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.device_frame);
                     },
                 );
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::FULLSCREEN,
+                    "Show controls in full screen",
+                    "Volume, Home, Sleep/Wake and More along the bottom. Without them, Esc or F11 leaves full screen",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.fullscreen_controls);
+                    },
+                );
                 widgets::setting_row(ui, &p, super::ipad_size::TABLET, "iPad size", ipad_summary, |ui| {
                     if widgets::tonal(ui, &p, "Open").clicked() {
                         open_ipad_size = true;
@@ -84,9 +94,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             widgets::section(ui, &p, "Controls");
             widgets::card(ui, &p, |ui| {
                 #[cfg(target_os = "macos")]
-                const MOUSE: &str = "Click to tap; Option-drag pinches or rotates, Option-Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume";
+                const MOUSE: &str = "Click to tap; Option-drag pinches or rotates, Option-Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume, F11 full screen";
                 #[cfg(not(target_os = "macos"))]
-                const MOUSE: &str = "Click to tap; Alt-drag pinches or rotates, Alt+Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume";
+                const MOUSE: &str = "Click to tap; Alt-drag pinches or rotates, Alt+Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume, F11 full screen";
                 widgets::setting_row(ui, &p, icons::INFO, "Mouse and keyboard", MOUSE, |_| {});
                 let mut open_controller = false;
                 widgets::setting_row(

@@ -51,6 +51,13 @@ pub struct ControllerUi {
     key_map: Option<KeyMap>,
 }
 
+impl ControllerUi {
+    /// Waiting for a key or button to bind, so keys mean nothing else.
+    pub fn listening(&self) -> bool {
+        self.capture.is_some() || self.key_map.is_some()
+    }
+}
+
 /// The keys mapped so far (up, right, down, left: the order they're asked for), for which binding, and the last
 /// key turned away (already used for another direction).
 struct KeyMap {
@@ -2233,6 +2240,8 @@ fn key_map_prompt(app: &mut App, ui: &mut Ui) {
     for key in pressed {
         match key {
             egui::Key::Escape => cancel = true,
+            // Reserved: it goes in and out of full screen.
+            egui::Key::F11 => {}
             egui::Key::Backspace => {
                 map.keys.pop();
                 map.refused = None;
@@ -2370,7 +2379,8 @@ fn capture_prompt(app: &mut App, ui: &mut Ui) {
     // A new press: a button not held when the prompt opened, or a key.
     let new_button =
         PadButton::ALL.iter().copied().find(|b| merged.buttons & b.bit() != 0 && capture.held.0 & b.bit() == 0);
-    let new_key = keys.iter().find(|k| !capture.held.1.contains(*k) && k.as_str() != "Escape").cloned();
+    let new_key =
+        keys.iter().find(|k| !capture.held.1.contains(*k) && k.as_str() != "Escape" && k.as_str() != "F11").cloned();
     let mut got: Option<Input> = None;
     let mut stick: Option<Stick> = None;
     if capture.slot == Slot::Stick {

@@ -70,7 +70,7 @@ The zip is named `LightTouch-logs-YYYYMMDD-HHMMSS.zip` and holds:
 | `usbmuxd.log` | the newest USB bridge log, if any |
 | `controllers.log` | desktop only: controllers seen and their mappings |
 | `android/logcat.txt` | Android only: the last 1 MiB of LightTouch's own Android log, which includes the GPU driver's messages and crashes |
-| `android/exits/` | Android only: why the engine process ended, for its last 3 exits (each trace cut to 1 MiB) |
+| `android/exits/` | Android only: why the engine process ended, for its last 3 exits (each trace cut to 1 MiB; a crash's trace is Android's tombstone protobuf, kept byte for byte with the app's paths blanked to the same length) |
 
 A file that doesn't exist is left out, and `summary.txt` says so.
 
