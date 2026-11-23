@@ -133,11 +133,27 @@ impl MachO32 {
         } else if d.len() >= 12 && le32(d, 4) == 12 {
             slices.push((le32(d, 8) as i32, d));
         }
-        let runnable: &[i32] = if arch == "armv7" { &[want, 6, 0] } else { &[want, 0] };
+        // armv7s runs armv7s and armv7 code; armv7 also takes armv6 and ARM_ALL.
+        let runnable: &[i32] = match arch {
+            "armv7s" => &[want, 9, 6, 0],
+            "armv7" => &[want, 6, 0],
+            _ => &[want, 0],
+        };
         for &s in runnable {
             if let Some(hit) = slices.iter().find(|x| x.0 == s) {
                 if let Some(m) = MachO32::parse(hit.1.to_vec()) {
-                    return Some((m, if s == 9 { "armv7" } else if s == 6 { "armv6" } else { "arm" }));
+                    return Some((
+                        m,
+                        if s == 11 {
+                            "armv7s"
+                        } else if s == 9 {
+                            "armv7"
+                        } else if s == 6 {
+                            "armv6"
+                        } else {
+                            "arm"
+                        },
+                    ));
                 }
             }
         }
@@ -227,6 +243,7 @@ pub fn subtype(arch: &str) -> Option<i32> {
     match arch {
         "armv6" => Some(6),
         "armv7" => Some(9),
+        "armv7s" => Some(11),
         _ => None,
     }
 }

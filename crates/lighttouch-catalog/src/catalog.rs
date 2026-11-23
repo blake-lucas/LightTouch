@@ -108,8 +108,18 @@ pub const DOESNT_START: &[&str] = &["n45ap", "m68ap"];
 pub const RECOMMENDED: &str = "n72ap-7E18";
 
 /// Order devices are listed in.
-pub const PRODUCT_ORDER: &[&str] =
-    &["iPod1,1", "iPod2,1", "iPod3,1", "iPod4,1", "iPhone1,1", "iPhone1,2", "iPhone2,1", "iPhone3,1", "iPad1,1"];
+pub const PRODUCT_ORDER: &[&str] = &[
+    "iPod1,1",
+    "iPod2,1",
+    "iPod3,1",
+    "iPod4,1",
+    "iPhone1,1",
+    "iPhone1,2",
+    "iPhone2,1",
+    "iPhone3,1",
+    "iPhone5,2",
+    "iPad1,1",
+];
 
 impl Firmware {
     /// "3.1.3", or "4.2 beta 2" for a developer build.
@@ -321,6 +331,7 @@ pub fn short_product_name(product_type: &str) -> &'static str {
         "iPhone1,2" => "iPhone 3G",
         "iPhone2,1" => "iPhone 3GS",
         "iPhone3,1" => "iPhone 4",
+        "iPhone5,2" => "iPhone 5",
         "iPad1,1" => "iPad",
         _ => "iOS device",
     }

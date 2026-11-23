@@ -7,6 +7,7 @@
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
 //! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
+//! lighttouch guest <bridge mux.sock>
 //! ```
 //!
 //! `prepare --ipa` installs apps while the device is prepared (benchmark devices). `run --control` (tools/bench)
@@ -15,6 +16,9 @@
 //! guest frame, `<sequence> <published_ns>`, for frame-time statistics. `fetch` downloads the Legacy Store copy of the
 //! first app matching the query (and the bundle ID, if given) that runs on the firmware, as DIR/<bundle id>.ipa, and
 //! prints `<bundle id>\t<version>\t<name>\t<path>`.
+//!
+//! With `--install`/`--store`/`--services`, LIGHTTOUCH_SYSLOG=FILE also streams the guest's system log there, and
+//! LIGHTTOUCH_SERVICES_AFTER=SECONDS holds the services off until then (the iPhone 5 boots slowly).
 //!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
 //! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
@@ -31,7 +35,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "run" | "prepare" | "fetch")
+    matches!(command, "list" | "run" | "prepare" | "fetch" | "guest")
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -41,6 +45,7 @@ pub fn main(args: &[String]) -> i32 {
         "run" => run(&dirs, &args[1..]),
         "prepare" => prepare(dirs, &args[1..]),
         "fetch" => fetch(&dirs, &args[1..]),
+        "guest" => guest(&args[1..]),
         _ => unreachable!(),
     };
     match result {
@@ -54,6 +59,25 @@ pub fn main(args: &[String]) -> i32 {
 
 fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+/// `guest <usbmux socket>`: connect to a running guest (the app's own bridge) as the store does, and say what it is.
+fn guest(args: &[String]) -> Result<(), String> {
+    let socket = PathBuf::from(args.first().ok_or("guest needs the bridge's mux.sock")?);
+    let mut guest = lighttouch_services::apps::Guest::connect(&socket, Duration::from_secs(120)).map_err(|e| e.to_string())?;
+    let target = guest.target().map_err(|e| e.to_string())?;
+    println!("{} iOS {} {}", target.product_type, target.ios, target.arch);
+    for app in guest.installed().map_err(|e| e.to_string())? {
+        println!("  {} {:?}", app.bundle_id, app.name);
+    }
+    // `guest SOCKET crash [PART]`: the newest crash report (whose name contains PART), whole.
+    if args.get(1).map(String::as_str) == Some("crash") {
+        match guest.last_crash_named(args.get(2).map_or("", String::as_str)).map_err(|e| e.to_string())? {
+            Some((name, text)) => println!("--- {name}\n{text}"),
+            None => println!("no crash reports"),
+        }
+    }
+    Ok(())
 }
 
 fn list(dirs: &DataDirs) -> Result<(), String> {
@@ -399,7 +423,23 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
         std::thread::sleep(Duration::from_millis(500));
     }
     say("attached".into());
-    let mut guest = match Guest::connect(&socket, Duration::from_secs(60)) {
+    // LIGHTTOUCH_SYSLOG=FILE: the guest's whole system log, as it comes, for the rest of the run.
+    if let Some(path) = std::env::var_os("LIGHTTOUCH_SYSLOG") {
+        let socket = socket.clone();
+        std::thread::spawn(move || {
+            let Ok(mut file) = std::fs::File::create(&path) else { return };
+            if let Ok(mut log) = Guest::connect(&socket, Duration::from_secs(600)) {
+                let _ = log.stream_system_log(&mut file, &|| false);
+            }
+        });
+    }
+    // LIGHTTOUCH_SERVICES_AFTER=SECONDS: leave the guest alone until then (a slow guest's services time out early).
+    if let Some(after) = std::env::var("LIGHTTOUCH_SERVICES_AFTER").ok().and_then(|s| s.parse::<f64>().ok()) {
+        while at() < after {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    let mut guest = match Guest::connect(&socket, Duration::from_secs(600)) {
         Ok(guest) => guest,
         Err(e) => return say(e.to_string()),
     };

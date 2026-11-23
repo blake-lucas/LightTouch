@@ -74,7 +74,7 @@ impl Helper {
         let name = self.program.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let machines = self.machines().map_err(|e| {
             eprintln!("machines: {}", e.message);
-            crate::internal!("{name}'s emulator library has no machine for {}", board.name())
+            crate::internal!("{name} couldn't list its emulator's machines: {}", e.message)
         })?;
         machines
             .into_iter()
@@ -101,7 +101,8 @@ fn read_latin1(path: &Path) -> String {
 /// words, as FTL_Open\s*\[OK\]) matches `text`.
 fn pattern_matches(text: &str, pattern: &str) -> bool {
     // The recipes' patterns are literal pieces joined by \s*: match them in order with any whitespace between.
-    let pieces: Vec<String> = pattern.split(r"\s*").map(|p| p.replace(r"\[", "[").replace(r"\]", "]").replace(r"\.", ".")).collect();
+    let pieces: Vec<String> =
+        pattern.split(r"\s*").map(|p| p.replace(r"\[", "[").replace(r"\]", "]").replace(r"\.", ".")).collect();
     let bytes = text.as_bytes();
     let mut start = 0;
     while let Some(i) = text[start..].find(pieces[0].as_str()) {
@@ -149,6 +150,40 @@ pub fn run(
     log: &dyn Fn(&str),
     during: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
 ) -> Result<(OneShot, String)> {
+    run_wait(helper, argv, serial, stop, stop_pattern, timeout, None, log, during)
+}
+
+/// `run` that, `delay` after the stop marker, asks the guest to shut itself down (the engine's
+/// qemu_ios_ui_shutdown: the agent's halt, as the app's Stop) instead of stopping the helper, and then waits for
+/// QEMU to exit by itself (`OneShot::exited`), up to `timeout`. Light Touch for Mac's one-shot powerdown marker:
+/// the iPhone 5's first boot ends this way, so its store keeps a clean shutdown. Needs this program's own helper.
+pub fn run_powerdown(
+    helper: &Helper,
+    argv: &[String],
+    serial: &Path,
+    marker: &str,
+    delay: Duration,
+    timeout: f64,
+    log: &dyn Fn(&str),
+) -> Result<(OneShot, String)> {
+    if !helper.own {
+        return Err(crate::internal!("a powerdown one-shot needs firmwarekit's own oneshot helper"));
+    }
+    run_wait(helper, argv, serial, Some(marker), None, timeout, Some(delay), log, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_wait(
+    helper: &Helper,
+    argv: &[String],
+    serial: &Path,
+    stop: Option<&str>,
+    stop_pattern: Option<&str>,
+    timeout: f64,
+    powerdown: Option<Duration>,
+    log: &dyn Fn(&str),
+    during: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
+) -> Result<(OneShot, String)> {
     let mut command = helper.command(argv);
     command.env("IT_TVOUT_READY", "1").stdout(Stdio::from(std::io::stderr())).stderr(Stdio::inherit());
     if helper.own {
@@ -171,6 +206,8 @@ pub fn run(
         })
     });
     let (mut marker, mut stopping) = (false, false);
+    let mut asked: Option<Instant> = None;
+    let mut marker_at: Option<Instant> = None;
     let mut deadline: Option<Instant> = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -192,8 +229,25 @@ pub fn run(
                     marker = true;
                 }
             }
+            if marker && marker_at.is_none() {
+                marker_at = Some(Instant::now());
+            }
         }
-        if !stopping && (marker || start.elapsed().as_secs_f64() > timeout) {
+        let timeout_done = start.elapsed().as_secs_f64() > timeout;
+        if let (Some(delay), Some(at)) = (powerdown, marker_at)
+            && at.elapsed() >= delay
+            && asked.is_none_or(|t| t.elapsed() >= Duration::from_secs(60))
+        {
+            // A byte on the helper's stdin asks the guest to shut down (engine_main); QEMU then exits by itself. A
+            // request before the guest agent is up is lost, so it is asked again each minute until then.
+            asked = Some(Instant::now());
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                let _ = stdin.write_all(b"p").and_then(|_| stdin.flush());
+            }
+            log("one-shot: asked the guest to shut down");
+        }
+        if !stopping && ((marker && powerdown.is_none()) || timeout_done) {
             stopping = true;
             terminate(&mut child); // the helper quits QEMU, which flushes the NAND and NOR
             deadline = Some(Instant::now() + Duration::from_secs(60));
@@ -208,10 +262,26 @@ pub fn run(
     if let Ok(e) = failed_rx.try_recv() {
         return Err(e);
     }
-    let r = OneShot { exited: !stopping, exit_code: status.code().unwrap_or(-1), marker, seconds: start.elapsed().as_secs_f64() };
+    // A helper killed by a signal (the phone's low-memory killer sends SIGKILL) has no exit code; keep the
+    // signal so a phone run can tell "the engine refused" from "the system killed it".
+    #[cfg(unix)]
+    let killed = std::os::unix::process::ExitStatusExt::signal(&status);
+    #[cfg(not(unix))]
+    let killed: Option<i32> = None;
+    let exit_code = match status.code() {
+        Some(code) => code,
+        None => -killed.unwrap_or(1),
+    };
+    let r = OneShot { exited: !stopping, exit_code, marker, seconds: start.elapsed().as_secs_f64() };
     log(&format!(
         "one-shot: {} after {:.0} s (exit {})",
-        if r.marker { "marker" } else if r.exited { "halted" } else { "timed out" },
+        if r.marker {
+            "marker"
+        } else if r.exited {
+            "halted"
+        } else {
+            "timed out"
+        },
         r.seconds,
         r.exit_code
     ));
@@ -263,9 +333,11 @@ fn load(path: &Path) -> std::result::Result<libloading::Library, String> {
     }
     #[cfg(windows)]
     {
-        use libloading::os::windows::{Library, LOAD_WITH_ALTERED_SEARCH_PATH};
+        use libloading::os::windows::{LOAD_WITH_ALTERED_SEARCH_PATH, Library};
         // its dependencies beside it
-        unsafe { Library::load_with_flags(path, LOAD_WITH_ALTERED_SEARCH_PATH) }.map(Into::into).map_err(|e| e.to_string())
+        unsafe { Library::load_with_flags(path, LOAD_WITH_ALTERED_SEARCH_PATH) }
+            .map(Into::into)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -427,7 +499,8 @@ pub fn engine_main(args: &[String]) -> i32 {
         }
     };
     if args.len() == 1 && args[0].starts_with('{') && args[0].contains("\"machines\"") {
-        let Ok(info_at) = (unsafe { lib.get::<unsafe extern "C" fn(i32) -> *const QemuIosDeviceInfo>(b"qemu_ios_device_info_at") })
+        let Ok(info_at) =
+            (unsafe { lib.get::<unsafe extern "C" fn(i32) -> *const QemuIosDeviceInfo>(b"qemu_ios_device_info_at") })
         else {
             return 70;
         };
@@ -448,6 +521,9 @@ pub fn engine_main(args: &[String]) -> i32 {
             }));
         }
         println!("{}", serde_json::json!({"dylibPath": path.to_string_lossy(), "machines": machines}));
+        // Never unloaded: the engine registers exit handlers, and Android 10's exit() still calls them after a
+        // dlclose, so the listing ended in SIGSEGV ("no machine for n90ap", issue #11).
+        std::mem::forget(lib);
         return 0;
     }
     let symbols = unsafe {
@@ -498,10 +574,20 @@ pub fn engine_main(args: &[String]) -> i32 {
     }
     if std::env::var("LT_ONESHOT_STDIN").as_deref() == Ok("1") {
         let tx = tx.clone();
+        // A "p" asks the guest to shut itself down (run_powerdown); the end of stdin quits QEMU.
+        let shutdown = unsafe { lib.get::<unsafe extern "C" fn() -> i32>(b"qemu_ios_ui_shutdown") }.ok().map(|f| *f);
         std::thread::spawn(move || {
-            let mut sink = [0u8; 64];
+            let mut buf = [0u8; 64];
             let mut stdin = std::io::stdin();
-            while matches!(stdin.read(&mut sink), Ok(n) if n > 0) {}
+            while let Ok(n) = stdin.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if buf[..n].contains(&b'p') {
+                    let route = shutdown.map_or(0, |f| unsafe { f() });
+                    eprintln!("firmwarekit oneshot: guest shutdown requested (route {route})");
+                }
+            }
             let _ = tx.send(());
         });
     }

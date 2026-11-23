@@ -52,6 +52,14 @@ fn be64(b: &[u8], o: usize) -> u64 {
     (be32(b, o) as u64) << 32 | be32(b, o + 4) as u64
 }
 
+fn le32(b: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+}
+
+fn le64(b: &[u8], o: usize) -> u64 {
+    (le32(b, o + 4) as u64) << 32 | le32(b, o) as u64
+}
+
 impl UdifImage {
     pub fn open(path: &Path) -> Result<UdifImage> {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -272,6 +280,32 @@ pub fn apm_hfs_slice(r: &[u8]) -> Result<(u64, u64)> {
     Err(crate::unsupported!("no Apple_HFS(X) partition"))
 }
 
+/// (byte offset, byte length) of the Apple_HFS(X) partition in a GPT disk.
+fn gpt_hfs_slice(header: &[u8], entries: &[u8]) -> Result<(u64, u64)> {
+    const APPLE_HFS: [u8; 16] = [
+        0x00, 0x53, 0x46, 0x48, 0x00, 0x00, 0xaa, 0x11, 0xaa, 0x11, 0x00, 0x30, 0x65, 0x43, 0xec, 0xac,
+    ];
+    if header.len() < 92 || &header[..8] != b"EFI PART" {
+        return Err(crate::unsupported!("not a GPT header"));
+    }
+    let entry_size = le32(header, 84) as usize;
+    let count = le32(header, 80) as usize;
+    if entry_size < 128 || entries.len() < entry_size * count {
+        return Err(crate::unsupported!("invalid GPT partition table"));
+    }
+    for i in 0..count {
+        let e = &entries[i * entry_size..(i + 1) * entry_size];
+        if e[..16] == APPLE_HFS {
+            let first = le64(e, 32);
+            let last = le64(e, 40);
+            if last >= first {
+                return Ok((first * 512, (last - first + 1) * 512));
+            }
+        }
+    }
+    Err(crate::unsupported!("no Apple_HFS(X) partition in GPT"))
+}
+
 /// The raw HFS+ volume out of a rootfs DMG (straight from the UDIF chunks); a source that already is a bare HFS
 /// volume is copied as is.
 pub fn extract_rootfs(dmg: &Path, out: &Path) -> Result<()> {
@@ -284,7 +318,37 @@ pub fn extract_rootfs(dmg: &Path, out: &Path) -> Result<()> {
         }
     }
     let image = UdifImage::open(dmg)?;
-    let (off, len) = apm_hfs_slice(&image.read(0, 64)?)?;
+    // A plain HFS+ volume inside a UDIF (no Apple partition map): 10.3.4's rootfs is one, and its
+    // volume can start after a leading zero block or a GPT/APM, so find the HFS signature at the
+    // first sector whose +1024 bytes are H+/HX.
+    let head = image.read(0, 4096)?;
+    for sector in 0..4096usize {
+        let at = sector * 512 + 1024;
+        if at + 2 > head.len() {
+            break;
+        }
+        if &head[at..at + 2] == b"H+" || &head[at..at + 2] == b"HX" {
+            let _ = std::fs::remove_file(out);
+            let file = posio::create_sparse(out)?;
+            let length = (image.sector_count - sector as u64) * 512;
+            file.set_len(length)
+                .map_err(|e| crate::internal!("cannot size {}: {e}", out.display()))?;
+            image.write_to(&file, sector as u64..image.sector_count)?;
+            return Ok(());
+        }
+    }
+    let (off, len) = match apm_hfs_slice(&image.read(0, 64)?) {
+        Ok(slice) => slice,
+        Err(_) => {
+            let header = image.read(1, 1)?;
+            let entries_lba = le64(&header, 72);
+            let count = le32(&header, 80).max(1) as u64;
+            let entry_size = le32(&header, 84).max(128) as u64;
+            let sectors = (count * entry_size).div_ceil(512);
+            let entries = image.read(entries_lba, sectors)?;
+            gpt_hfs_slice(&header, &entries)?
+        }
+    };
     let _ = std::fs::remove_file(out);
     let file = posio::create_sparse(out)?;
     file.set_len(len).map_err(|e| crate::internal!("cannot size {}: {e}", out.display()))?;

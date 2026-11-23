@@ -137,6 +137,108 @@ impl DeviceTree {
         Ok(())
     }
 
+    /// Replaces a property with a resized record (Swift `DeviceTree.replace`). Handoff addresses
+    /// must be calculated after this; offsets move.
+    pub fn replace(&mut self, path: &str, prop: &str, value: Value) -> Result<()> {
+        let slot = self.slot(path, prop).ok_or_else(|| crate::unsupported!("DeviceTree: no {path}:{prop}"))?;
+        let bytes = value.encoded();
+        let mut record = self.data[slot.offset..slot.offset + 32].to_vec();
+        record.extend_from_slice(&le(&[bytes.len() as u32]));
+        record.extend_from_slice(&bytes);
+        record.resize(record.len() + pad4(bytes.len()) - bytes.len(), 0);
+        self.data.splice(slot.offset..slot.offset + 36 + pad4(slot.length), record);
+        self.reparse()
+    }
+
+    /// Resolve restore-tree iBoot expressions (`syscfg/...`, `macaddr/...`, `zeroes/n`) before laying
+    /// out memory. Missing syscfg values follow iBoot: try the next alternative, or omit the property.
+    /// Swift `DeviceTree.resolveBootDirectives`.
+    pub fn resolve_boot_directives(
+        &mut self,
+        syscfg: &BTreeMap<String, Vec<u8>>,
+        mac_addresses: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<()> {
+        let mut changes: Vec<(Slot, Option<Vec<u8>>)> = Vec::new();
+        for props in self.props.values() {
+            for slot in props.values() {
+                if u32le(&self.data, slot.offset + 32) & 0x8000_0000 == 0 {
+                    continue;
+                }
+                let text = cstr(&self.data[slot.offset + 36..slot.offset + 36 + slot.length]);
+                let mut result: Option<Vec<u8>> = None;
+                let mut may_omit = false;
+                for option in text.split(',') {
+                    let fields: Vec<&str> = option.split('/').collect();
+                    if fields.len() < 2 || fields.len() > 3 {
+                        return Err(crate::unsupported!("DeviceTree: invalid iBoot directive {text}"));
+                    }
+                    let count = if fields.len() == 3 || fields[0] == "zeroes" {
+                        let last = fields[fields.len() - 1];
+                        let n = if let Some(hex) = last.strip_prefix("0x") {
+                            usize::from_str_radix(hex, 16).ok()
+                        } else {
+                            last.parse::<usize>().ok()
+                        };
+                        match n {
+                            Some(n) if n <= 1 << 20 => Some(n),
+                            _ => return Err(crate::unsupported!("DeviceTree: invalid directive size {text}")),
+                        }
+                    } else {
+                        None
+                    };
+                    match fields[0] {
+                        "syscfg" => {
+                            result = syscfg.get(fields[1]).cloned();
+                            may_omit = true;
+                        }
+                        "macaddr" => result = mac_addresses.get(fields[1]).cloned(),
+                        "zeroes" => result = Some(vec![0u8; count.unwrap_or(0)]),
+                        _ => return Err(crate::unsupported!("DeviceTree: unknown iBoot directive {text}")),
+                    }
+                    if let Some(value) = result {
+                        result = Some(if let Some(n) = count {
+                            let mut out = value[..value.len().min(n)].to_vec();
+                            out.resize(n, 0);
+                            out
+                        } else {
+                            value
+                        });
+                        break;
+                    }
+                }
+                if result.is_none() && !may_omit {
+                    return Err(crate::unsupported!("DeviceTree: unresolved iBoot directive {text}"));
+                }
+                changes.push((*slot, result));
+            }
+        }
+        changes.sort_by(|a, b| b.0.offset.cmp(&a.0.offset));
+        for (slot, value) in changes {
+            match value {
+                None => {
+                    let owner = self
+                        .nodes
+                        .values()
+                        .filter(|n| n.start < slot.offset && slot.offset < n.props_end)
+                        .max_by_key(|n| n.start)
+                        .copied()
+                        .ok_or_else(|| crate::internal!("DeviceTree: directive outside a node"))?;
+                    let n = u32le(&self.data, owner.start).wrapping_sub(1);
+                    self.data[owner.start..owner.start + 4].copy_from_slice(&n.to_le_bytes());
+                    self.data.drain(slot.offset..slot.offset + 36 + pad4(slot.length));
+                }
+                Some(value) => {
+                    let mut record = self.data[slot.offset..slot.offset + 32].to_vec();
+                    record.extend_from_slice(&le(&[value.len() as u32]));
+                    record.extend_from_slice(&value);
+                    record.resize(record.len() + pad4(value.len()) - value.len(), 0);
+                    self.data.splice(slot.offset..slot.offset + 36 + pad4(slot.length), record);
+                }
+            }
+        }
+        self.reparse()
+    }
+
     /// Appends a property to a node; the blob grows, so lay memory out after the last add.
     pub fn add(&mut self, path: &str, prop: &str, value: &[u8]) -> Result<()> {
         let node = *self.nodes.get(path).ok_or_else(|| crate::unsupported!("DeviceTree: no node {path}"))?;

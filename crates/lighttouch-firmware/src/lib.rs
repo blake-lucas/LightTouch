@@ -24,11 +24,20 @@
 //!   kboot      the direct-kernel boot bundle (kboot.bin);  k48iboot  the iPad's real-iBoot chain (gid blobs, NOR)
 //!   sandbox_patch  the jailbroken kernel's sandbox patch and the kernelcache re-wrap;  rootfs_patch  the 7.x rootfs
 //!              remount patch
+pub mod a6_assets;
+pub mod a6_firstboot;
+pub mod a6_graphics;
+pub mod a6_preparation;
+pub mod a6_restore;
+pub mod a6_storage;
+pub mod a6nand;
 pub mod activation;
 pub mod assets;
+pub mod baseband;
 pub mod boot;
 pub mod cache;
 pub mod create;
+pub mod codesign;
 pub mod cydia;
 pub mod decrypt;
 pub mod devicetree;
@@ -52,6 +61,7 @@ pub mod keyboards;
 pub mod lock;
 pub mod lzss;
 pub mod macho;
+pub mod n42_recipe;
 pub mod n45_recipe;
 pub mod n45ftl;
 pub mod n45nand;
@@ -72,6 +82,7 @@ pub mod rootfs_patch;
 pub mod sandbox_patch;
 pub mod setup;
 pub mod shared_cache;
+pub mod sideload;
 pub mod system_edits;
 pub mod truststore1x;
 pub mod udif;

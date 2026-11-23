@@ -69,6 +69,14 @@ pub struct Options {
     /// Game Center's daemon disabled (create --no-game-center): benchmark devices, whose games would otherwise open
     /// on its sign-in prompt at every launch (there is no network to sign in with).
     pub no_game_center: bool,
+    /// The firmware architecture used by fit checks and the dyld cache path ("armv7", "armv7s").
+    pub firmware_arch: String,
+    /// N42 can stage a recognized data-only activation plan whose cache the native restore environment generates.
+    pub native_gestalt_activation: bool,
+    /// Initial global Location Services choice for the finished-Setup records.
+    pub location_services_enabled: bool,
+    /// When Setup finished (Unix seconds); nil uses `now`.
+    pub setup_finished: Option<i64>,
 }
 
 impl Default for Options {
@@ -92,6 +100,10 @@ impl Default for Options {
             sms_in_imagent: false,
             apps: Vec::new(),
             no_game_center: false,
+            firmware_arch: "armv7".to_string(),
+            native_gestalt_activation: false,
+            location_services_enabled: false,
+            setup_finished: None,
         }
     }
 }
@@ -342,7 +354,7 @@ pub fn build_k48(
     let keyboards = KeyboardCatalog::read(&ed);
     let formats = setup::region_formats(&ed);
     // every baked helper proven to load on this firmware, read before any edit
-    let fw = Firmware::new(ed.snapshot()?, "armv7", kernel);
+    let fw = Firmware::new(ed.snapshot()?, &o.firmware_arch, kernel);
     // a dyld without LC_DYLD_INFO_ONLY (3.0's: none of its own executables carry one) takes the legacy builds
     let legacy = !fw.precedent().contains_key(&fitcheck::LC_DYLD_INFO_ONLY);
     let pick = |n: &str| if legacy { helpers::legacy(n) } else { n.to_string() };
@@ -396,7 +408,7 @@ pub fn build_k48(
     let fstab = if product_major >= 7 && !o.jailbreak { FSTAB_RO } else { FSTAB_RW };
     ed.write(FSTAB, fstab.as_bytes().to_vec(), None)?;
     if o.web_proxy {
-        let now_fw = Firmware::new(ed.snapshot()?, "armv7", None);
+        let now_fw = Firmware::new(ed.snapshot()?, &o.firmware_arch, None);
         fit.check(fitcheck::web_proxy(&now_fw), false, "kept: the PAC is unused")?;
         root_owned.extend(install_pac(&mut ed, &[])?);
     }
@@ -420,8 +432,18 @@ pub fn build_k48(
         for (k, v) in &env {
             e.insert(k.to_string(), Value::String(v.to_string()));
         }
-        job.insert("StandardOutPath".into(), "/dev/console".into());
-        job.insert("StandardErrorPath".into(), "/dev/console".into());
+        if product_major >= 8 {
+            // iOS 8 on: release xpcproxy launches SpringBoard as mobile, which can't open the root-owned console, so
+            // a console stdio keeps SpringBoard from ever starting. Its stock stdio policy stays (the Swift's rule).
+            for key in ["StandardOutPath", "StandardErrorPath"] {
+                if job.get(key).and_then(Value::as_string) == Some("/dev/console") {
+                    job.remove(key);
+                }
+            }
+        } else {
+            job.insert("StandardOutPath".into(), "/dev/console".into());
+            job.insert("StandardErrorPath".into(), "/dev/console".into());
+        }
         Ok(())
     })?;
     if o.jailbreak {
@@ -434,7 +456,7 @@ pub fn build_k48(
         root_modes.extend(jb.modes);
     }
     if o.appsync {
-        install_app_sync(&mut ed, &helper(&pick(helpers::APPSYNC))?, &dyld_cache("armv7"), log)?;
+        install_app_sync(&mut ed, &helper(&pick(helpers::APPSYNC))?, &dyld_cache(&o.firmware_arch), log)?;
         root_owned.push(APPSYNC_PATH.to_string());
     }
     // bake
@@ -478,15 +500,29 @@ pub fn build_k48(
         disable(&mut ed, GAMED_JOB)?;
         log("Game Center: gamed disabled");
     }
-    result.activation = Some(match activate(&mut ed, log) {
+    result.activation = Some(match activate(&mut ed, &o.firmware_arch, log) {
         Ok(r) => r,
         Err(failure) => {
-            let Some(r) = activation::data_ark_route(&ed.read(LOCKDOWND)?) else {
-                return Err(crate::error::Error { code: Code::ActivationFailed, message: failure.0, piece: None });
+            let build = product_build.clone();
+            let daemon = if build == "14G61" {
+                "usr/libexec/mobileactivationd"
+            } else {
+                "System/Library/PrivateFrameworks/MobileActivation.framework/Support/mobactivationd"
             };
-            let keys: Vec<&str> = r.data_ark.iter().flatten().map(|(k, _)| k.as_str()).collect();
-            log(&format!("lockdownd: no binary strategy; activation by the data ark ({})", keys.join(", ")));
-            r
+            if o.native_gestalt_activation
+                && !build.is_empty()
+                && let Ok(component) = ed.read(daemon)
+                && let Some(plan) = activation::native_gestalt_plan(&component, &build)
+            {
+                log("Activation requires native MobileGestalt cache initialization before normal boot");
+                plan
+            } else if let Some(r) = activation::data_ark_route(&ed.read(LOCKDOWND)?) {
+                let keys: Vec<&str> = r.data_ark.iter().flatten().map(|(k, _)| k.as_str()).collect();
+                log(&format!("lockdownd: no binary strategy; activation by the data ark ({})", keys.join(", ")));
+                r
+            } else {
+                return Err(crate::error::Error { code: Code::ActivationFailed, message: failure.0, piece: None });
+            }
         }
     });
     root_owned.push(LOCKDOWND.to_string());
@@ -499,7 +535,7 @@ pub fn build_k48(
         omitted.insert(format!("/{}", msm.1));
     }
     if o.guest_tools {
-        let (seeded, record) = seed_guest_package(&mut ed, helpers_dir, "armv7", result.engine.is_some(), &omitted, fit, log)?;
+        let (seeded, record) = seed_guest_package(&mut ed, helpers_dir, &o.firmware_arch, result.engine.is_some(), &omitted, fit, log)?;
         result.guest_package = Some(record);
         root_owned.extend(seeded);
     }
@@ -533,10 +569,13 @@ pub fn build_k48(
         let source = Editor::open_read_only(&system)?;
         copy_tree(&source, "private/var", &mut dv, "")?;
     }
-    seed_data(&mut dv, "", o, product_major, result.activation.as_ref().and_then(|a| a.data_ark.as_deref()), keyboards.as_ref(), formats.as_ref(), now, log)?;
+    seed_data(&mut dv, "", o, product_major, &product_version, result.activation.as_ref().and_then(|a| a.data_ark.as_deref()), keyboards.as_ref(), formats.as_ref(), now, log)?;
     let region = REGION.split('/').next().unwrap_or("");
-    if let Some(installed) =
-        assets::seed_preinstalled_assets(&mut dv, "", product_major, &product_version, &product_build, region)?
+    // The N42 Swift bake does not install the preinstalled-asset catalog; keep that path off for
+    // the A6 volumes so the Data image matches the reference.
+    if o.firmware_arch != "armv7s"
+        && let Some(installed) =
+            assets::seed_preinstalled_assets(&mut dv, "", product_major, &product_version, &product_build, region)?
     {
         log(&format!("preinstalled assets: {} installed as mobileassetd would at the first boot", installed.len()));
     }
@@ -720,10 +759,14 @@ fn disable(ed: &mut Editor, job: &str) -> Result<()> {
 }
 
 /// lockdownd activated in place; the caller makes it root-owned.
-pub fn activate(ed: &mut Editor, log: &dyn Fn(&str)) -> std::result::Result<ActivationResult, activation::Failure> {
+pub fn activate(
+    ed: &mut Editor,
+    firmware_arch: &str,
+    log: &dyn Fn(&str),
+) -> std::result::Result<ActivationResult, activation::Failure> {
     log("Activating device");
     let before = ed.read(LOCKDOWND).map_err(|e| activation::Failure(e.message))?;
-    let (after, result) = activation::run(&before)?;
+    let (after, result) = activation::run(&before, firmware_arch == "armv7s")?;
     ed.write(LOCKDOWND, after, None).map_err(|e| activation::Failure(e.message))?;
     Ok(result)
 }
@@ -868,6 +911,7 @@ pub fn seed_data(
     var_root: &str,
     o: &Options,
     product_major: u32,
+    product_version: &str,
     data_ark: Option<&[(String, String)]>,
     keyboards: Option<&KeyboardCatalog>,
     formats: Option<&HashSet<String>>,
@@ -884,7 +928,17 @@ pub fn seed_data(
     }
     if o.skip_setup && product_major >= 5 {
         let (l, locale) = language.as_ref().map(|l| (l.language.as_str(), l.locale.as_str())).unwrap_or(("en", "en_US"));
-        setup::seed_finished_setup(ed, var_root, product_major, l, locale, now)?;
+        setup::seed_finished_setup_with(
+            ed,
+            var_root,
+            product_major,
+            l,
+            locale,
+            product_version,
+            o.location_services_enabled,
+            o.firmware_arch == "armv7s",
+            o.setup_finished.unwrap_or(now),
+        )?;
         log(&format!("Setup Assistant: seeded as finished (iOS {product_major})"));
     }
     if let Some(ark) = data_ark {

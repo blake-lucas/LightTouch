@@ -201,10 +201,11 @@ class EngineService : Service() {
             }
             val libraryRoot = File(filesDir, "library").absolutePath
             sessionRecord = recordId
-            deviceName = Native.records(libraryRoot).firstOrNull { it[0] == recordId }?.getOrNull(1) ?: ""
+            val row = Native.records(libraryRoot).firstOrNull { it[0] == recordId }
+            deviceName = row?.getOrNull(1) ?: ""
             foreground()
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
-            usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
+            usbError = usbThread.submit<String?> { usb.start(recordId, appPairs = row?.getOrNull(2) == "n42ap") }.get() ?: ""
             // The Settings switch (AppSettings.fewerAppPauses): the code-cache flushes as an app opens and once it
             // settles are worth ~5% in games (docs/PERFORMANCE.md) but each costs a pause. debug-env below still
             // overrides it.

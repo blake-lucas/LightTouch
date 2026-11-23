@@ -67,7 +67,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
 
     // Activation: on the pristine lockdownd bytes, byte-for-byte what the recipe records and bakes.
-    match activation::run(&lockdownd) {
+    match activation::run(&lockdownd, false) {
         Ok((bytes, result)) => {
             if commit {
                 ed.write("usr/libexec/lockdownd", bytes, None).map_err(|e| e.to_string())?;

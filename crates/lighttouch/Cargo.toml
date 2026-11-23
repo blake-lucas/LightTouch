@@ -25,6 +25,15 @@ serde_json = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Linux: winit draws the window's own title bar where the compositor won't (GNOME on Wayland has no server-side
+# decorations). eframe builds winit without its default features, which left SCTK's bare fallback frame; this adds the
+# Adwaita-styled frame GNOME apps have (pure Rust fonts, nothing new for the Debian 11 build). KDE Plasma and wlroots
+# compositors still decorate the window themselves, and X11 window managers always do. raw-window-handle names the
+# backend in the log.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+raw-window-handle = "0.6"
+
 # The window draws with Metal on macOS (ui::run): macOS holds an OpenGL window to 60 Hz on a ProMotion panel, so a
 # 60 fps guest frame waited up to a whole refresh and the pages scrolled at 60.
 [target.'cfg(target_os = "macos")'.dependencies]

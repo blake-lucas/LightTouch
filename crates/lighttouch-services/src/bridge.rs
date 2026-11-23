@@ -23,7 +23,8 @@ pub struct Bridge {
 
 impl Bridge {
     /// Start the daemon and wait (up to 5 s) for both sockets. `log` receives its output.
-    pub fn start(daemon: &Path, pairing: &Path, log: &Path) -> Result<Self> {
+    /// `app_pairs`: the daemon leaves pairing to the app (`-p`; lockdown.rs pairs on iOS 10).
+    pub fn start(daemon: &Path, pairing: &Path, log: &Path, app_pairs: bool) -> Result<Self> {
         if !daemon.is_file() {
             return Err(Error("Guest app services are not included in this build.".into()));
         }
@@ -61,7 +62,7 @@ impl Bridge {
                 .arg("-P")
                 .arg(dir.join("daemon.pid"))
                 // LIGHTTOUCH_SELF_PAIR: the app pairs, as it must on Windows (lockdown.rs), so the daemon doesn't.
-                .args(std::env::var_os("LIGHTTOUCH_SELF_PAIR").map(|_| "-p"))
+                .args((app_pairs || std::env::var_os("LIGHTTOUCH_SELF_PAIR").is_some()).then_some("-p"))
                 .env("USBMUXD_QEMU_ADDR", &guest_socket)
                 .stdin(Stdio::null())
                 .stdout(out.try_clone()?)

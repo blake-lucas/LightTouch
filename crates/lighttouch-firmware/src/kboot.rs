@@ -45,6 +45,10 @@ pub const DEFAULT_BOOT_ARGS: &str = "serial=3 debug=0x8 amfi_allow_any_signature
 pub const DEFAULT_IBOOT_VERSION: &str = "iBoot-817.29";
 pub const ROOT_MATCHING: &str = "<dict><key>IOProviderClass</key><string>IOMedia</string><key>IOPropertyMatch</key>\
 <dict><key>Partition ID</key><integer>1</integer></dict></dict>";
+/// The A6 PPN disk uses LwVM: the System filesystem is a child of the outer partition. The
+/// restore bundle and the normal boot name `disk0s1` or the default `disk0s1s1`.
+pub const A6_ROOT_MATCHING: &str = "<dict><key>IOProviderClass</key><string>IOMedia</string><key>IOPropertyMatch</key>\
+<dict><key>BSD Name</key><string>disk0s1s1</string></dict></dict>";
 
 // Measured on a real iPad 1 running 7B500: cpu/memory 0, bus/peripheral 100 MHz, fixed/timebase 24 MHz.
 const CPU_HZ: u32 = 0;
@@ -150,6 +154,39 @@ const NAND: [(&str, u32); 30] = [
     // _fmiInitVirtToPhysMap loops forever on an empty one. 4 CEs on each of 2 buses.
     ("ce-bitmap", 0x0F0F),
 ];
+/// A pair of Hynix PPN packages, two CAUs per package; the iPhone 5's DT has slots for iBoot's
+/// probed storage identity (Swift `KBoot.a6PPN`).
+const A6_PPN: [(&str, u32); 29] = [
+    ("#ce", 2),
+    ("#die-ce", 2),
+    ("#ce-blocks", 2128),
+    ("#block-pages", 256),
+    ("#page-bytes", 16384),
+    ("#spare-bytes", 64),
+    ("#databus", 2),
+    ("max-transaction-size", 128),
+    ("ce-bitmap", 0x101),
+    ("ppn-device", 1),
+    ("ppn-spec-version", 0x10505),
+    ("ppn-ftl-ver", 2),
+    ("caus-ce", 2),
+    ("blocks-cau", 1064),
+    ("cau-bits", 4),
+    ("block-bits", 11),
+    ("page-bits", 8),
+    ("mlc-pages", 256),
+    ("slc-pages", 128),
+    ("toggle-device", 1),
+    ("logical-page-size", 4096),
+    ("meta-per-logical-page", 16),
+    ("valid-meta-per-logical-page", 16),
+    ("metadata-whitening", 0),
+    ("read-setup-clks", 1),
+    ("read-hold-clks", 1),
+    ("read-dccycle-clks", 1),
+    ("write-setup-clks", 1),
+    ("write-hold-clks", 1),
+];
 /// The nodes the geometry goes in: iBoot-1219 DTs carry it on flash-controller0 itself as well as on its disk.
 const NAND_NODES: [&str; 2] = ["arm-io/flash-controller0", "arm-io/flash-controller0/disk"];
 const MODEL: [(&str, &str); 2] = [("model-number", "MB292"), ("region-info", "LL/A")];
@@ -165,6 +202,8 @@ pub struct Board {
     pub model_number: &'static str,
     /// DRAM bytes: memSize, vram and pram sit at its top, as iBoot puts them.
     pub dram: u32,
+    /// The physical address that maps the kernel's virtual base (A4 0x4000_0000, A6 0x8000_0000).
+    pub physical_base: u32,
     /// A radio board (N90) keeps its baseband node; the machine's `baseband` property unmatches it at boot.
     pub radio: bool,
     /// The machine answers the Bluetooth HCI on the UART the DT hangs the board's bluetooth node off (qemu-ios bt_uart),
@@ -209,6 +248,7 @@ impl Board {
             board_id,
             model_number,
             dram: DRAM_SIZE,
+            physical_base: PHYS_BASE,
             radio: false,
             bluetooth_hci: false,
             platform_name: "s5l8930x",
@@ -255,6 +295,27 @@ impl Board {
         }
     }
 
+    /// iPhone 5 (S5L8950): its own kernel, DT, memory map and native panel.
+    pub fn n42() -> Board {
+        Board {
+            fb_width: 640,
+            fb_height: 1136,
+            rotation: 0,
+            scale: 2,
+            board_id: 0x02,
+            model_number: "MD299",
+            dram: 0x4000_0000,
+            physical_base: 0x8000_0000,
+            radio: true,
+            platform_name: "s5l8950x",
+            chip_id: 0x8950,
+            clocks: vec![24_000_000; 512],
+            dot_pitch: Some(326),
+            chip_revision: 0x20,
+            ..Board::base(640, 1136, 0, 2, 0x02, "MD299")
+        }
+    }
+
     /// iPhone 3GS (S5L8920): -M n88, model MB715. Its baseband node is unmatched (no modem model yet).
     pub fn n88() -> Board {
         Board {
@@ -284,7 +345,11 @@ impl Board {
 
     /// The S5L8920 family (-M n18, n88): no metadata whitening in its DTs, the IPSW's NAND epoch, no USB host.
     pub fn is_s5l8920(&self) -> bool {
-        self.platform_name != "s5l8930x"
+        matches!(self.chip_id, 0x8920 | 0x8922)
+    }
+
+    pub fn is_a6(&self) -> bool {
+        self.chip_id == 0x8950
     }
 
     /// From the DT's compatible ("N81AP\0iPod4,1\0AppleARM" -> n81); K48 otherwise.
@@ -298,6 +363,7 @@ impl Board {
             "N90AP" => Board::n90(),
             "N88AP" => Board::n88(),
             "N18AP" => Board::n18(),
+            "N42AP" => Board::n42(),
             _ => Board::k48(),
         }
     }
@@ -307,13 +373,13 @@ impl Board {
     }
 
     pub fn vram_pa(&self) -> u32 {
-        PHYS_BASE + self.mem_size()
+        self.physical_base + self.mem_size()
     }
 
     /// iBoot puts the A4's PRAM at the top of its 512 MiB DRAM window whatever the DRAM (0x5fffc000 on the 256 MiB iPad
     /// too, where the window mirrors DRAM); the S5L8920's at the top of its DRAM.
     pub fn pram_pa(&self) -> u32 {
-        PHYS_BASE + if self.is_s5l8920() { self.dram } else { 0x2000_0000 } - PRAM_SIZE
+        self.physical_base + if self.is_s5l8920() || self.is_a6() { self.dram } else { 0x2000_0000 } - PRAM_SIZE
     }
 }
 
@@ -515,7 +581,8 @@ fn identity_dt(id: &UnitIdentity, board: &Board) -> Result<(Props, Props, Vec<(&
         ("die-id", Value::Words(die_words)),
     ];
     // Bluetooth hangs off whichever UART the board wires it to (K48 uart3, N81 uart1): fill_dt finds it.
-    Ok((root, chosen, vec![("arm-io/sdio", mac(&need("wifi-mac")?)?), ("bluetooth", mac(&need("bt-mac")?)?)]))
+    let wifi = if board.is_a6() { "wlan" } else { "arm-io/sdio" };
+    Ok((root, chosen, vec![(wifi, mac(&need("wifi-mac")?)?), ("bluetooth", mac(&need("bt-mac")?)?)]))
 }
 
 /// An empty NVRAM image as IODTNVRAM parses it (ipad1_kboot.nvram_image): CHRP partitions, a 2 KiB "common" (0x70),
@@ -600,12 +667,35 @@ fn fill_dt(dt: &mut DeviceTree, memory_map: &[(String, u32, u32)], identity: &Un
         ("fixed-frequency", FIXED_HZ),
         ("timebase-frequency", TIMEBASE_HZ),
     ] {
-        dt.set("cpus/cpu0", k, Value::U32(hz))?;
+        let hz = if board.is_a6() && k == "clock-frequency" { 1_300_000_000 } else { hz };
+        if dt.has("cpus/cpu0", k) {
+            dt.set("cpus/cpu0", k, Value::U32(hz))?;
+        }
+        if dt.has("cpus/cpu1", k) {
+            dt.set("cpus/cpu1", k, Value::U32(hz))?;
+        }
     }
     let slots = dt.slot("arm-io", "clock-frequencies").map_or(board.clocks.len() * 4, |s| s.length) / 4;
     dt.set("arm-io", "clock-frequencies", Value::Words(board.clocks.iter().copied().take(slots).collect()))?;
     dt.set("arm-io", "usbphy-frequency", Value::U32(USBPHY_HZ))?;
-    if !board.is_s5l8920() {
+    if board.is_a6()
+        && let (Some(template), Some(nominal), Some(boost)) = (
+            dt.value("arm-io/pmgr", "voltage-states1"),
+            dt.value("arm-io/pmgr", "nominal-performance1"),
+            dt.value("arm-io/pmgr", "boost-performance1"),
+        )
+        && template.iter().all(|&b| b == 0)
+    {
+        // The restore DT reserves the GPU domain's state table for iBoot. Use its own declared
+        // nominal/boost levels in the CPU table's 8-byte performance/voltage format.
+        let mut states = Vec::new();
+        states.extend_from_slice(&nominal[..nominal.len().min(4)]);
+        states.resize(8, 0);
+        states.extend_from_slice(&boost[..boost.len().min(4)]);
+        states.resize(16, 0);
+        dt.set("arm-io/pmgr", "voltage-states1", Value::Bytes(states))?;
+    }
+    if !board.is_s5l8920() && !board.is_a6() {
         let bridge = hex::decode(A4_BRIDGE_SETTINGS).unwrap_or_default();
         if dt.slot("arm-io/pmgr", "bridge-settings").is_some_and(|s| s.length >= bridge.len()) {
             dt.set("arm-io/pmgr", "bridge-settings", Value::Bytes(bridge))?;
@@ -673,10 +763,14 @@ fn fill_dt(dt: &mut DeviceTree, memory_map: &[(String, u32, u32)], identity: &Un
     }
     for node in NAND_NODES {
         let Some(props) = dt.props.get(node).cloned() else { continue };
-        for (k, v) in &NAND {
+        let geometry: &[(&str, u32)] = if board.is_a6() { &A6_PPN } else { &NAND };
+        for (k, v) in geometry {
             if props.contains_key(*k) {
                 dt.set(node, k, Value::U32(*v))?;
             }
+        }
+        if board.is_a6() && props.contains_key("device-readid") {
+            dt.set(node, "device-readid", Value::Bytes(vec![0x50, 0x50, 0x4e, 1, 5, 5, 0, 0]))?;
         }
     }
     dt.set("pram", "reg", Value::Words(vec![board.pram_pa(), PRAM_SIZE]))?;
@@ -689,7 +783,28 @@ fn fill_dt(dt: &mut DeviceTree, memory_map: &[(String, u32, u32)], identity: &Un
 }
 
 /// The flat physical image, its load PA, entry PA and boot_args PA. `ramdisk`: raw HFS to boot as md0.
-pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &UnitIdentity, iboot: &str, ramdisk: Option<&[u8]>) -> Result<Image> {
+pub fn build(
+    kernel: &[u8],
+    device_tree: &[u8],
+    boot_args: &str,
+    identity: &UnitIdentity,
+    iboot: &str,
+    ramdisk: Option<&[u8]>,
+) -> Result<Image> {
+    build_with_root(kernel, device_tree, boot_args, identity, iboot, ramdisk, None)
+}
+
+/// `build` with the named root device the A6 normal boot uses (`disk0s1`). The restore bundle
+/// passes its own `rootDevice`; the caller's boot args carry `nand-enable-reformat=1` separately.
+pub fn build_with_root(
+    kernel: &[u8],
+    device_tree: &[u8],
+    boot_args: &str,
+    identity: &UnitIdentity,
+    iboot: &str,
+    ramdisk: Option<&[u8]>,
+    root_device: Option<&str>,
+) -> Result<Image> {
     let page = |n: usize| (n + 0xFFF) & !0xFFF;
     let m = MachO::new(kernel)?;
     let segs: Vec<&MachSegment> = m.segments.iter().filter(|s| s.name != "__PAGEZERO").collect();
@@ -698,11 +813,37 @@ pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &Unit
     else {
         return Err(crate::unsupported!("kernelcache has no segments"));
     };
+    let named_root = match root_device {
+        Some(d) => {
+            if d.is_empty() || !d.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()) {
+                return Err(crate::unsupported!("invalid root device name"));
+            }
+            Some(format!(
+                "<dict><key>IOProviderClass</key><string>IOMedia</string><key>IOPropertyMatch</key>\
+<dict><key>BSD Name</key><string>{d}</string></dict></dict>"
+            ))
+        }
+        None => None,
+    };
     let vbase = (lowest & 0xF000_0000) as usize;
-    let pa = |va: usize| (va as i64 - vbase as i64 + PHYS_BASE as i64) as u32;
     let mut dt = DeviceTree::new(device_tree)?;
     let board = Board::of(&dt);
-    graft_nor(&mut dt)?;
+    if board.is_a6() {
+        // Later restore trees describe iBoot syscfg lookups rather than zero-filled slots. Resolve
+        // them before measuring the tree, then replace the two-byte random-seed placeholder.
+        let (syscfg, macs) = a6_syscfg(identity, &board)?;
+        dt.resolve_boot_directives(&syscfg, &macs)?;
+        match dt.slot("chosen", "random-seed") {
+            Some(s) if s.length != 64 => dt.replace("chosen", "random-seed", Value::Bytes(vec![0; 64]))?,
+            Some(_) => {}
+            None => dt.add("chosen", "random-seed", &vec![0u8; 64])?,
+        }
+    }
+    let physical_base = board.physical_base;
+    let pa = |va: usize| (va as i64 - vbase as i64 + physical_base as i64) as u32;
+    if !board.is_a6() {
+        graft_nor(&mut dt)?;
+    }
     // Host nubs (EHCI, OHCI0) up at arbitrator start, next to device mode (qemu-ios docs/ipad1/usb-keyboard.md).
     if dt.contains("arm-io/usb-complex") {
         dt.add("arm-io/usb-complex", "hsic-enabled", &[])?;
@@ -719,6 +860,13 @@ pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &Unit
     let args_va = top + page(dt_len);
     let end_va = args_va + 0x1000;
     let top_of_kernel = pa((end_va + 0x3FFF) & !0x3FFF);
+    if end_va - vbase > board.mem_size() as usize {
+        return Err(crate::unsupported!(
+            "the kernelcache's segments, RAM disk and device tree take {} bytes, past the board's {}",
+            end_va - vbase,
+            board.mem_size()
+        ));
+    }
 
     let mut image = vec![0u8; end_va - vbase];
     let mut memory_map: Vec<(String, u32, u32)> = Vec::new();
@@ -738,7 +886,12 @@ pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &Unit
     }
     memory_map.push(("DeviceTree".into(), pa(dt_va), dt_len as u32));
     memory_map.push(("BootArgs".into(), pa(args_va), 0x1000));
-    fill_dt(&mut dt, &memory_map, identity, iboot, if ramdisk.is_none() { ROOT_MATCHING } else { "" })?;
+    let root_matching = if ramdisk.is_some() {
+        ""
+    } else {
+        named_root.as_deref().unwrap_or(if board.is_a6() { A6_ROOT_MATCHING } else { ROOT_MATCHING })
+    };
+    fill_dt(&mut dt, &memory_map, identity, iboot, root_matching)?;
     let d = dt.data();
     image[dt_va - vbase..dt_va - vbase + d.len()].copy_from_slice(d);
 
@@ -752,7 +905,7 @@ pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &Unit
     let mut ba = vec![1, 0, m.boot_args_version(), 0];
     ba.extend(devicetree::le(&[
         vbase as u32,
-        PHYS_BASE,
+        physical_base,
         board.mem_size(),
         top_of_kernel,
         board.vram_pa(),
@@ -768,7 +921,28 @@ pub fn build(kernel: &[u8], device_tree: &[u8], boot_args: &str, identity: &Unit
     ba.extend_from_slice(cmdline);
     ba.resize(ba.len() + 256 - cmdline.len(), 0);
     image[args_va - vbase..args_va - vbase + ba.len()].copy_from_slice(&ba);
-    Ok(Image { image, load_pa: PHYS_BASE, entry_pa: pa(m.entry()? as usize), boot_args_pa: pa(args_va) })
+    Ok(Image { image, load_pa: physical_base, entry_pa: pa(m.entry()? as usize), boot_args_pa: pa(args_va) })
+}
+
+/// `(syscfg, mac addresses)` for the A6 restore tree's iBoot directives.
+fn a6_syscfg(
+    identity: &UnitIdentity,
+    board: &Board,
+) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, std::collections::BTreeMap<String, Vec<u8>>)> {
+    let (root, _, macs) = identity_dt(identity, board)?;
+    let mut syscfg = std::collections::BTreeMap::new();
+    for (key, field) in [("MLB#", "mlb-serial-number"), ("Regn", "region-info"), ("Mod#", "model-number"), ("SrNm", "serial-number")] {
+        if let Some((_, value)) = root.iter().find(|(k, _)| *k == field) {
+            syscfg.insert(key.to_string(), value.encoded());
+        }
+    }
+    let mut addresses = std::collections::BTreeMap::new();
+    for (node, value) in macs {
+        let key = if node == "bluetooth" { "BMac" } else { "WMac" };
+        syscfg.insert(key.to_string(), value.clone());
+        addresses.insert(if key == "BMac" { "btaddr" } else { "wifiaddr" }.to_string(), value);
+    }
+    Ok((syscfg, addresses))
 }
 
 /// image + segments ("K48SEG\0\0", pa, len, flags bit 0 = zero-fill, data) + the 24-byte trailer.
@@ -813,6 +987,49 @@ pub fn make(decrypted: &Path, identity: &UnitIdentity, boot_args: &str, ramdisk:
 /// `make`, written to `out`.
 pub fn write(decrypted: &Path, out: &Path, identity: &UnitIdentity, boot_args: &str, ramdisk: Option<&Path>, kernel_override: Option<&[u8]>) -> Result<()> {
     std::fs::write(out, make(decrypted, identity, boot_args, ramdisk, kernel_override)?)?;
+    Ok(())
+}
+
+/// `make` with a named root device (the A6 normal boot's `disk0s1`).
+pub fn make_rooted(
+    decrypted: &Path,
+    identity: &UnitIdentity,
+    boot_args: &str,
+    ramdisk: Option<&Path>,
+    kernel_override: Option<&[u8]>,
+    root_device: Option<&str>,
+) -> Result<Vec<u8>> {
+    let file = |n: &str| decrypted.join(n);
+    let kernel = match kernel_override {
+        Some(k) => k.to_vec(),
+        None => std::fs::read(file("kernelcache.mach"))?,
+    };
+    let dt = std::fs::read(file("DeviceTree.bin"))?;
+    let iboot = if file("iBoot.bin").exists() { Some(std::fs::read(file("iBoot.bin"))?) } else { None };
+    let rd = match ramdisk {
+        Some(p) => Some(std::fs::read(p)?),
+        None => None,
+    };
+    let img = build_with_root(&kernel, &dt, boot_args, identity, &iboot_version(iboot.as_deref()), rd.as_deref(), root_device)?;
+    let board = Board::of(&DeviceTree::new(&dt)?);
+    let logo = if file("AppleLogo.bin").exists() {
+        logo_segments(&std::fs::read(file("AppleLogo.bin"))?, board.vram_pa(), board.fb_width, board.fb_height, board.rotation == 270)?
+    } else {
+        Vec::new()
+    };
+    Ok(bundle(&img, &logo))
+}
+
+pub fn write_rooted(
+    decrypted: &Path,
+    out: &Path,
+    identity: &UnitIdentity,
+    boot_args: &str,
+    ramdisk: Option<&Path>,
+    kernel_override: Option<&[u8]>,
+    root_device: Option<&str>,
+) -> Result<()> {
+    std::fs::write(out, make_rooted(decrypted, identity, boot_args, ramdisk, kernel_override, root_device)?)?;
     Ok(())
 }
 

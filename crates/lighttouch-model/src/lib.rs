@@ -689,5 +689,8 @@ pub fn usb_args(dirs: &DataDirs, resources: &Resources, record: &str) -> Option<
         daemon,
         pairing: dirs.pairing(record),
         log: dirs.logs().join(format!("usbmuxd-{}.log", &record[..8.min(record.len())])),
+        app_pairs: lighttouch_core::library::Library::open(&dirs.library())
+            .and_then(|l| l.record(record))
+            .is_ok_and(|r| r.board == "n42ap"),
     })
 }

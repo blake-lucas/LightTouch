@@ -50,6 +50,10 @@ pub struct UsbArgs {
     /// This device record's pairing folder.
     pub pairing: PathBuf,
     pub log: PathBuf,
+    /// The app pairs with the guest, not the daemon (`usbmuxd -p`): the iPhone 5 (iOS 10) never sends the
+    /// notification the daemon's pairing waits for once Trust is tapped.
+    #[serde(default)]
+    pub app_pairs: bool,
 }
 
 fn yes() -> bool {

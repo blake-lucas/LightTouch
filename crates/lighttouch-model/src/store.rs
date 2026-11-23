@@ -504,8 +504,15 @@ impl Store {
                         }
                         self.set_installed(apps);
                     }
-                    Err(e) if !self.installing() => self.message = format!("App services: {e}"),
-                    Err(_) => {}
+                    Err(e) => {
+                        // iOS 7 and later wait for Trust on the guest's screen, however long that takes: keep asking.
+                        if e.contains("tap Trust") {
+                            self.refresh_guest(socket.clone());
+                        }
+                        if !self.installing() {
+                            self.message = format!("App services: {e}");
+                        }
+                    }
                 }
             }
             Message::Results { generation, result } if generation == self.search_generation => {
@@ -758,6 +765,10 @@ impl Store {
     }
 
     fn enqueue(&mut self, key: String, name: &str, request: InstallRequest) {
+        if self.target.as_ref().is_some_and(|t| !t.manages_apps()) {
+            self.message = lighttouch_catalog::target::NO_INSTALLS.into();
+            return;
+        }
         if self.guest_socket.is_none() {
             self.message = "Start the device to install apps.".into();
             return;

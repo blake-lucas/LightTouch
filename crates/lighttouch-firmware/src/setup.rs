@@ -392,10 +392,19 @@ pub(crate) fn string_array(v: Option<&Value>) -> Option<Vec<String>> {
     v?.as_array()?.iter().map(|s| s.as_string().map(str::to_string)).collect()
 }
 
-/// What Setup leaves on iOS `major` (5, 6, 7) after a walk in `language` and `locale` ("en", "en_AU"), finished at
-/// `now` (Unix seconds): each plist under /private/var and its keys. Empty before 5 (iTunes activated those, no
-/// Setup Assistant).
-pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec<(String, Dictionary)> {
+/// What Setup leaves on iOS `major` (5...10) after a walk in `language` and `locale`
+/// ("en", "en_AU"), finished at `now` (Unix seconds): each plist under /private/var and its
+/// keys. Empty before 5. `a6` is the iPhone 5's 6.x Siri and 7.0 native record; `product_version`
+/// distinguishes 7.0 from later 7.x.
+pub fn finished_setup_for(
+    major: u32,
+    language: &str,
+    locale: &str,
+    product_version: Option<&str>,
+    location_services_enabled: bool,
+    a6: bool,
+    now: i64,
+) -> Vec<(String, Dictionary)> {
     if major < 5 {
         return Vec::new();
     }
@@ -419,9 +428,12 @@ pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec
             buddy.insert(if major == 5 { "AppleIDPresented" } else { "AppleIDPB3Presented" }.into(), t());
             if major == 6 {
                 buddy.insert("SetupVersion".into(), 3.into());
+                if a6 {
+                    buddy.insert("AssistantPresented".into(), t());
+                }
             }
             buddy_local = plistedit::dictionary([("LocationServicesPresented", t())]);
-            off = plistedit::dictionary([("LocationServicesEnabled", 0.into())]);
+            off = plistedit::dictionary([("LocationServicesEnabled", (if location_services_enabled { 1 } else { 0 }).into())]);
             ark = plistedit::dictionary([
                 ("com.apple.purplebuddy-SetupState", "SetupUsingAssistant".into()),
                 ("com.apple.mobile.user_preferences-UserSetLanguage", t()),
@@ -438,8 +450,65 @@ pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec
             ] {
                 buddy.insert(k.into(), v);
             }
-            buddy_local = plistedit::dictionary([("LocationServices2Presented", t()), ("CloudConfigPresented", t())]);
-            off = plistedit::dictionary([("LocationServicesEnabledIn7.0", 0.into())]);
+            if a6 && product_version.is_some_and(|v| v == "7.0" || v.starts_with("7.0.")) {
+                buddy.remove("AppleIDPB5Presented");
+                buddy.insert("AppleIDPB4Presented".into(), t());
+                buddy.insert("AssistantPresented".into(), t());
+                buddy.insert("SetupVersion".into(), 4.into());
+            }
+            match major {
+                8 => {
+                    buddy.remove("AppleIDPB5Presented");
+                    buddy.insert("AppleIDPB6Presented".into(), t());
+                    buddy.insert("AssistantPresented".into(), t());
+                    buddy.insert("SetupVersion".into(), 7.into());
+                }
+                9 => {
+                    buddy.remove("AppleIDPB5Presented");
+                    buddy.insert("AppleIDPB9Presented".into(), t());
+                    buddy.insert("AssistantPresented".into(), t());
+                    buddy.insert("Passcode4Presented".into(), t());
+                    buddy.insert("PBDiagnostics2Presented".into(), t());
+                    buddy.insert("SetupVersion".into(), 9.into());
+                }
+                10 => {
+                    buddy.remove("AppleIDPB5Presented");
+                    buddy.insert("AppleIDPB6Presented".into(), t());
+                    buddy.insert("AssistantPresented".into(), t());
+                    buddy.insert("SetupVersion".into(), 10.into());
+                }
+                _ => {}
+            }
+            let mut local = plistedit::dictionary([
+                (
+                    if major == 9 {
+                        "LocationServices5Presented"
+                    } else if major == 8 || major == 10 {
+                        "LocationServices4Presented"
+                    } else {
+                        "LocationServices2Presented"
+                    },
+                    t(),
+                ),
+                ("CloudConfigPresented", t()),
+            ]);
+            if (8..=10).contains(&major) {
+                local.insert("ShouldRunKeychainSyncMiniBuddy".into(), false.into());
+                local.insert("ShouldRunMesaMiniBuddy".into(), false.into());
+            }
+            if major == 9 {
+                local.insert("ShouldRunDiagnosticsMiniBuddy".into(), false.into());
+                local.insert("ShouldRunPaymentMiniBuddy".into(), false.into());
+            }
+            buddy_local = local;
+            off = plistedit::dictionary([(
+                if (8..=10).contains(&major) {
+                    "LocationServicesEnabledIn8.0"
+                } else {
+                    "LocationServicesEnabledIn7.0"
+                },
+                (if location_services_enabled { 1 } else { 0 }).into(),
+            )]);
             ark = plistedit::dictionary([
                 ("-ActivationStateAcknowledged", t()),
                 ("com.apple.mobile.chaperone-NotSoFresh", t()),
@@ -448,7 +517,12 @@ pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec
             // Setup's cloud configuration step, through ManagedConfiguration: without the record, 7.x's
             // PSSetupAssistantNeedsToRun brings Setup back for it (Wi-Fi, then Welcome) on every boot.
             extra.push((
-                "mobile/Library/ConfigurationProfiles/CloudConfigurationDetails.plist".into(),
+                if major == 10 {
+                    "containers/Shared/SystemGroup/systemgroup.com.apple.configurationprofiles/Library/ConfigurationProfiles/CloudConfigurationDetails.plist"
+                } else {
+                    "mobile/Library/ConfigurationProfiles/CloudConfigurationDetails.plist"
+                }
+                .into(),
                 plistedit::dictionary([
                     ("AllowPairing", t()),
                     ("CloudConfigurationUIComplete", t()),
@@ -473,10 +547,41 @@ pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec
     out
 }
 
+/// The older wrapper used by non-N42 callers: no A6 branch, Location Services off.
+pub fn finished_setup(major: u32, language: &str, locale: &str, now: i64) -> Vec<(String, Dictionary)> {
+    finished_setup_for(major, language, locale, None, false, false, now)
+}
+
 /// Setup Assistant's finished state for iOS `major` (5, 6, 7) in `language`/`locale`, dated `now` (Unix seconds):
 /// `finished_setup` merged into the plists already there (new ones XML), as Setup's walk leaves it.
 pub fn seed_finished_setup(data: &mut Editor, var_root: &str, major: u32, language: &str, locale: &str, now: i64) -> Result<()> {
     for (rel, keys) in finished_setup(major, language, locale, now) {
+        plistedit::seed(data, &join(var_root, &rel), |d| {
+            for (k, v) in keys {
+                d.insert(k, v);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// The A6-aware variant: `product_version`, Location Services and the iPhone 5's Setup records.
+#[allow(clippy::too_many_arguments)]
+pub fn seed_finished_setup_with(
+    data: &mut Editor,
+    var_root: &str,
+    major: u32,
+    language: &str,
+    locale: &str,
+    product_version: &str,
+    location_services_enabled: bool,
+    a6: bool,
+    now: i64,
+) -> Result<()> {
+    for (rel, keys) in
+        finished_setup_for(major, language, locale, Some(product_version), location_services_enabled, a6, now)
+    {
         plistedit::seed(data, &join(var_root, &rel), |d| {
             for (k, v) in keys {
                 d.insert(k, v);
