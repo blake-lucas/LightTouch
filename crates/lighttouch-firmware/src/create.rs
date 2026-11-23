@@ -49,6 +49,9 @@ pub struct Options {
     pub apps: Vec<PathBuf>,
     /// Game Center's daemon disabled (`--no-game-center`, benchmark devices).
     pub no_game_center: bool,
+    /// The user chose "Use anyway" for an IPSW that isn't the entry's file (`--unchecked-ipsw`): a different SHA-1 or
+    /// build is only logged. The IPSW must still hold the entry's board (ipsw_check refuses others).
+    pub unchecked_ipsw: bool,
 }
 
 /// What the steps share; boards read and fill it.
@@ -286,12 +289,21 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
             progress.measure(Some(Box::new(move || b.fraction())));
         }
         c.sha1 = files::sha1_file(&c.o.ipsw, &|n| bytes.add(n))?;
+        let name = c.o.ipsw.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         if c.sha1 != sha1.to_lowercase() {
-            let name = c.o.ipsw.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            return Err(Error { code: Code::ShaMismatch, message: format!("{name}: sha1 {}, {} pins {sha1}", c.sha1, e.id), piece: None });
+            if !c.o.unchecked_ipsw {
+                return Err(Error { code: Code::ShaMismatch, message: format!("{name}: sha1 {}, {} pins {sha1}", c.sha1, e.id), piece: None });
+            }
+            c.log(&format!("warning: unchecked IPSW {name}: sha1 {}, {} pins {sha1}", c.sha1, e.id));
         }
         let restore = RestoreInfo::read(&c.ipsw()?)?;
-        restore.verify(&e)?;
+        if let Err(mismatch) = restore.verify(&e) {
+            // Used anyway: another build is tried with this entry's keys and recipe; another board never is.
+            if !c.o.unchecked_ipsw || !restore.boards.iter().any(|b| b.eq_ignore_ascii_case(&e.board)) {
+                return Err(mismatch);
+            }
+            c.log(&format!("warning: unchecked IPSW {name}: {}", mismatch.message));
+        }
         c.restore = Some(restore);
         board.inspect(&mut c)?;
 
@@ -303,7 +315,7 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
             let ipsw = c.ipsw()?;
             crate::cache::resolve(
                 &cache_root,
-                &crate::cache::Identity::new(&sha1.to_lowercase(), &e),
+                &crate::cache::Identity::new(&c.sha1, &e),
                 |tmp| Ok(crate::decrypt::decrypt(&ipsw, &e, tmp, true, &|l| c.log(l))?.files),
                 || c.log(&format!("reusing verified decrypt-cache manifest for {}", e.id)),
             )?
