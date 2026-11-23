@@ -93,6 +93,40 @@ pub fn prepare(kernel: &[u8], system: &Path, restore_ramdisk: Option<&Path>) -> 
     Ok(Prepared { kernel: registering(&owned, kernel)?, assets })
 }
 
+/// Where 14G61's AMFI keeps amfid's code directory hash: its audit-token check compares the program that answered
+/// a code-signature question with these 20 bytes and refuses any other ("unable to verify audit token came from
+/// amfid"), so an edited amfid is never believed.
+pub const AMFID_CDHASH_AT: usize = 0x7b_1ec6;
+pub const STOCK_AMFID_CDHASH: &str = "0b6d92f2aefd26b0e656bbd8da52cc6af9197470";
+pub const AMFID_PATH: &str = "usr/libexec/amfid";
+
+/// iOS 10 system edit (the iPhone 5's normal-boot kernel only; the restore boot keeps the stock amfid): the kernel's
+/// amfid hash becomes the hash of the amfid this System volume carries (libappsync's weak load command,
+/// `sideload::with_weak_library`), so the kernel keeps believing its own amfid. Data only (20 bytes), checked
+/// against the stock value, which must occur once; an unchanged amfid leaves the kernel unchanged.
+pub fn knowing_amfid(kernel: &[u8], assets: &[Asset]) -> Result<Vec<u8>> {
+    let Some(amfid) = assets.iter().find(|a| a.path == AMFID_PATH) else { return Ok(kernel.to_vec()) };
+    let [hash] = amfid.code_directories.as_slice() else {
+        return Err(invalid("amfid has more than one code directory"));
+    };
+    let stock = hex::decode(STOCK_AMFID_CDHASH).map_err(|_| invalid("stock amfid hash"))?;
+    let new = hex::decode(hash).map_err(|_| invalid("amfid hash"))?;
+    if new.len() != 20 || kernel.len() < AMFID_CDHASH_AT + 20 {
+        return Err(invalid("amfid hash"));
+    }
+    if new == stock {
+        return Ok(kernel.to_vec());
+    }
+    if kernel[AMFID_CDHASH_AT..AMFID_CDHASH_AT + 20] != stock[..]
+        || kernel.windows(20).filter(|w| *w == &stock[..]).count() != 1
+    {
+        return Err(invalid("the kernel's amfid hash differs"));
+    }
+    let mut out = kernel.to_vec();
+    out[AMFID_CDHASH_AT..AMFID_CDHASH_AT + 20].copy_from_slice(&new);
+    Ok(out)
+}
+
 fn invalid(detail: &str) -> crate::Error {
     crate::unsupported!("A6 guest assets: {detail}")
 }
@@ -368,6 +402,21 @@ fn registering_compact(owned: &BTreeSet<[u8; 20]>, kernel: &[u8], original: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LT_14G61_KERNEL=the decrypted kernelcache.mach: only amfid's 20 bytes change, and only for another amfid.
+    #[test]
+    fn kernel_learns_the_edited_amfid() {
+        let Some(path) = std::env::var_os("LT_14G61_KERNEL") else { return };
+        let kernel = std::fs::read(path).unwrap();
+        let asset = |hash: &str| Asset { path: AMFID_PATH.into(), sha256: String::new(), code_directories: vec![hash.into()] };
+        assert_eq!(knowing_amfid(&kernel, &[asset(STOCK_AMFID_CDHASH)]).unwrap(), kernel);
+        let new = "00112233445566778899aabbccddeeff00112233";
+        let out = knowing_amfid(&kernel, &[asset(new)]).unwrap();
+        let changed: Vec<usize> = (0..kernel.len()).filter(|&i| kernel[i] != out[i]).collect();
+        assert!(changed.iter().all(|&i| (AMFID_CDHASH_AT..AMFID_CDHASH_AT + 20).contains(&i)));
+        assert_eq!(hex::encode(&out[AMFID_CDHASH_AT..AMFID_CDHASH_AT + 20]), new);
+        assert!(knowing_amfid(&out, &[asset(new)]).is_err(), "an already-edited kernel is refused");
+    }
 
     #[test]
     fn inventory_paths_match_swift() {

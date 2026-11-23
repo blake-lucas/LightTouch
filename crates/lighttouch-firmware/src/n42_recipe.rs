@@ -142,13 +142,14 @@ impl N42Board {
         // The normal boot's kernel: patch the A6 trust table while the System image is present.
         let kernel = std::fs::read(c.dec_file("kernelcache.mach")?)?;
         let assets = a6_assets::prepare(&kernel, &vols.system, None)?;
+        let normal_kernel = a6_assets::knowing_amfid(&assets.kernel, &assets.assets)?;
         kboot::write_rooted(
             c.decrypted()?,
             &c.file("kboot.bin"),
             ident,
             BOOT_ARGS,
             None,
-            Some(&assets.kernel),
+            Some(&normal_kernel),
             Some("disk0s1"),
         )?;
         let _ = std::fs::remove_file(&vols.system);
