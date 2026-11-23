@@ -175,12 +175,14 @@ impl StepPlan {
             ("Writing the identity and boot image", _) => StepPlan::new(1.0, "Writing the boot image", vec![]),
             ("Building the system and data volumes", _) => StepPlan::new(12.0, "Building the system and data volumes", vec![]),
             ("Writing the NAND", _) => StepPlan::new(8.0, "Writing the flash image", vec![]),
+            // The iPhone 5's restore boot (N42): 14G61 on a Ryzen 7 3700X, 2026-11-22: the stream's writes start when the
+            // restore job's 120 s delay ends (144 s into the step), the keybag at 212 s, done 221 s.
             ("Restoring the flash", _) => StepPlan::new(
-                1200.0,
+                221.0,
                 "Restoring the flash",
                 vec![
-                    m("restore.log", "A6RESTORE", 60.0, "Restoring the flash: writing the volumes"),
-                    m("restore.log", "it_keybag:", 900.0, "Restoring the flash: creating the keybag"),
+                    m("restore.log", "A6RESTORE", 144.0, "Restoring the flash: writing the volumes"),
+                    m("restore.log", "it_keybag:", 212.0, "Restoring the flash: creating the keybag"),
                 ],
             ),
             ("Writing the lock", _) => StepPlan::new(4.0, "Packing the prepared flash", vec![]),

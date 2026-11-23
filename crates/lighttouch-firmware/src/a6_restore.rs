@@ -382,12 +382,17 @@ pub fn write_bundle(i: &BundleInputs<'_>, now: i64, log: &dyn Fn(&str)) -> Resul
     w.write("usr/local/bin/restored_external", std::fs::read(i.initializer)?, Some(0o755))?;
     /* The native FTL formats the fresh NAND after launchd starts; the restore
      * job's 60 s /dev/rdisk0 wait is shorter than that format on a software
-     * CPU. Start the job after the format has had time to finish (the
-     * one-shot's 2400 s budget includes it), rather than racing the device.
+     * CPU. Start the job after the format has had time to finish, rather than
+     * racing the device. The format publishes the disk 14 s after launchd on a
+     * Ryzen 7 3700X under Linux, so 120 s plus the job's own 60 s covers a host
+     * over ten times slower (480 s, upstream's delay, was ~7 minutes of an idle
+     * guest on every preparation). Neither the IOKit-matching event (no
+     * UserEventAgent in the restore ramdisk) nor KeepAlive PathState on
+     * /dev/rdisk0 (devfs: never fires) can start it on the disk instead.
      * The stock job is replaced only in this temporary restore ramdisk. */
     {
         const JOB: &str = "System/Library/LaunchDaemons/com.apple.restored_external.plist";
-        const START_DELAY: u64 = 480;
+        const START_DELAY: u64 = 120;
         let record = source.record(JOB)?;
         let mut job = plist::Value::from_reader(Cursor::new(source.contents(&record)?))
             .map_err(|e| invalid(&format!("restore job: {e}")))?;

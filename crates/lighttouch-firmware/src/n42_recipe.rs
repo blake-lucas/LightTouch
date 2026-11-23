@@ -41,8 +41,8 @@ pub const GUEST_TOOLS: &[&str] =
     &["it_initialize", "it_mobilegestalt", "launchd-cache-template", "it_agent", "httpget-armv7", "libappsync.dylib"];
 pub const BASE_MACHINE_OPTIONS: [(&str, &str); 3] = [("ppn", "on"), ("camera", "on"), ("quiet-boot", "on")];
 pub const FIRST_BOOT_DONE: &str = "Process SpringBoard (";
-/// The restore boot's limit: 14G61's took 157 s on an M4 Max, unloaded, and 630-655 s on a Ryzen 7 3700X under
-/// Linux; a phone is several times slower again, so the same two hours as the first boot.
+/// The restore boot's limit: 14G61's takes ~200 s on a Ryzen 7 3700X under Linux (120 s of it the restore job's
+/// start delay); a phone is several times slower again, so the same two hours as the first boot.
 pub const RESTORE_TIMEOUT: f64 = 7200.0;
 /// The first boot's limit: 14G61's migration lit SpringBoard after 380-430 s at a host load of 5 on a Mac, 800 s
 /// at 30; on a Ryzen 7 3700X under Linux its last stretch alone takes ~25 minutes, and a phone is slower again.
