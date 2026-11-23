@@ -246,9 +246,22 @@ fn peek_u64(addr: usize) -> Option<u64> {
     peek(addr, &mut b).then(|| u64::from_le_bytes(b))
 }
 
-/// A code address without its pointer-authentication bits (arm64 return addresses saved by signed prologues).
+/// A code address without its pointer-authentication bits (arm64 return addresses saved by signed prologues, as
+/// bionic's and vendor drivers' are on Armv8.3+ cores). XPACLRI knows the address space's width (39 bits on the Poco,
+/// not 48), and is a NOP on cores without PAC.
+#[cfg(target_arch = "aarch64")]
 fn strip(addr: u64) -> u64 {
-    if cfg!(target_arch = "aarch64") { addr & 0x0000_ffff_ffff_ffff } else { addr }
+    let mut x = addr;
+    unsafe {
+        std::arch::asm!("mov x30, {0}", "hint #7", "mov {0}, x30", inout(reg) x, out("x30") _,
+            options(nomem, nostack, preserves_flags));
+    }
+    x
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn strip(addr: u64) -> u64 {
+    addr
 }
 
 // ---- modules: the mapping each address falls in, and its ELF load bias and build ID
