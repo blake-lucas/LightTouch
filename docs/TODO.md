@@ -153,8 +153,9 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
 
 ## Firmware and assets
 
-- [ ] Preparing failed once with "firmwarekit's emulator library has no machine for n18ap" while the machine was
-  compiling (the `machines` listing exited non-zero); the retry passed. Not reproduced. (unverified)
+- [x] "firmwarekit's emulator library has no machine for n18ap": the `machines` listing unloaded the engine before
+  exit, and Android 10's exit() then called the engine's exit handlers in unmapped code (SIGSEGV; issue #11, every
+  preparation on a HUAWEI P40 Lite E). The listing now keeps the library loaded. (unverified on Android 10)
 - [ ] Jailbreak on the iPod touch 2G. A jailbroken 2G (3.1.3 checked, on main's firmwarekit too) starts once and then
   never again: Cydia's Startup job installs Substrate from its AutoInstall folder on the first boot, Substrate's install
   script writes `/etc/launchd.conf` (`bsexec .. /usr/bin/cynject 1 …/SubstrateLauncher.dylib`), and on every later

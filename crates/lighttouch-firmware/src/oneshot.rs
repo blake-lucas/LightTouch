@@ -74,7 +74,7 @@ impl Helper {
         let name = self.program.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let machines = self.machines().map_err(|e| {
             eprintln!("machines: {}", e.message);
-            crate::internal!("{name}'s emulator library has no machine for {}", board.name())
+            crate::internal!("{name} couldn't list its emulator's machines: {}", e.message)
         })?;
         machines
             .into_iter()
@@ -448,6 +448,9 @@ pub fn engine_main(args: &[String]) -> i32 {
             }));
         }
         println!("{}", serde_json::json!({"dylibPath": path.to_string_lossy(), "machines": machines}));
+        // Never unloaded: the engine registers exit handlers, and Android 10's exit() still calls them after a
+        // dlclose, so the listing ended in SIGSEGV ("no machine for n90ap", issue #11).
+        std::mem::forget(lib);
         return 0;
     }
     let symbols = unsafe {
