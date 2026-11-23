@@ -1014,8 +1014,9 @@ fn details(app: &mut App, ui: &mut Ui) {
     ui.add_space(10.0);
     let store = &app.model.store;
     let queued = store.queued(&chosen).filter(|q| q.active()).is_some();
-    let ready = store.candidate.is_some() && store.guest_ready() && !queued;
-    let waiting = store.running() && !store.guest_ready() && !queued;
+    let installs = store.target.as_ref().is_none_or(|t| t.manages_apps());
+    let ready = installs && store.candidate.is_some() && store.guest_ready() && !queued;
+    let waiting = installs && store.running() && !store.guest_ready() && !queued;
     ui.horizontal(|ui| {
         let label = if queued {
             "In the queue"
@@ -1031,7 +1032,9 @@ fn details(app: &mut App, ui: &mut Ui) {
         }
         let store = &app.model.store;
         let selected = store.copies.iter().flatten().find(|c| Some(c.ipa_id) == store.selected);
-        if let Some(problem) = store.problem.clone() {
+        if !installs {
+            ui.add(egui::Label::new(widgets::muted(&p, lighttouch_catalog::target::NO_INSTALLS_IOS10)).wrap());
+        } else if let Some(problem) = store.problem.clone() {
             ui.add(egui::Label::new(RichText::new(problem).color(p.error)).wrap());
         } else if store.selected.is_some() && store.candidate.is_none() {
             widgets::spinner(ui, &p, 18.0);
@@ -1052,7 +1055,7 @@ fn details(app: &mut App, ui: &mut Ui) {
             );
         }
     }
-    if !store.running() {
+    if installs && !store.running() {
         ui.label(widgets::muted(&p, "Start the device to install.").size(12.5));
     }
     if installed.is_some() {
