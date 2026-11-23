@@ -716,6 +716,26 @@ void seed_admission(const fs::path &base_path, const fs::path &state) {
     atomic_write(state / ".base-identity", digest_file(base / "device.lock.json"));
     atomic_write(state / ".verified-digests", dump_digest_cache(cache));
 }
+// A device import's base (Transfer.cpp): its files were hashed as they arrived, so the lock is checked against those
+// digests (only a file they leave out is read) and the state pinned with them, as seed_admission does for a
+// preparer's. Throws, writing nothing, when a digest disagrees with the lock.
+void seed_admission(const fs::path &base_path, const fs::path &state, const std::map<std::string, std::string> &digests) {
+    const auto base = fs::canonical(base_path);
+    DigestCache cache;
+    for (const auto &entry : digests) {
+        const auto path = base / entry.first;
+        lt::os::Stat st {};
+        if (lt::os::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            cache[file_identity(path, st)] = entry.second;
+    }
+    validate_base(base, nullptr, {}, &cache);
+    atomic_write(state / ".base-identity", digest_file(base / "device.lock.json"));
+    atomic_write(state / ".verified-digests", dump_digest_cache(cache));
+}
+void check_boot_route(const Json &lock) {
+    require(lock.at("format").integer() == 1, "unsupported device lock schema", LT_UNSUPPORTED);
+    boot_route(lock.at("board").string(), lock);
+}
 static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
         io(lt::os::lseek(fd, int64_t(size), SEEK_CUR) >= 0, "seek zero archive span");
@@ -855,6 +875,7 @@ static std::vector<std::pair<int64_t, int64_t>> data_ranges(int fd, int64_t size
     return ranges;
 #endif
 }
+std::vector<std::pair<int64_t, int64_t>> file_data_ranges(int fd, int64_t size) { return data_ranges(fd, size); }
 static void hash_zeros(Sha256 &hash, uint64_t n) {
     static const std::vector<uint8_t> zeros(1 << 20, 0);
     while (n) {

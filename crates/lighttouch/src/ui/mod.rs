@@ -246,6 +246,36 @@ fn ready_app(ctx: &egui::Context) -> App {
     app
 }
 
+/// "1.2 GB", "340 MB": a transfer's sizes.
+pub fn transfer_size(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1e9)
+    } else {
+        format!("{:.0} MB", (bytes as f64 / 1e6).max(if bytes > 0 { 1.0 } else { 0.0 }))
+    }
+}
+
+/// Ask where to save a device file, then export the device there in the background (its right-click menu).
+pub fn export_device(app: &mut App, id: &str, name: &str) {
+    let file = rfd::FileDialog::new()
+        .set_title(format!("Export {name}"))
+        .set_file_name(lighttouch_model::transfer::file_name(name))
+        .add_filter("LightTouch device", &["zip"])
+        .save_file();
+    if let Some(file) = file {
+        app.model.export_device(id, file);
+    }
+}
+
+/// Ask for a device file (exported by LightTouch on any computer or phone) and add it as a new device.
+pub fn import_device(app: &mut App) {
+    let file =
+        rfd::FileDialog::new().set_title("Import a device").add_filter("LightTouch device", &["zip"]).pick_file();
+    if let Some(file) = file {
+        app.model.import_device(file);
+    }
+}
+
 /// Ask where to save LightTouch's logs, then save them there in the background (Settings › Diagnostics, and the
 /// preparation pages).
 pub fn save_logs(app: &mut App) {
@@ -484,6 +514,35 @@ impl App {
                         self.model.notice = Some((format!("{name} is ready"), Instant::now()));
                     }
                 }
+                Finished::DeviceExported { name, path, bytes, .. } => {
+                    self.model.notice = Some((
+                        format!("Exported {name} to {} ({})", path.display(), transfer_size(bytes)),
+                        Instant::now(),
+                    ));
+                }
+                Finished::DeviceImported { name, selected, .. } => {
+                    if selected {
+                        self.page = Page::Device;
+                    }
+                    let text = if selected {
+                        format!("{name} is ready")
+                    } else {
+                        format!("Added {name}; stop the running device to switch to it")
+                    };
+                    self.model.notice = Some((text, Instant::now()));
+                }
+                Finished::Failed { activity: activity @ lighttouch_model::Activity::Exporting { .. }, message }
+                | Finished::Failed { activity: activity @ lighttouch_model::Activity::Importing(_), message } => {
+                    let exporting = matches!(activity, lighttouch_model::Activity::Exporting { .. });
+                    if message == "Cancelled" {
+                        let what = if exporting { "Export" } else { "Import" };
+                        self.model.notice = Some((format!("{what} cancelled"), Instant::now()));
+                    } else if exporting {
+                        self.model.error = Some(format!("Couldn't export the device: {message}"));
+                    } else {
+                        self.model.error = Some(format!("Couldn't import the device: {message}"));
+                    }
+                }
                 Finished::Failed { activity: lighttouch_model::Activity::Preparing(_), message } => {
                     // Shown on the Prepare page; elsewhere also as a banner, without leaving the page.
                     if self.page != Page::Prepare {
@@ -524,8 +583,54 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     }
 
+    /// An export or import running: its progress, with Cancel. Nothing else can be done meanwhile but wait.
+    fn transfer_dialog(&mut self, ctx: &egui::Context) {
+        let Some((activity, progress)) = self.model.busy() else { return };
+        let Some(title) = lighttouch_model::transfer::title(activity) else { return };
+        let exporting = matches!(activity, lighttouch_model::Activity::Exporting { .. });
+        let cancelled = self.model.task_cancelled();
+        let p = self.palette;
+        let modal =
+            egui::Modal::new(egui::Id::unique("transfer")).backdrop_color(Color32::from_black_alpha(140)).frame(
+                Frame::new()
+                    .fill(p.container_high)
+                    .corner_radius(CornerRadius::same(theme::radius::DOCK))
+                    .inner_margin(Margin::same(24)),
+            );
+        modal.show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                widgets::icon_text(if exporting { icons::UPLOAD } else { icons::DOWNLOAD }, 26.0).color(p.primary),
+            );
+            ui.add_space(6.0);
+            ui.label(RichText::new(title).font(theme::title()));
+            ui.add_space(10.0);
+            widgets::progress(ui, &p, progress.fraction(), ui.available_width());
+            ui.add_space(6.0);
+            let status = if cancelled {
+                "Cancelling…".to_string()
+            } else if progress.total > 0 {
+                format!("{} · {} of {}", progress.phase, transfer_size(progress.done), transfer_size(progress.total))
+            } else if progress.phase.is_empty() {
+                "Starting…".to_string()
+            } else {
+                format!("{}…", progress.phase)
+            };
+            ui.label(widgets::muted(&p, status));
+            ui.add_space(16.0);
+            widgets::dialog_buttons(ui, |ui| {
+                if ui.add_enabled_ui(!cancelled, |ui| widgets::text_button(ui, &p, "Cancel")).inner.clicked() {
+                    self.model.cancel_task();
+                }
+            });
+        });
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = self.dialog.clone() else { return };
+        let Some(dialog) = self.dialog.clone() else {
+            self.transfer_dialog(ctx);
+            return;
+        };
         let p = self.palette;
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::unique("dialog")).backdrop_color(Color32::from_black_alpha(140)).frame(
@@ -691,19 +796,25 @@ impl App {
                                 .map(|f| format!("{} · iOS {}", f.device_name(), f.label()))
                                 .unwrap_or_else(|| id.clone()),
                         ),
+                        Some(_) => None,
                         None => {
                             close = true;
                             None
                         }
                     };
+                    let transfer = self.model.busy().and_then(|(a, _)| lighttouch_model::transfer::title(a));
                     ui.label(widgets::icon_text(icons::WARNING, 26.0).color(theme::WARNING));
                     ui.add_space(6.0);
-                    let (title, body) = match &preparing {
-                        Some(what) => (
+                    let (title, body) = match (&preparing, transfer) {
+                        (Some(what), _) => (
                             format!("Still preparing {what}"),
                             "Closing LightTouch stops it. You can prepare it again later, and a download picks up where it left off.",
                         ),
-                        None => ("Still preparing a device".to_string(), "Closing LightTouch stops it."),
+                        (None, Some(what)) => (
+                            format!("Still {}", what[..1].to_lowercase() + &what[1..]),
+                            "Closing LightTouch stops it, and nothing is kept: you can start it again later.",
+                        ),
+                        (None, None) => ("Still preparing a device".to_string(), "Closing LightTouch stops it."),
                     };
                     ui.label(RichText::new(title).font(theme::title()));
                     ui.add_space(4.0);

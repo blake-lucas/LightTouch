@@ -138,6 +138,29 @@ lt_status lt_library_import_observed(lt_library *, const lt_library_import_confi
  * its first start reads nothing either. The folder is consumed, or handed back where it was on failure. */
 lt_status lt_library_adopt_prepared(lt_library *, const lt_library_import_config *, lt_import_phase_fn, void *,
                                     lt_record_info *, lt_error *);
+/* Device transfer (Transfer.cpp): a stopped record as one ZIP64 file (deflate; lighttouch-device.json first, then
+ * record.json, base/, assets/, carrier.json, state/), and such a file added as a new record with a fresh id and its
+ * name made unique (" (2)"). Both stream in order, so the descriptor may be a pipe. The observer sees phase
+ * "exporting", or "importing" then "finishing", with bytes done and total; a nonzero return cancels (LT_CANCELLED)
+ * and removes what was written (a named export file, or the import's stage). LT_BUSY while the device runs. */
+typedef struct {
+    uint32_t size, version;
+    const char *record_id;
+    /* The file to write (made as path.partial, renamed when complete), or NULL to write to fd instead. */
+    const char *path;
+    int32_t fd;
+    /* Who exported it, for the manifest ("LightTouch 0.0.15 (Android)"). */
+    const char *app;
+} lt_export_config;
+lt_status lt_library_export(lt_library *, const lt_export_config *, lt_import_phase_fn, void *, lt_error *);
+typedef struct {
+    uint32_t size, version;
+    /* The file to read, or NULL to read fd (left open). */
+    const char *path;
+    int32_t fd;
+} lt_transfer_import_config;
+lt_status lt_library_import_device(lt_library *, const lt_transfer_import_config *, lt_import_phase_fn, void *,
+                                   lt_record_info *, lt_error *);
 /* Validate/freeze and atomically publish an already-written private sibling
  * stage without copying it. Stage must be an owned 0700 directory; descendants
  * must be owned regular single-link files/directories with no external writers.

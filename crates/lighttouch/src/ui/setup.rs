@@ -54,6 +54,10 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
             if widgets::primary(ui, &p, "Get started").clicked() {
                 super::prepare::open(app);
             }
+            ui.add_space(10.0);
+            if widgets::text_button(ui, &p, "Import a device from another computer or phone…").clicked() {
+                super::import_device(app);
+            }
         }),
         Step::Done => centered(ui, 520.0, |ui| {
             ui.add_space(40.0);

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -58,6 +59,13 @@ void copy_contents(const fs::path &, const fs::path &);
 void adopt_base(const fs::path &, lt_import_phase_fn, void *);
 // A new record's state, pinned to its base and holding the lock's digests, so its first start reads nothing either.
 void seed_admission(const fs::path &base, const fs::path &state);
+// The same, from digests computed as the base was written (relative name -> SHA-256); throws if one disagrees with the
+// lock.
+void seed_admission(const fs::path &base, const fs::path &state, const std::map<std::string, std::string> &digests);
+// Refuses a lock this build can't boot (its schema, board or boot strategy).
+void check_boot_route(const Json &lock);
+// Where a file's data is: [start, end) ranges, holes left out (all of it where the filesystem can't say).
+std::vector<std::pair<int64_t, int64_t>> file_data_ranges(int fd, int64_t size);
 void sync_dir(const fs::path &);
 std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);

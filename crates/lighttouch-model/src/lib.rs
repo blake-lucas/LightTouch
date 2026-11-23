@@ -17,6 +17,7 @@ pub mod settings;
 pub mod store;
 pub mod task;
 pub mod tilt;
+pub mod transfer;
 
 use lighttouch_catalog::catalog::{device_subtitle, model_name};
 use lighttouch_catalog::{Bootrom, GuestTools};
@@ -80,6 +81,10 @@ impl Device {
 pub enum Activity {
     /// Preparing a device from an IPSW (the firmware id).
     Preparing(String),
+    /// Exporting a device (its name) to a device file.
+    Exporting { name: String, dest: PathBuf },
+    /// Importing a device file.
+    Importing(PathBuf),
 }
 
 /// A finished background operation, for the UI to react to (e.g. show "ready").
@@ -91,6 +96,20 @@ pub enum Finished {
         name: String,
         selected: bool,
         timings: Vec<(String, f64)>,
+    },
+    /// A device written to a device file (transfer.rs).
+    DeviceExported {
+        name: String,
+        path: PathBuf,
+        bytes: u64,
+        seconds: f64,
+    },
+    /// A device file added as a new device.
+    DeviceImported {
+        id: String,
+        name: String,
+        selected: bool,
+        seconds: f64,
     },
     Failed {
         activity: Activity,
@@ -238,6 +257,8 @@ impl Model {
                     Finished::Failed { activity: Activity::Preparing(id), message } => {
                         app_log!("preparation of {id} failed: {message}")
                     }
+                    Finished::Failed { activity, message } => app_log!("{activity:?} failed: {message}"),
+                    Finished::DeviceExported { .. } | Finished::DeviceImported { .. } => {}
                 }
                 if let Finished::DeviceAdded { name, selected: false, .. } = &finished {
                     self.notice =
@@ -323,6 +344,11 @@ impl Model {
 
     pub fn busy(&self) -> Option<(&Activity, Progress)> {
         self.task.as_ref().map(|(a, t)| (a, t.progress()))
+    }
+
+    /// Whether the user cancelled the running background operation (it is winding down).
+    pub fn task_cancelled(&self) -> bool {
+        self.task.as_ref().is_some_and(|(_, t)| t.is_cancelled())
     }
 
     pub fn cancel_task(&mut self) {
@@ -646,6 +672,39 @@ impl Model {
         app_log!("preparing {} (jailbreak: {})", request.firmware_id, request.jailbreak);
         let activity = Activity::Preparing(request.firmware_id.clone());
         let task = Task::spawn(self.waker.clone(), move |reporter| prepare::run(context, request, reporter));
+        self.task = Some((activity, task));
+    }
+
+    /// Export a stopped device to a device file at `dest` in the background (its right-click menu's Export…).
+    pub fn export_device(&mut self, id: &str, dest: PathBuf) {
+        if self.task.is_some() {
+            return;
+        }
+        let Some(device) = self.devices.iter().find(|d| d.id == id).cloned() else { return };
+        if self.session.as_ref().is_some_and(|s| s.record_id == id && s.phase.active()) {
+            self.error = Some(format!("Stop {} before exporting it", device.name));
+            return;
+        }
+        app_log!("exporting {} to {}", device.name, dest.display());
+        let activity = Activity::Exporting { name: device.name.clone(), dest: dest.clone() };
+        let library = self.dirs.library();
+        let task = Task::spawn(self.waker.clone(), move |reporter| {
+            transfer::export(&library, &device.id, &device.name, &dest, reporter)
+        });
+        self.task = Some((activity, task));
+    }
+
+    /// Add the device in a device file (another LightTouch's export) in the background.
+    pub fn import_device(&mut self, source: PathBuf) {
+        if self.task.is_some() {
+            return;
+        }
+        app_log!("importing a device from {}", source.display());
+        let activity = Activity::Importing(source.clone());
+        let library = self.dirs.library();
+        let select = !self.session_active();
+        let task =
+            Task::spawn(self.waker.clone(), move |reporter| transfer::import(&library, &source, select, reporter));
         self.task = Some((activity, task));
     }
 

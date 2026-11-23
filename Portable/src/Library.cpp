@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include "Records.hpp"
 #include "Carrier.hpp"
 #include "KernelRepair.hpp"
 #include <algorithm>
@@ -6,7 +7,7 @@
 #include "Os.hpp"
 #include <memory>
 namespace lt {
-static std::string quote(const std::string &s) {
+std::string quote(const std::string &s) {
     std::string out = "\"";
     static const char h[] = "0123456789abcdef";
     for (unsigned char c : s) {
@@ -22,7 +23,7 @@ static std::string quote(const std::string &s) {
     }
     return out + '"';
 }
-static void record_id(const std::string &id) {
+void record_id(const std::string &id) {
     require(!id.empty() && id.size() < 64 &&
                 id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") ==
                     std::string::npos,
@@ -34,7 +35,7 @@ static void text(char *out, size_t capacity, const std::string &s) {
 }
 // Names are stored in record.json, which the JSON reader parses strictly: anything but well-formed
 // UTF-8 (overlong forms, surrogates such as JNI's modified UTF-8 emits) would make the record unreadable.
-static void display_name(const std::string &name) {
+void display_name(const std::string &name) {
     require(!name.empty() && name.size() < 128, "device name must be 1-127 bytes");
     for (size_t i = 0; i < name.size();) {
         auto c = static_cast<unsigned char>(name[i]);
@@ -79,7 +80,7 @@ static void copy_state(const fs::path &source, const fs::path &destination) {
             sync_dir(e.path());
     sync_dir(destination);
 }
-static void discard(const fs::path &p) {
+void discard(const fs::path &p) {
     std::error_code error;
     if (fs::remove_all(p, error) != static_cast<std::uintmax_t>(-1) && !error)
         return;
@@ -91,7 +92,7 @@ static void discard(const fs::path &p) {
     lt::os::chmod(p.c_str(), 0700);
     fs::remove_all(p, error);
 }
-static std::string new_id() {
+std::string new_id() {
     std::array<uint8_t, 16> b{};
     io(lt::os::random_bytes(b.data(), b.size()) == 0, "record identity entropy");
     static const char hex[] = "0123456789abcdef";
@@ -103,28 +104,22 @@ static std::string new_id() {
     return id;
 }
 } // namespace lt
-struct lt_library {
-    lt::fs::path root;
-};
 namespace lt {
-struct LibraryLock {
-    int fd = -1;
-    explicit LibraryLock(lt_library *l) {
-        require(l, "null library");
-        fd = lt::os::open((l->root / ".library-lock").c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
-        io(fd >= 0, "library mutation lock");
-        if (lt::os::lock_exclusive(fd) != 0) {
-            lt::os::close(fd);
-            fd = -1;
-            throw Failure(LT_BUSY, "device library operation in progress");
-        }
+LibraryLock::LibraryLock(lt_library *l) {
+    require(l, "null library");
+    fd = lt::os::open((l->root / ".library-lock").c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    io(fd >= 0, "library mutation lock");
+    if (lt::os::lock_exclusive(fd) != 0) {
+        lt::os::close(fd);
+        fd = -1;
+        throw Failure(LT_BUSY, "device library operation in progress");
     }
-    ~LibraryLock() {
-        if (fd >= 0)
-            lt::os::close(fd);
-    }
-};
-static std::vector<std::string> records(lt_library *l) {
+}
+LibraryLock::~LibraryLock() {
+    if (fd >= 0)
+        lt::os::close(fd);
+}
+std::vector<std::string> records(lt_library *l) {
     std::vector<std::string> ids;
     for (const auto &e : fs::directory_iterator(l->root / "records")) {
         auto id = e.path().filename().string();
@@ -138,14 +133,14 @@ static std::vector<std::string> records(lt_library *l) {
     std::sort(ids.begin(), ids.end());
     return ids;
 }
-static std::string selected(lt_library *l) {
+std::string selected(lt_library *l) {
     if (!fs::exists(l->root / "selected"))
         return "";
     std::string id = read_file(l->root / "selected", 64);
     record_id(id);
     return id;
 }
-static void describe(lt_library *l, const std::string &id, lt_record_info *out) {
+void describe(lt_library *l, const std::string &id, lt_record_info *out) {
     abi(out);
     record_id(id);
     auto directory = l->root / "records" / id;
@@ -259,7 +254,7 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
     }
 }
 /* record.json with one field replaced; the schema has no nested values. */
-static std::string record_json(const Json &metadata, const std::string &id, const std::string &name) {
+std::string record_json(const Json &metadata, const std::string &id, const std::string &name) {
     std::string json = "{\"schema\":1,\"id\":" + quote(id) + ",\"name\":" + quote(name) +
                        ",\"board\":" + quote(metadata.at("board").string()) +
                        ",\"build\":" + quote(metadata.at("build").string()) +
@@ -339,7 +334,7 @@ static void remove_record(lt_library *l, const std::string &id) {
 // device.lock.json.repair, and once the latter exists the kernel copy (if still there) replaces kboot.bin, the record
 // and the state are pinned to the new lock, and the new lock replaces the old. Files that fail their pins are left for
 // the admission to report.
-static void repair_kernel(const fs::path &directory, const std::string &id) {
+void repair_kernel(const fs::path &directory, const std::string &id) {
     const fs::path base = directory / "base", kboot = base / "kboot.bin", lock_path = base / "device.lock.json";
     const fs::path kboot_new = base / "kboot.bin.repair", lock_new = base / "device.lock.json.repair";
     const fs::path state_pin = directory / "state/.base-identity";

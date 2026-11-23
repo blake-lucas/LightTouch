@@ -176,6 +176,40 @@ impl Library {
         Ok(Record::from_info(&info))
     }
 
+    /// Write a stopped record to `dest` as a device file (a ZIP64 another LightTouch imports, on any platform). The
+    /// file appears only once complete; `LT_BUSY` while the device runs, `LT_CANCELLED` when `progress` says stop.
+    pub fn export(&self, id: &str, dest: &Path, app: &str, progress: &mut PhaseFn<'_>) -> Result<()> {
+        let (id, dest, app) = (cstring(id)?, cpath(dest)?, cstring(app)?);
+        let mut config = sys::lt_export_config::new();
+        config.record_id = id.as_ptr();
+        config.path = dest.as_ptr();
+        config.fd = -1;
+        config.app = app.as_ptr();
+        let mut error = sys::lt_error::new();
+        let mut observer: &mut PhaseFn<'_> = progress;
+        let opaque = &mut observer as *mut &mut PhaseFn<'_> as *mut c_void;
+        let status = unsafe { sys::lt_library_export(self.raw, &config, Some(phase_trampoline), opaque, &mut error) };
+        check(status, &error)
+    }
+
+    /// Add the device in a device file (`export`'s) as a new record: a fresh id, its name made unique. Nothing is
+    /// left behind when it fails or is cancelled.
+    pub fn import_device(&self, source: &Path, progress: &mut PhaseFn<'_>) -> Result<Record> {
+        let source = cpath(source)?;
+        let mut config = sys::lt_transfer_import_config::new();
+        config.path = source.as_ptr();
+        config.fd = -1;
+        let mut info = Box::new(sys::lt_record_info::new());
+        let mut error = sys::lt_error::new();
+        let mut observer: &mut PhaseFn<'_> = progress;
+        let opaque = &mut observer as *mut &mut PhaseFn<'_> as *mut c_void;
+        let status = unsafe {
+            sys::lt_library_import_device(self.raw, &config, Some(phase_trampoline), opaque, &mut *info, &mut error)
+        };
+        check(status, &error)?;
+        Ok(Record::from_info(&info))
+    }
+
     pub(crate) fn raw(&self) -> *mut sys::lt_library {
         self.raw
     }

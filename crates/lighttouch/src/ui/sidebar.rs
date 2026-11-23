@@ -34,7 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let running_phase = app.model.session.as_ref().map(|s| s.phase.clone());
             // The Prepare page is the device being made (marked on its own row), not the selected one.
             let preparing_shown = app.page == Page::Prepare;
-            egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ui.available_height() - 120.0).show(
+            egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ui.available_height() - 168.0).show(
                 ui,
                 |ui| {
                     for device in app.model.devices.clone() {
@@ -72,6 +72,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 app.dialog = Some(Dialog::Rename { id: device.id.clone(), name: device.name.clone() });
                                 ui.close();
                             }
+                            let export = ui
+                                .add_enabled(
+                                    !running && !busy,
+                                    egui::Button::new(widgets::icon_label(icons::UPLOAD, "Export…", None)),
+                                )
+                                .on_disabled_hover_text(if running {
+                                    "Stop it to export it"
+                                } else {
+                                    "Wait for the current task to finish"
+                                });
+                            if export.clicked() {
+                                ui.close();
+                                super::export_device(app, &device.id, &device.name);
+                            }
                             if ui
                                 .add_enabled(
                                     !running,
@@ -91,7 +105,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             ui.add_space(6.0);
             // One device is made at a time; the one being made is listed above, with its progress.
-            let add = add_row(ui, &p, !active && !busy);
+            let add = add_row(ui, &p, icons::PLUS, "Add a device", !active && !busy);
             let running_name = app.model.session.as_ref().filter(|_| active).map(|s| s.name.clone());
             let add = match (&running_name, busy) {
                 (_, true) => add.on_hover_text("Wait for the device being prepared to finish"),
@@ -100,6 +114,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             };
             if add.clicked() && !busy {
                 super::prepare::open(app);
+            }
+            // A device exported by LightTouch on another computer or phone.
+            let import = add_row(ui, &p, icons::DOWNLOAD, "Import a device…", !busy)
+                .on_hover_text("Add a device exported by LightTouch on another computer or phone");
+            if import.clicked() && !busy {
+                super::import_device(app);
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -257,7 +277,7 @@ impl MaxAlpha for Color32 {
     }
 }
 
-fn add_row(ui: &mut egui::Ui, p: &theme::Palette, enabled: bool) -> egui::Response {
+fn add_row(ui: &mut egui::Ui, p: &theme::Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), 46.0), if enabled { Sense::click() } else { Sense::hover() });
     let alpha = if enabled { 1.0 } else { 0.4 };
@@ -274,14 +294,14 @@ fn add_row(ui: &mut egui::Ui, p: &theme::Palette, enabled: bool) -> egui::Respon
     ui.painter().text(
         tile.center(),
         Align2::CENTER_CENTER,
-        icons::PLUS,
+        icon,
         FontId::new(18.0, theme::icons()),
         p.primary.gamma_multiply(alpha),
     );
     ui.painter().text(
         egui::pos2(rect.left() + 54.0, rect.center().y),
         Align2::LEFT_CENTER,
-        "Add a device",
+        label,
         FontId::new(14.5, theme::medium()),
         p.primary.gamma_multiply(alpha),
     );

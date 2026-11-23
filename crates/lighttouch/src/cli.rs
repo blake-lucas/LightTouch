@@ -8,6 +8,8 @@
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
 //! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
 //! lighttouch guest <bridge mux.sock>
+//! lighttouch export <record id> <FILE.lighttouch.zip>
+//! lighttouch import <FILE.lighttouch.zip>
 //! ```
 //!
 //! `prepare --ipa` installs apps while the device is prepared (benchmark devices). `run --control` (tools/bench)
@@ -35,7 +37,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "run" | "prepare" | "fetch" | "guest")
+    matches!(command, "list" | "run" | "prepare" | "fetch" | "guest" | "export" | "import")
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -46,6 +48,8 @@ pub fn main(args: &[String]) -> i32 {
         "prepare" => prepare(dirs, &args[1..]),
         "fetch" => fetch(&dirs, &args[1..]),
         "guest" => guest(&args[1..]),
+        "export" => transfer(&dirs, &args[1..], true),
+        "import" => transfer(&dirs, &args[1..], false),
         _ => unreachable!(),
     };
     match result {
@@ -76,6 +80,39 @@ fn guest(args: &[String]) -> Result<(), String> {
             Some((name, text)) => println!("--- {name}\n{text}"),
             None => println!("no crash reports"),
         }
+    }
+    Ok(())
+}
+
+/// Export a device to a device file, or import one, printing progress and the time it took.
+fn transfer(dirs: &DataDirs, args: &[String], export: bool) -> Result<(), String> {
+    let library = Library::open(&dirs.library()).map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let mut last = Instant::now();
+    let mut progress = |phase: &str, done: u64, total: u64| {
+        if last.elapsed() >= Duration::from_secs(1) {
+            last = Instant::now();
+            eprintln!("{phase}: {:.0} of {:.0} MB", done as f64 / 1e6, total as f64 / 1e6);
+        }
+        true
+    };
+    if export {
+        let [id, file] = args else { return Err("export needs a record id and a file".into()) };
+        let app = lighttouch_model::transfer::app_name();
+        library.export(id, Path::new(file), &app, &mut progress).map_err(|e| e.to_string())?;
+        let bytes = std::fs::metadata(file).map_or(0, |m| m.len());
+        println!("exported {id} to {file}: {bytes} bytes in {:.1} s", started.elapsed().as_secs_f64());
+    } else {
+        let [file] = args else { return Err("import needs a file".into()) };
+        let record = library.import_device(Path::new(file), &mut progress).map_err(|e| e.to_string())?;
+        println!(
+            "imported {} \"{}\" ({} {}) in {:.1} s",
+            record.id,
+            record.name,
+            record.board,
+            record.build,
+            started.elapsed().as_secs_f64()
+        );
     }
     Ok(())
 }
@@ -385,6 +422,7 @@ fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
                     return Ok(());
                 }
                 lighttouch_model::Finished::Failed { message, .. } => return Err(message),
+                _ => {}
             }
         }
         if let Some((_, progress)) = model.busy() {

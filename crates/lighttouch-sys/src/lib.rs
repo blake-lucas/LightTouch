@@ -121,6 +121,8 @@ abi_struct!(lt_library_import_config {
     progress: lt_progress_fn,
     opaque: *mut c_void,
 });
+abi_struct!(lt_export_config { record_id: *const c_char, path: *const c_char, fd: i32, app: *const c_char });
+abi_struct!(lt_transfer_import_config { path: *const c_char, fd: i32 });
 abi_struct!(lt_finalize_import_config { stage: *const c_char, destination: *const c_char });
 abi_struct!(lt_device_config { base_path: *const c_char, state_path: *const c_char, allow_dirty: u32 });
 abi_struct!(lt_device_info {
@@ -291,6 +293,21 @@ unsafe extern "C" {
     pub fn lt_library_adopt_prepared(
         library: *mut lt_library,
         config: *const lt_library_import_config,
+        phase: lt_import_phase_fn,
+        opaque: *mut c_void,
+        info: *mut lt_record_info,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_library_export(
+        library: *mut lt_library,
+        config: *const lt_export_config,
+        phase: lt_import_phase_fn,
+        opaque: *mut c_void,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_library_import_device(
+        library: *mut lt_library,
+        config: *const lt_transfer_import_config,
         phase: lt_import_phase_fn,
         opaque: *mut c_void,
         info: *mut lt_record_info,
@@ -557,6 +574,8 @@ mod tests {
             size_of::<lt_guest_request>(),
             size_of::<lt_guest_result>(),
             size_of::<lt_carrier>(),
+            size_of::<lt_export_config>(),
+            size_of::<lt_transfer_import_config>(),
         ];
         let mut c = [0u32; 32];
         let count = unsafe { lt_rust_layout(c.as_mut_ptr(), c.len() as u32) } as usize;
