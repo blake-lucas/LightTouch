@@ -19,6 +19,8 @@ pub const PATHS: &[&str] = &[
     "usr/local/bin/ltm-httpget",
     "usr/lib/libappsync.dylib",
     "usr/libexec/installd",
+    // libappsync's weak load command (sideload::with_weak_library) changes amfid's code directory too.
+    "usr/libexec/amfid",
     "System/Library/Caches/com.apple.xpcd/xpcd_cache.dylib",
     SHARED_CACHE_PATH,
 ];
@@ -369,7 +371,7 @@ mod tests {
 
     #[test]
     fn inventory_paths_match_swift() {
-        assert_eq!(PATHS.len(), 7);
+        assert_eq!(PATHS.len(), 8);
         assert!(PATHS.contains(&SHARED_CACHE_PATH));
     }
 }

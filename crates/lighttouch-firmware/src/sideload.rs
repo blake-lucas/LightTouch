@@ -4,6 +4,7 @@ use crate::activation;
 use crate::codesign;
 use crate::error::Result;
 use crate::hfs::Editor;
+use crate::macho;
 use crate::plistedit;
 use plist::{Dictionary, Value};
 use std::collections::BTreeMap;
@@ -13,6 +14,8 @@ use std::path::Path;
 pub const AGENT: (&str, &str, u16) = ("it_agent", "usr/local/bin/it_agent", 0o755);
 pub const HTTPGET: (&str, &str, u16) = ("httpget-armv7", "usr/local/bin/ltm-httpget", 0o755);
 pub const APPSYNC: (&str, &str, u16) = ("libappsync.dylib", "usr/lib/libappsync.dylib", 0o755);
+/// The iOS 10 programs given libappsync's weak load command (and so re-registered in the kernel's trust table).
+pub const IOS10_APPSYNC_HOSTS: [&str; 2] = ["usr/libexec/installd", "usr/libexec/amfid"];
 pub const AGENT_JOB: &str = "System/Library/LaunchDaemons/com.qemu.it-agent.plist";
 pub const OLD_AGENT_JOB: &str = "System/Library/LaunchDaemons/com.qemu.it-pbd.plist";
 pub const XPCD_CACHE: &str = "System/Library/Caches/com.apple.xpcd/xpcd_cache.dylib";
@@ -81,6 +84,74 @@ fn installation_service_allowing_helper(input: &[u8]) -> Result<Vec<u8>> {
     if !changed {
         return Ok(input.to_vec());
     }
+    activation::signed(&out)
+}
+
+/// iOS 10 system edit (the iPhone 5, 14G61): one weak `LC_LOAD_DYLIB` of `dylib` appended to a thin armv7 system
+/// program's load commands, then its pages re-hashed (the code directory changes, so the program must be in the
+/// kernel's trust table: `a6_assets::PATHS`).
+///
+/// Why: 14G61's dyld ignores DYLD_INSERT_LIBRARIES in any code-signing-enforced process without get-task-allow,
+/// so the launchd job's insertion never loads libappsync into installd, and amfid has no other way in. Only the
+/// header's unused padding before the first section is written; code, entitlements, segments and the existing
+/// load commands (and so every library ordinal) stay as they were. Weak: without the library the program starts
+/// as stock. A program that already names `dylib` is returned unchanged.
+pub fn with_weak_library(input: &[u8], dylib: &str) -> Result<Vec<u8>> {
+    let unsupported = || crate::unsupported!("Unsupported program for the AppSync library load");
+    let images = codesign::images(input).ok_or_else(unsupported)?;
+    if images.len() != 1 || images[0].is_64bit || images[0].cputype != 12 || images[0].base != 0 {
+        return Err(unsupported());
+    }
+    let b = &input[..images[0].size];
+    let ncmds = u32::from_le_bytes([b[16], b[17], b[18], b[19]]) as usize;
+    let sizeofcmds = u32::from_le_bytes([b[20], b[21], b[22], b[23]]) as usize;
+    let le = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) as usize;
+    let mut at = 28usize;
+    let mut first_section = usize::MAX;
+    for _ in 0..ncmds {
+        if at + 8 > b.len() {
+            return Err(unsupported());
+        }
+        let (cmd, size) = (le(at) as u32, le(at + 4));
+        if size < 8 || at + size > b.len() {
+            return Err(unsupported());
+        }
+        if (cmd == macho::LC_LOAD_DYLIB || cmd == macho::LC_LOAD_WEAK_DYLIB) && size > 24 {
+            let name = &b[at + le(at + 8).min(size)..at + size];
+            if name.split(|&c| c == 0).next() == Some(dylib.as_bytes()) {
+                return Ok(input.to_vec());
+            }
+        }
+        if cmd == macho::LC_SEGMENT && size >= 56 {
+            for s in 0..le(at + 48) {
+                let sect = at + 56 + 68 * s;
+                if sect + 68 > at + size {
+                    return Err(unsupported());
+                }
+                if le(sect + 36) > 0 && le(sect + 40) > 0 {
+                    first_section = first_section.min(le(sect + 40));
+                }
+            }
+        }
+        at += size;
+    }
+    if at != 28 + sizeofcmds || first_section == usize::MAX {
+        return Err(unsupported());
+    }
+    let size = (24 + dylib.len() + 1).div_ceil(4) * 4;
+    if at + size > first_section || b[at..at + size].iter().any(|&c| c != 0) {
+        return Err(unsupported());
+    }
+    let mut out = input.to_vec();
+    let mut command = Vec::with_capacity(size);
+    for word in [macho::LC_LOAD_WEAK_DYLIB, size as u32, 24, 2, 0x1_0000, 0x1_0000] {
+        command.extend_from_slice(&word.to_le_bytes());
+    }
+    command.extend_from_slice(dylib.as_bytes());
+    command.resize(size, 0);
+    out[at..at + size].copy_from_slice(&command);
+    out[16..20].copy_from_slice(&((ncmds + 1) as u32).to_le_bytes());
+    out[20..24].copy_from_slice(&((sizeofcmds + size) as u32).to_le_bytes());
     activation::signed(&out)
 }
 
@@ -270,6 +341,20 @@ pub fn install(system: &Path, helpers: &Path) -> Result<()> {
             root.push("usr/libexec/installd".into());
         }
     }
+    // iOS 10: libappsync reaches installd (installs) and amfid (launches) by a weak load command, as the job's
+    // insertion no longer does (`with_weak_library`).
+    if major >= 10 {
+        for program in IOS10_APPSYNC_HOSTS {
+            let before = v.read(program)?;
+            let after = with_weak_library(&before, &format!("/{}", APPSYNC.1))?;
+            if after != before {
+                v.write(program, after, Some(0o755))?;
+                if !root.iter().any(|p| p == program) {
+                    root.push(program.to_string());
+                }
+            }
+        }
+    }
     v.mkdirs("usr/local/bin")?;
     for (name, path, mode) in [AGENT, HTTPGET, APPSYNC] {
         v.write(path, std::fs::read(helpers.join(name))?, Some(mode))?;
@@ -330,6 +415,26 @@ pub fn install(system: &Path, helpers: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LT_14G61_PROGRAMS=DIR holding 14G61's installd and amfid: the weak load lands in the padding, verifies, and
+    /// a second pass changes nothing.
+    #[test]
+    fn weak_library_on_14g61_programs() {
+        let Some(dir) = std::env::var_os("LT_14G61_PROGRAMS") else { return };
+        for name in ["installd", "amfid"] {
+            let before = std::fs::read(Path::new(&dir).join(name)).unwrap();
+            let after = with_weak_library(&before, "/usr/lib/libappsync.dylib").unwrap();
+            assert_eq!(after.len(), before.len());
+            assert_ne!(after, before);
+            codesign::verified_code_directories(&after).unwrap();
+            assert_eq!(with_weak_library(&after, "/usr/lib/libappsync.dylib").unwrap(), after);
+            let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+            // the header (load commands and padding, before the first section) and the signature only
+            let sig = codesign::code_signature(&before).unwrap().0;
+            let outside: Vec<&usize> = changed.iter().filter(|&&i| i >= 16384 && i < sig).collect();
+            assert!(outside.is_empty(), "{name} {sig} {:?}", &outside[..outside.len().min(8)]);
+        }
+    }
 
     #[test]
     fn rejects_non_jobs() {
