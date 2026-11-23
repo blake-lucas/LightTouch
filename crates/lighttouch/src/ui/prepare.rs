@@ -116,6 +116,13 @@ fn device_step(app: &mut App, ui: &mut Ui) {
     header(app, ui, "Prepare from an IPSW", "Choose the device to emulate", |app| {
         app.page = if app.model.devices.is_empty() { Page::Setup(setup::Step::Welcome) } else { Page::Device };
     });
+    // The sidebar's ⋮ has this too; here for whoever came to add a device they already have elsewhere.
+    ui.horizontal(|ui| {
+        ui.label(widgets::muted(&p, "Moving a device from another computer or phone?"));
+        if widgets::text_button(ui, &p, "Import a device…").clicked() {
+            super::import_device(app);
+        }
+    });
     let groups = Catalog::get().devices();
     let (tested, untested): (Vec<&DeviceGroup>, Vec<&DeviceGroup>) =
         groups.iter().partition(|g| !g.tested().is_empty());

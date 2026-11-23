@@ -104,8 +104,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
 
             ui.add_space(6.0);
-            // One device is made at a time; the one being made is listed above, with its progress.
-            let add = add_row(ui, &p, icons::PLUS, "Add a device", !active && !busy);
+            // One device is made at a time; the one being made is listed above, with its progress. Its ⋮ holds the other
+            // way in: a device exported by LightTouch on another computer or phone.
+            let mut import = false;
+            let add = ui
+                .horizontal(|ui| {
+                    let add =
+                        add_row(ui, &p, icons::PLUS, "Add a device", !active && !busy, ui.available_width() - 40.0);
+                    let more =
+                        widgets::icon_button_sized(ui, &p, icons::MORE, "More ways to add a device", 34.0, !busy);
+                    egui::Popup::menu(&more).show(|ui| {
+                        ui.set_min_width(200.0);
+                        if ui
+                            .button(widgets::icon_label(icons::DOWNLOAD, "Import a device…", None))
+                            .on_hover_text("Add a device exported by LightTouch on another computer or phone")
+                            .clicked()
+                        {
+                            import = true;
+                        }
+                    });
+                    add
+                })
+                .inner;
             let running_name = app.model.session.as_ref().filter(|_| active).map(|s| s.name.clone());
             let add = match (&running_name, busy) {
                 (_, true) => add.on_hover_text("Wait for the device being prepared to finish"),
@@ -115,10 +135,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if add.clicked() && !busy {
                 super::prepare::open(app);
             }
-            // A device exported by LightTouch on another computer or phone.
-            let import = add_row(ui, &p, icons::DOWNLOAD, "Import a device…", !busy)
-                .on_hover_text("Add a device exported by LightTouch on another computer or phone");
-            if import.clicked() && !busy {
+            if import && !busy {
                 super::import_device(app);
             }
 
@@ -277,9 +294,16 @@ impl MaxAlpha for Color32 {
     }
 }
 
-fn add_row(ui: &mut egui::Ui, p: &theme::Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
+fn add_row(
+    ui: &mut egui::Ui,
+    p: &theme::Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    width: f32,
+) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 46.0), if enabled { Sense::click() } else { Sense::hover() });
+        ui.allocate_exact_size(vec2(width, 46.0), if enabled { Sense::click() } else { Sense::hover() });
     let alpha = if enabled { 1.0 } else { 0.4 };
     if response.hovered() && enabled {
         ui.painter().rect_filled(rect, CornerRadius::same(theme::radius::ROW), p.container_high);
