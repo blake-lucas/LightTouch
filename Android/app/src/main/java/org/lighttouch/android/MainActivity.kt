@@ -819,8 +819,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (prep.romFor == rom && prep.romPath.isNotEmpty() && File(prep.romPath).isFile) return
         prep.romPath = ""; prep.romFor = null; prep.romLabel = ""
         val candidates = records.filter { Bootrom.forBoard(it.getString("board") ?: "") == rom && it.getBoolean("bootromAvailable") }
-            .map { File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin") to "from ${it.getString("name")}" } +
-            listOf(File(filesDir, "bootrom.bin") to "saved earlier")
+            .map { File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin") to "reused" } +
+            listOf(File(filesDir, "bootrom.bin") to "reused")
         Thread({
             val found = candidates.firstOrNull { (file, _) -> file.isFile && file.length() <= (1L shl 20) && rom.matches(file.readBytes()) }
             if (found != null) handler.post {
@@ -1044,7 +1044,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 // The chip's mask ROM: every good dump is these bytes, and the device boots it.
                 require(rom.matches(target.readBytes())) { "That file is not the ${rom.label} boot ROM" }
                 val name = displayName(uri)
-                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "${rom.label} · $name" }
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "${rom.label} · your file" }
             } catch (e: Exception) { handler.post { prep.romError = e.message ?: "Could not use that boot file" } }
         }, "prepare-bootrom").start()
     }
