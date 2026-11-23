@@ -87,6 +87,8 @@ pub struct Settings {
     pub device_frame: bool,
     /// Pause the guest while the window is minimized, and resume when it comes back.
     pub pause_when_hidden: bool,
+    /// Full screen shows its button bar (volume, Home, Sleep/Wake, More); without it Esc or F11 leaves.
+    pub fullscreen_controls: bool,
     pub overlay: OverlayLevel,
     pub overlay_graph: OverlayGraph,
     pub overlay_corner: Corner,
@@ -122,6 +124,7 @@ impl Default for Settings {
             scaling: Scaling::Smooth,
             device_frame: true,
             pause_when_hidden: true,
+            fullscreen_controls: true,
             overlay: OverlayLevel::Off,
             overlay_graph: OverlayGraph::FrameTime,
             overlay_corner: Corner::TopLeft,

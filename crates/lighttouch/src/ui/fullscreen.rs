@@ -1,5 +1,6 @@
 //! Full screen: the guest centred on black, with a button bar docked below it when there is room, or floating over
-//! it (hiding after a few seconds without the mouse) when there is not. Esc leaves.
+//! it (hiding after a few seconds without the mouse) when there is not. Settings can hide the bar for people who use
+//! the keys instead. Esc and F11 leave.
 use super::device_frame::{self, Skin};
 use super::guest::ButtonControl;
 use super::{App, Dialog, Page, icons, overlay, theme, widgets};
@@ -24,7 +25,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let rotation = app.model.settings.rotation;
     let real = device_frame::real_scale(&skin, &app.model.settings, ui.ctx());
     let fit = device_frame::place(&skin, full, rotation, false, real).screen;
-    let docked = (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
+    let controls = app.model.settings.fullscreen_controls;
+    let docked = controls && (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
     let screen = if docked {
         device_frame::place(&skin, full.shrink2(vec2(0.0, BAR)), rotation, false, real).screen
     } else {
@@ -51,6 +53,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         if response.clicked() {
             app.pulse_home();
         }
+    }
+
+    // Without the bar, a note on entering says how to leave (Esc toggles mouse-look when a preset uses it).
+    if !controls {
+        let text = if app.guest.mouse_toggles() { "F11 leaves full screen" } else { "Esc or F11 leaves full screen" };
+        super::guest::hint_at(ui, egui::pos2(full.center().x, full.bottom() - 40.0), app.fullscreen_at, text);
+        return;
     }
 
     // The floating bar shows while the mouse moves and hides after 4 s.

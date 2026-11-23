@@ -97,10 +97,14 @@ fn held(ui: &Ui, model: &Model, input: &lighttouch_model::gamepad::preset::Input
 
 /// A note across the top of the screen for a couple of seconds after `since`.
 fn hint(ui: &Ui, rect: Rect, since: Instant, text: &str) {
+    hint_at(ui, egui::pos2(rect.center().x, rect.top() + 22.0), since, text);
+}
+
+/// A note centred on `at` for a couple of seconds after `since`.
+pub(super) fn hint_at(ui: &Ui, at: egui::Pos2, since: Instant, text: &str) {
     if since.elapsed() >= Duration::from_millis(2500) {
         return;
     }
-    let at = egui::pos2(rect.center().x, rect.top() + 22.0);
     let font = egui::FontId::proportional(13.0);
     let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), Color32::WHITE);
     let back = Rect::from_center_size(at, galley.size() + egui::vec2(20.0, 10.0));

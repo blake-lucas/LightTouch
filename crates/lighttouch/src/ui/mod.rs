@@ -76,6 +76,8 @@ pub struct App {
     pub page: Page,
     pub dialog: Option<Dialog>,
     pub fullscreen: bool,
+    /// When full screen was last entered (for the hint on leaving it when its controls are hidden).
+    pub fullscreen_at: Instant,
     pub palette: Palette,
     applied: Option<(Theme, bool)>,
     pub setup: setup::SetupState,
@@ -315,6 +317,7 @@ impl App {
             page,
             dialog: None,
             fullscreen: false,
+            fullscreen_at: Instant::now(),
             palette: theme::DARK,
             applied: None,
             setup: setup::SetupState::default(),
@@ -459,6 +462,9 @@ impl App {
     }
 
     pub fn set_fullscreen(&mut self, ctx: &egui::Context, on: bool) {
+        if on && !self.fullscreen {
+            self.fullscreen_at = Instant::now();
+        }
         self.fullscreen = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     }
@@ -594,7 +600,7 @@ impl App {
                     ui.add_space(4.0);
                     ui.label(widgets::muted(&p, "The mouse is your finger on the device's screen."));
                     ui.add_space(12.0);
-                    let rows: [(String, &str); 9] = [
+                    let rows: [(String, &str); 10] = [
                         ("Click".into(), "Tap"),
                         ("Drag".into(), "Swipe or scroll"),
                         (format!("{ALT}-drag"), "Pinch or rotate with two fingers"),
@@ -603,6 +609,7 @@ impl App {
                         ("P".into(), "Sleep/Wake button"),
                         ("+  −".into(), "Volume up and down"),
                         ("Arrow keys".into(), "Tilt the device"),
+                        ("F11".into(), "Full screen, in and out"),
                         ("Esc".into(), "Leave full screen"),
                     ];
                     egui::Grid::new("controls").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
@@ -762,6 +769,17 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // F11 goes in and out of full screen (in only with a device on, like the dock's button). Key bindings can't
+        // take it, so it always leaves, even with the controls hidden and a mouse-look preset holding Esc.
+        let f11 = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { key: egui::Key::F11, pressed: true, repeat: false, modifiers, .. }
+                    if modifiers.is_none())
+            })
+        });
+        if f11 && !self.controller.listening() && (self.fullscreen || self.model.session.is_some()) {
+            self.set_fullscreen(&ctx, !self.fullscreen);
+        }
         if self.fullscreen {
             fullscreen::show(self, ui);
         } else {
