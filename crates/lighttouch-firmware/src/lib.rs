@@ -37,6 +37,7 @@ pub mod baseband;
 pub mod boot;
 pub mod cache;
 pub mod create;
+pub mod crashlog;
 pub mod codesign;
 pub mod cydia;
 pub mod decrypt;

@@ -203,7 +203,9 @@ build_portable_tests() {
 # run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it), Android's too.
 build_firmwarekit() {
     log "firmwarekit (linux)"
-    (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
+    # Debuggable builds (LT_DEBUGGABLE, default true) honor LT_ONESHOT_CRASH, the crash-report test (crashlog.rs).
+    (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit \
+        $([ "$LT_DEBUGGABLE" = false ] || echo --features crash-test) 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/linux"
     cp "$REPO/target/release/firmwarekit" "$OUT/firmwarekit/linux/"
     ls -la "$OUT/firmwarekit/linux"
@@ -215,7 +217,8 @@ build_firmwarekit_android() {
     log "firmwarekit (android arm64)"
     (cd "$REPO" && CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang" AR_aarch64_linux_android="$NDK_BIN/llvm-ar" \
         CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android29-clang" \
-        cargo build --release --target aarch64-linux-android -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
+        cargo build --release --target aarch64-linux-android -p lighttouch-firmware --bin firmwarekit \
+            $([ "$LT_DEBUGGABLE" = false ] || echo --features crash-test) 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/android"
     cp "$REPO/target/aarch64-linux-android/release/firmwarekit" "$OUT/firmwarekit/android/"
     "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
