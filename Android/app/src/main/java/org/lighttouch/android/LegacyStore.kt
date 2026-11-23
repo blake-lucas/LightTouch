@@ -20,15 +20,14 @@ data class StoreTarget(val productType: String, val ios: String, val arch: Strin
 
     companion object {
         /** What every install entry point says on a firmware that doesn't take installs. */
-        const val NO_INSTALLS_IOS10 = "App installs aren\u2019t supported on iOS 10 yet."
+        const val NO_INSTALLS = "App installs need iPhone OS 2 or later."
 
         /**
-         * The one rule for whether a firmware takes app installs (Light Touch for Mac's Entry.managesApps; the
-         * desktop's target::manages_apps): iPhone OS 1 has no installation service, and iOS 10's installd checks
-         * code signatures inside the dyld shared cache, which nothing bypasses yet, so an app neither installs nor
-         * launches there.
+         * The one rule for whether a firmware takes app installs (the desktop's target::manages_apps): iPhone OS 1
+         * has no installation service. iOS 10 (the iPhone 5's 10.3.4) takes them through libappsync's load in
+         * installd and amfid, which its preparation sets up.
          */
-        fun managesApps(ios: String): Boolean = (ios.substringBefore('.').toIntOrNull() ?: 2) in 2..9
+        fun managesApps(ios: String): Boolean = (ios.substringBefore('.').toIntOrNull() ?: 2) in 2..10
 
         private val armv6 = setOf("iPod1,1", "iPod2,1", "iPhone1,1", "iPhone1,2")
         fun of(productType: String, ios: String) =

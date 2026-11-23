@@ -34,16 +34,16 @@ impl Target {
     }
 }
 
-/// The one rule for whether a firmware takes app installs (Light Touch for Mac's `Entry.managesApps`): iPhone OS 1
-/// has no installation service (it came with 2.0), and iOS 10's installd checks code signatures inside the dyld
-/// shared cache, which nothing bypasses yet, so an app neither installs nor launches there.
+/// The one rule for whether a firmware takes app installs: iPhone OS 1 has no installation service (it came with
+/// 2.0). iOS 10 (the iPhone 5's 10.3.4) takes them through libappsync's load in installd and amfid, which its
+/// preparation sets up (Light Touch for Mac's `Entry.managesApps` still refuses iOS 10).
 pub fn manages_apps(ios: &str) -> bool {
     let major = ios.split('.').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(2);
-    (2..10).contains(&major)
+    (2..=10).contains(&major)
 }
 
 /// What every install entry point says on a firmware that doesn't take installs.
-pub const NO_INSTALLS_IOS10: &str = "App installs aren\u{2019}t supported on iOS 10 yet.";
+pub const NO_INSTALLS: &str = "App installs need iPhone OS 2 or later.";
 
 /// "3.1" → [3, 1, 0]; `None` for anything that isn't 1–3 numbers starting above zero.
 pub fn version(text: &str) -> Option<[u32; 3]> {
@@ -86,10 +86,10 @@ mod tests {
     }
 
     #[test]
-    fn installs_from_2_0_through_ios_9() {
-        for (ios, ok) in [("1.1.5", false), ("2.0", true), ("6.1.6", true), ("9.3.5", true), ("10.3.4", false)] {
+    fn installs_from_2_0_through_ios_10() {
+        for (ios, ok) in [("1.1.5", false), ("2.0", true), ("6.1.6", true), ("9.3.5", true), ("10.3.4", true)] {
             assert_eq!(manages_apps(ios), ok, "{ios}");
         }
-        assert!(!Target::of("iPhone5,2", "10.3.4").unwrap().manages_apps());
+        assert!(Target::of("iPhone5,2", "10.3.4").unwrap().manages_apps());
     }
 }

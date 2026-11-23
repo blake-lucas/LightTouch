@@ -1033,7 +1033,7 @@ fn details(app: &mut App, ui: &mut Ui) {
         let store = &app.model.store;
         let selected = store.copies.iter().flatten().find(|c| Some(c.ipa_id) == store.selected);
         if !installs {
-            ui.add(egui::Label::new(widgets::muted(&p, lighttouch_catalog::target::NO_INSTALLS_IOS10)).wrap());
+            ui.add(egui::Label::new(widgets::muted(&p, lighttouch_catalog::target::NO_INSTALLS)).wrap());
         } else if let Some(problem) = store.problem.clone() {
             ui.add(egui::Label::new(RichText::new(problem).color(p.error)).wrap());
         } else if store.selected.is_some() && store.candidate.is_none() {

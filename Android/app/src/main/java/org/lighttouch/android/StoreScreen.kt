@@ -253,7 +253,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     fun queued(app: JSONObject) = queueKey(app).let { key -> queue.firstOrNull { it.key == key } }
 
     private fun enqueue(key: String, name: String, request: InstallRequest) {
-        if (target?.managesApps == false) { message = StoreTarget.NO_INSTALLS_IOS10; return }
+        if (target?.managesApps == false) { message = StoreTarget.NO_INSTALLS; return }
         val socket = muxSocket() ?: run { message = "Start the guest to install apps."; return }
         installer.socket = socket
         if (!installing) askNotifications()
@@ -550,7 +550,7 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
             val a = LegacyStore.version(chosenVersion.substringBefore(' ')); val b = LegacyStore.version(installedVersion)
             if (a != null && b != null && LegacyStore.newer(b, a)) note("Version $installedVersion is installed. An older version may not read its data.", false)
         }
-        if (model.target?.managesApps == false) note(StoreTarget.NO_INSTALLS_IOS10, true)
+        if (model.target?.managesApps == false) note(StoreTarget.NO_INSTALLS, true)
         else if (!running) note("Start the device to install.", false)
         else if (!model.servicesAvailable) note("App installation is not included in this build.", true)
         Spacer(Modifier.height(8.dp))
