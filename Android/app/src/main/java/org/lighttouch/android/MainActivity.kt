@@ -836,11 +836,36 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val board = prep.firmware?.board
         LaunchedEffect(board, records) { board?.let { findBootrom(it) } }
         PrepareScreen(prep, busy, preparationActive(),
-            onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
-            onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
+            onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
+            onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onPrepare = ::prepareDevice,
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
             onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation,
             onSaveLogs = ::exportLogs, savingLogs = logsBusy)
+    }
+    /**
+     * Prepare device: downloads what is missing (the boot ROM, the IPSW), then prepares, without another tap. The
+     * download service is held from the tap until preparation's own service has started, so the hand-over works with
+     * LightTouch in the background (a foreground service may start another).
+     */
+    private fun prepareDevice() {
+        if (preparationActive() || busy || prep.autoPrepare || IpswDownload.running || prep.romChecking) return
+        val chosen = prep.firmware ?: return
+        if (prep.ipswReady && prep.romReady) { beginPreparation(); return }
+        prep.autoPrepare = true
+        DownloadService.hold(applicationContext, "Getting iOS ${chosen.label} ready")
+        if (!prep.romReady) downloadBootrom()
+        if (!prep.ipswReady) downloadIpsw()
+        continueAutoPrepare()
+    }
+    /** After each download: prepare once both files are there; give up (the card shows why) when one failed. */
+    private fun continueAutoPrepare() {
+        if (!prep.autoPrepare) return
+        val release = { handler.postDelayed({ DownloadService.release(applicationContext) }, 10_000) }
+        if (prep.ipswReady && prep.romReady) {
+            prep.autoPrepare = false; beginPreparation(); release()
+        } else if ((!prep.ipswReady && !IpswDownload.running) || (!prep.romReady && !prep.romChecking)) {
+            prep.autoPrepare = false; release()
+        }
     }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
@@ -855,7 +880,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val selectedRom = if (needsBootrom(chosen.board)) prep.romPath else ""
         prep.importError = ""
         prep.preparation = Bundle().apply { putString("state", "starting"); putString("firmwareId", chosen.id) }
-        startForegroundService(Intent(this, FirmwareService::class.java))
+        // Refused when LightTouch is in the background without a foreground service; preparation still runs.
+        runCatching { startForegroundService(Intent(this, FirmwareService::class.java)) }
         Thread({
             try {
                 // firmwarekit bakes the APK's own guest helpers and packages into the system.
@@ -964,7 +990,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun downloadIpsw() {
         val chosen = prep.firmware ?: return
         prep.ipswError = ""
-        IpswDownload.start(this, chosen) { file, _ -> handler.post { if (file != null) rememberIpsw(file.absolutePath, chosen.id) } }
+        IpswDownload.start(this, chosen) { file, _ -> handler.post { if (file != null) rememberIpsw(file.absolutePath, chosen.id); continueAutoPrepare() } }
     }
     /** Copies a chosen IPSW in, checking its SHA-1 against the chosen version's on the way. */
     private fun importStockIpsw(uri: Uri) {
@@ -1004,8 +1030,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val target = File(filesDir, "prepare-bootrom-${rom.name.lowercase()}.bin")
                 rom.fetch(target)
-                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "Downloaded · ${rom.label}"; prep.romChecking = false }
-            } catch (e: Exception) { handler.post { prep.romError = "Could not download the boot file: ${e.message}"; prep.romChecking = false } }
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "Downloaded · ${rom.label}"; prep.romChecking = false; continueAutoPrepare() }
+            } catch (e: Exception) { handler.post { prep.romError = "Could not download the boot file: ${e.message}"; prep.romChecking = false; continueAutoPrepare() } }
         }, "bootrom-download").start()
     }
     private fun importPrepRom(uri: Uri) {

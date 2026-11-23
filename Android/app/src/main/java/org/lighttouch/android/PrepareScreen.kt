@@ -49,6 +49,8 @@ internal class PrepareState {
     var romLabel by mutableStateOf("")
     var romChecking by mutableStateOf(false)
     var romError by mutableStateOf("")
+    /** Prepare device was tapped with files missing: they download, then preparation starts without another tap. */
+    var autoPrepare by mutableStateOf(false)
     var preparation by mutableStateOf<Bundle?>(null)
     var importError by mutableStateOf("")
     /** Adding the prepared output as a device: the phase shown, and how far it is (negative while unknown). */
@@ -83,7 +85,7 @@ private data class PreparationCost(val time: String, val space: String, val note
 private fun preparationCost(firmware: CatalogFirmware?) = when (firmware?.board) {
     "n72ap" -> PreparationCost("about a minute", "1.5 GB")
     "n42ap" -> PreparationCost("20 to 40 minutes", "10 GB",
-        " The iPhone 5 is far heavier than the other devices: keep the phone plugged in and LightTouch open.")
+        "Keep the phone plugged in.")
     else -> PreparationCost("a few minutes", "5 GB")
 }
 
@@ -93,8 +95,8 @@ private fun preparationCost(firmware: CatalogFirmware?) = when (firmware?.board)
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit,
-                           onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit,
+internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onChooseIpsw: () -> Unit,
+                           onChooseRom: () -> Unit, onPrepare: () -> Unit,
                            onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit,
                            onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false) {
     val run = state.preparation?.getString("state")
@@ -124,7 +126,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose, onSaveLogs, savingLogs)
                     state.step == PrepareStep.DEVICE -> DeviceStep(state)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
-                    else -> FilesStep(state, busy, onDownload, onChooseIpsw, onChooseRom, onDownloadRom, onPrepare)
+                    else -> FilesStep(state, busy, onChooseIpsw, onChooseRom, onPrepare)
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -236,15 +238,14 @@ private fun released(firmware: CatalogFirmware): String {
 }
 
 @Composable
-private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit, onChooseRom: () -> Unit,
-                                  onDownloadRom: () -> Unit, onPrepare: () -> Unit) {
+private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIpsw: () -> Unit, onChooseRom: () -> Unit,
+                                  onPrepare: () -> Unit) {
     val firmware = state.firmware ?: return
     val name = shortProductName(firmware.productType)
-    Heading("$name, iOS ${firmware.label}", "LightTouch needs Apple's stock IPSW for this version" +
-        (if (needsBootrom(firmware.board)) ", and the device's boot file." else "."))
-    // IPSW
-    Card(icon = LtIcons.Layers, title = "iOS firmware (IPSW)", done = state.ipswReady,
-        detail = if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified" else "${firmware.fileName} · ${firmware.bytes / 1_000_000} MB") {
+    Heading("$name, iOS ${firmware.label}", "Downloads what it needs, then sets it up on this phone.")
+    // IPSW: Apple's servers when ipsw.me lists the build, else the Internet Archive.
+    Card(icon = LtIcons.Layers, title = "iOS firmware", done = state.ipswReady,
+        detail = if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified" else "${firmware.bytes / 1_000_000} MB · downloaded for you") {
         val downloading = IpswDownload.running && IpswDownload.firmwareId == firmware.id
         when {
             state.ipswReady -> TextButton(onClick = onChooseIpsw, enabled = !busy) { Text("Use a different file") }
@@ -262,36 +263,21 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
             else -> {
                 val error = state.ipswError.ifEmpty { IpswDownload.status.takeIf { IpswDownload.firmwareId == firmware.id } ?: "" }
                 if (error.isNotEmpty()) Text(error, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onDownload, enabled = !busy && !IpswDownload.running, modifier = Modifier.testTag("prepare_download")) {
-                        Icon(LtIcons.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Download")
-                    }
-                    OutlinedButton(onClick = onChooseIpsw, enabled = !busy, modifier = Modifier.testTag("prepare_choose_ipsw")) { Text("Choose a file") }
-                }
-                Text("Downloads come from Apple's servers when ipsw.me lists them, otherwise from the Internet Archive.",
-                    Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onChooseIpsw, enabled = !busy && !state.autoPrepare, modifier = Modifier.testTag("prepare_choose_ipsw")) { Text("Use my own file") }
             }
         }
     }
-    // Boot file: which one the device starts from, always shown.
+    // The chip's boot ROM (from rom.sources, matched byte for byte; the same for every iOS version), on the devices
+    // that start from one; the others start from what preparation makes and show no card.
     val rom = state.bootrom
-    if (rom == null) Card(icon = LtIcons.Chip, title = "Boot file", done = true,
-        detail = "None needed. The $name starts from the files preparation makes.") {}
-    else Card(icon = LtIcons.Chip, title = "Boot file · ${rom.label} boot ROM", done = state.romReady,
-        detail = if (state.romReady) state.romLabel else "64 KB, part of the chip rather than the IPSW. The same for every iOS version.") {
+    if (rom != null) Card(icon = LtIcons.Chip, title = "Boot ROM", done = state.romReady,
+        detail = if (state.romReady) state.romLabel else "64 KB · downloaded for you") {
         when {
             state.romReady -> TextButton(onClick = onChooseRom, enabled = !busy) { Text("Use a different file") }
             state.romChecking -> LinearProgressIndicator(Modifier.fillMaxWidth())
             else -> {
                 if (state.romError.isNotEmpty()) Text(state.romError, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onDownloadRom, enabled = !busy, modifier = Modifier.testTag("prepare_download_rom")) {
-                        Icon(LtIcons.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Download")
-                    }
-                    OutlinedButton(onClick = onChooseRom, enabled = !busy, modifier = Modifier.testTag("prepare_choose_rom")) { Text("Choose a file") }
-                }
-                Text("Downloads come from ${rom.sources}, and must match the ${rom.label} boot ROM exactly.", Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onChooseRom, enabled = !busy && !state.autoPrepare, modifier = Modifier.testTag("prepare_choose_rom")) { Text("Use my own file") }
             }
         }
     }
@@ -300,17 +286,18 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
     // and locked, saying why, where the firmware can't be jailbroken.
     val jailbreakUnavailable = firmware.jailbreakUnavailable
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
-        SwitchRow(LtIcons.Bag, "Jailbreak", jailbreakUnavailable ?: "Cydia and afc2, installed during preparation",
+        SwitchRow(LtIcons.Bag, "Jailbreak", jailbreakUnavailable ?: "Adds Cydia and afc2",
             state.jailbreak && jailbreakUnavailable == null, tag = "prepare_jailbreak",
             enabled = jailbreakUnavailable == null) { if (!busy) state.jailbreak = it }
     }
     val cost = preparationCost(firmware)
-    Text("Preparing runs on this phone, takes ${cost.time} and needs about ${cost.space} free.${cost.note} LightTouch's guest tools are added for you.",
+    Text("Takes ${cost.time} and needs about ${cost.space} free. " + cost.note.ifEmpty { "You can leave LightTouch while it works." },
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(20.dp))
-    Button(onClick = onPrepare, enabled = !busy && state.ipswReady && state.romReady && state.ipswChecking.isEmpty(),
+    val fetching = state.autoPrepare || IpswDownload.running || state.romChecking
+    Button(onClick = onPrepare, enabled = !busy && !fetching && state.ipswChecking.isEmpty(),
         modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("start_preparation"), contentPadding = PaddingValues(horizontal = 32.dp)) {
-        Text("Prepare device", style = MaterialTheme.typography.titleMedium)
+        Text(if (state.autoPrepare) "Downloading, then preparing…" else "Prepare device", style = MaterialTheme.typography.titleMedium)
     }
 }
 
