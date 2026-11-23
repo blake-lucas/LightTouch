@@ -10,6 +10,7 @@ pub enum Soc {
     S5l8720,
     S5l8920,
     S5l8930,
+    S5l8950,
 }
 
 /// The boards Light Touch runs and the facts preparation reads.
@@ -23,6 +24,7 @@ pub enum Board {
     K48,
     N81,
     N90,
+    N42,
 }
 
 impl Board {
@@ -36,6 +38,7 @@ impl Board {
             "k48ap" => Board::K48,
             "n81ap" => Board::N81,
             "n90ap" => Board::N90,
+            "n42ap" => Board::N42,
             _ => return None,
         })
     }
@@ -49,6 +52,7 @@ impl Board {
             Board::K48 => "k48ap",
             Board::N81 => "n81ap",
             Board::N90 => "n90ap",
+            Board::N42 => "n42ap",
         }
     }
     pub fn soc(self) -> Soc {
@@ -57,6 +61,7 @@ impl Board {
             Board::N72 => Soc::S5l8720,
             Board::N18 | Board::N88 => Soc::S5l8920,
             Board::K48 | Board::N81 | Board::N90 => Soc::S5l8930,
+            Board::N42 => Soc::S5l8950,
         }
     }
     pub fn product_type(self) -> &'static str {
@@ -69,6 +74,7 @@ impl Board {
             Board::K48 => "iPad1,1",
             Board::N81 => "iPod4,1",
             Board::N90 => "iPhone3,1",
+            Board::N42 => "iPhone5,2",
         }
     }
     pub fn marketing_name(self) -> &'static str {
@@ -81,14 +87,15 @@ impl Board {
             Board::K48 => "iPad",
             Board::N81 => "iPod touch (4th generation)",
             Board::N90 => "iPhone 4",
+            Board::N42 => "iPhone 5",
         }
     }
     pub fn is_phone(self) -> bool {
-        matches!(self, Board::M68 | Board::N88 | Board::N90)
+        matches!(self, Board::M68 | Board::N88 | Board::N90 | Board::N42)
     }
     /// The S5L8920/S5L8930 boards: prepared alike, booted by kboot (iBoot too on K48).
     pub fn is_kboot(self) -> bool {
-        matches!(self.soc(), Soc::S5l8920 | Soc::S5l8930)
+        matches!(self.soc(), Soc::S5l8920 | Soc::S5l8930 | Soc::S5l8950)
     }
     /// The guest packages' architecture.
     pub fn arch(self) -> &'static str {
@@ -268,6 +275,73 @@ pub fn ipod1g(d: &IPod1G, hardware: &DeviceInfo, serial: &str) -> BootConfig {
     if hardware.has_cellular {
         argv.extend(["-netdev".to_string(), "user,id=cell0,lan=off".to_string()]);
     }
+    BootConfig { argv, machine: hardware.machine.clone() }
+}
+
+/// The iPhone 5 (-M iPhone-5, S5L8950): kboot on its PPN store, the modem always
+/// (baseband=on, its cell0 netdev and IMEI), Wi-Fi a BCM4334 on the HSIC port (the machine has no
+/// wifi=) with the unit's MAC, and no die-id or USB keyboard. Its four cores run multi-threaded TCG.
+/// Used for the restore and seal one-shots; the prepared-device boot uses the app's own path.
+pub fn iphone5(
+    d: &IPad,
+    hardware: &DeviceInfo,
+    serial: &str,
+    audio: &[String],
+    netdev: Option<&str>,
+    restore: &[String],
+    imei: Option<&str>,
+) -> BootConfig {
+    iphone5_net(d, hardware, serial, audio, netdev, restore, imei, true)
+}
+
+/// Whether a preparation boot gets the machine's network backends. The restore and seal boots talk to the
+/// guest over its own services, never over its network, and a slirp stack the phone's engine carries but
+/// the host's does not is one more thing that can fail before launchd; they boot without it.
+pub fn iphone5_net(
+    d: &IPad,
+    hardware: &DeviceInfo,
+    serial: &str,
+    audio: &[String],
+    netdev: Option<&str>,
+    restore: &[String],
+    imei: Option<&str>,
+    network: bool,
+) -> BootConfig {
+    let mut machine = hardware.machine.clone();
+    if let IPadBoot::Kernel { image, .. } = &d.boot {
+        machine += &format!(",kboot={}", escape(image));
+    }
+    machine += &format!(",nand={}", escape(&d.nand));
+    machine += ",baseband=on";
+    machine += &options(&d.machine_options);
+    let wifi =
+        if d.wifi { vec!["-device".to_string(), "usb-bcm-hsic,bus=usb-bus.0,port=4".to_string()] } else { Vec::new() };
+    let wifi0 = netdev.unwrap_or("user,id=wifi0,lan=off").to_string();
+    let mut cellular = vec!["-netdev".to_string(), wifi0.replacen("id=wifi0", "id=cell0", 1)];
+    if let Some(imei) = imei {
+        cellular.push("-global".into());
+        cellular.push(format!("ios-baseband.imei={imei}"));
+    }
+    let mut argv: Vec<String> = vec![
+        "LightTouchMac".into(),
+        "-M".into(),
+        machine,
+        "-accel".into(),
+        "tcg,thread=multi".into(),
+        "-display".into(),
+        "none".into(),
+        "-monitor".into(),
+        "none".into(),
+        "-no-reboot".into(),
+    ];
+    argv.extend(audio.iter().cloned());
+    argv.extend(["-serial".to_string(), serial.to_string()]);
+    if network {
+        argv.extend(wifi);
+        argv.extend(["-netdev".to_string(), wifi0]);
+        argv.extend(cellular);
+    }
+    argv.extend(restore.iter().cloned());
     BootConfig { argv, machine: hardware.machine.clone() }
 }
 

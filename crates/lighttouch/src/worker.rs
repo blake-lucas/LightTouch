@@ -28,7 +28,7 @@ pub fn main(args: &[String]) -> i32 {
     // The USB bridge listens before the engine starts (the engine dials it when the guest brings USB up), and its
     // address goes into the environment before this process has other threads.
     let usb = parsed.usb.as_ref().map(|usb| {
-        let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log);
+        let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log, usb.app_pairs);
         if let Ok(bridge) = &bridge {
             set_engine_env("IT_USB_TCP", &bridge.guest_socket.to_string_lossy());
         }
@@ -333,6 +333,7 @@ fn run(
     let mut pending_motion: Option<PendingMotion> = None;
     let mut pending_guest: Option<u64> = None;
     let mut microphone = Microphone { enabled: args.microphone, ..Default::default() };
+    let mut modem = Modem { present: lighttouch_core::carrier::board_has_modem(&record.board), ..Default::default() };
     let mut ui_gone = false;
     let grace = Duration::from_millis(sys::LT_SHUTDOWN_GRACE_MS as u64);
     let outcome = loop {
@@ -430,6 +431,8 @@ fn run(
                     }
                     Ok(())
                 }
+                Command::ReloadCarrier => runtime.reload_carrier(),
+                Command::Modem { action } => runtime.modem(&action).map(|_| modem.wrote()),
             };
             if let Err(e) = result {
                 let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
@@ -475,6 +478,7 @@ fn run(
             network.tick(&runtime, events);
         }
         microphone.tick(&runtime);
+        modem.tick(&runtime, events);
 
         let status = runtime.poll().map_err(|e| format!("engine status: {e}"))?;
         let diagnostics = runtime.diagnose().unwrap_or_default();
@@ -791,6 +795,8 @@ fn command_name(command: &Command) -> &'static str {
         Command::Mute { .. } => "mute",
         Command::Microphone { .. } => "microphone",
         Command::Network { .. } => "network",
+        Command::ReloadCarrier => "reload_carrier",
+        Command::Modem { .. } => "modem",
     }
 }
 
@@ -910,5 +916,42 @@ impl MotionStats {
             last,
         );
         *self = MotionStats { last: self.last, ..Default::default() };
+    }
+}
+
+/// The modem's state, polled twice a second on a device with one and sent when it changes; faster for a few seconds
+/// after a call or text, so the UI follows the call it started.
+#[derive(Default)]
+struct Modem {
+    present: bool,
+    checked: Option<Instant>,
+    busy_until: Option<Instant>,
+    sent: Option<lighttouch_core::carrier::ModemStatus>,
+}
+
+impl Modem {
+    fn wrote(&mut self) {
+        self.busy_until = Some(Instant::now() + Duration::from_secs(3));
+    }
+
+    fn tick(&mut self, runtime: &Runtime, events: &Sender<Event>) {
+        if !self.present {
+            return;
+        }
+        let busy = self.busy_until.is_some_and(|until| Instant::now() < until);
+        let every = Duration::from_millis(if busy { 150 } else { 500 });
+        if self.checked.is_some_and(|at| at.elapsed() < every) {
+            return;
+        }
+        self.checked = Some(Instant::now());
+        let Some(status) =
+            runtime.modem_status().ok().and_then(|json| lighttouch_core::carrier::ModemStatus::parse(&json))
+        else {
+            return;
+        };
+        if self.sent.as_ref() != Some(&status) {
+            let _ = events.send(Event::Modem { status: status.clone() });
+            self.sent = Some(status);
+        }
     }
 }

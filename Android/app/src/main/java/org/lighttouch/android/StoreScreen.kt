@@ -61,7 +61,7 @@ internal fun JSONObject.text(key: String): String? = if (isNull(key)) null else 
 internal fun productName(productType: String): String = when (productType) {
     "iPod1,1" -> "iPod touch"; "iPod2,1" -> "iPod touch (2nd generation)"; "iPod3,1" -> "iPod touch (3rd generation)"
     "iPod4,1" -> "iPod touch (4th generation)"; "iPhone1,1" -> "iPhone"; "iPhone1,2" -> "iPhone 3G"; "iPhone2,1" -> "iPhone 3GS"
-    "iPhone3,1" -> "iPhone 4"; "iPad1,1" -> "iPad"; else -> productType
+    "iPhone3,1" -> "iPhone 4"; "iPhone5,2" -> "iPhone 5"; "iPad1,1" -> "iPad"; else -> productType
 }
 
 internal fun byteSize(bytes: Long): String = when {
@@ -253,6 +253,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     fun queued(app: JSONObject) = queueKey(app).let { key -> queue.firstOrNull { it.key == key } }
 
     private fun enqueue(key: String, name: String, request: InstallRequest) {
+        if (target?.managesApps == false) { message = StoreTarget.NO_INSTALLS; return }
         val socket = muxSocket() ?: run { message = "Start the guest to install apps."; return }
         installer.socket = socket
         if (!installing) askNotifications()
@@ -549,12 +550,13 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
             val a = LegacyStore.version(chosenVersion.substringBefore(' ')); val b = LegacyStore.version(installedVersion)
             if (a != null && b != null && LegacyStore.newer(b, a)) note("Version $installedVersion is installed. An older version may not read its data.", false)
         }
-        if (!running) note("Start the device to install.", false)
+        if (model.target?.managesApps == false) note(StoreTarget.NO_INSTALLS, true)
+        else if (!running) note("Start the device to install.", false)
         else if (!model.servicesAvailable) note("App installation is not included in this build.", true)
         Spacer(Modifier.height(8.dp))
         val inQueue = model.queued(app)?.takeIf { it.active }
         Button(onClick = { model.candidate?.let { model.install(it); model.close() } }, Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("store_install"),
-            contentPadding = PaddingValues(horizontal = 40.dp), enabled = running && model.servicesAvailable && model.candidate != null && inQueue == null) {
+            contentPadding = PaddingValues(horizontal = 40.dp), enabled = running && model.servicesAvailable && model.target?.managesApps != false && model.candidate != null && inQueue == null) {
             Text(if (inQueue != null) "In the queue" else if (installedVersion != null) "Reinstall" else "Install", style = MaterialTheme.typography.titleMedium)
         }
         if (installedVersion != null) RemoveApp(model, app.optString("bundle_id"), app.optString("name"), running && inQueue == null)

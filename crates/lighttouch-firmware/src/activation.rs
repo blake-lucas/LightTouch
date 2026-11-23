@@ -33,6 +33,7 @@ unsafe extern "C" {
     fn lt_activate_report(
         bytes: *mut u8,
         size: usize,
+        a6: bool,
         report: *mut LtActivationReport,
         error: *mut *const c_char,
     ) -> c_int;
@@ -54,6 +55,12 @@ pub struct ActivationResult {
     pub patch: Option<Patch>,
     /// The data route (iOS 6): lockdownd left stock, these keys seeded into /var/root/Library/Lockdown/data_ark.plist.
     pub data_ark: Option<Vec<(String, String)>>,
+    /// The native development-activation route's MobileGestalt overrides.
+    pub gestalt_overrides: Option<Vec<(String, bool)>>,
+    /// The component that owns a data-only activation shortcut (iOS 8's mobactivationd).
+    pub component: Option<String>,
+    /// A fresh device must generate its authentic cache in the native restore environment.
+    pub native_cache_required: Option<bool>,
 }
 
 impl ActivationResult {
@@ -68,6 +75,19 @@ impl ActivationResult {
                 d.insert(k.clone(), v.clone().into());
             }
             m.insert("data_ark".into(), serde_json::Value::Object(d));
+        }
+        if let Some(o) = &self.gestalt_overrides {
+            let mut d = serde_json::Map::new();
+            for (k, v) in o {
+                d.insert(k.clone(), serde_json::Value::Bool(*v));
+            }
+            m.insert("gestalt_overrides".into(), serde_json::Value::Object(d));
+        }
+        if let Some(c) = &self.component {
+            m.insert("component".into(), c.clone().into());
+        }
+        if let Some(n) = self.native_cache_required {
+            m.insert("native_cache_required".into(), serde_json::Value::Bool(n));
         }
         if let Some(p) = &self.patch {
             m.insert(
@@ -98,12 +118,15 @@ fn sha256_hex(data: &[u8]) -> String {
 
 /// lockdownd's bytes activated: (the new bytes, what was done). The C matcher recognizes the guarded development
 /// activation path; later paths are re-signed (1.x stays unsigned if it was).
-pub fn run(lockdownd: &[u8]) -> std::result::Result<(Vec<u8>, ActivationResult), Failure> {
+pub fn run(lockdownd: &[u8], a6: bool) -> std::result::Result<(Vec<u8>, ActivationResult), Failure> {
+    if let Some(qualified) = qualified_a6_factory(lockdownd).map_err(Failure)? {
+        return Ok(qualified);
+    }
     let before = lockdownd.to_vec();
     let mut after = before.clone();
     let mut report = LtActivationReport::zeroed();
     let mut error: *const c_char = std::ptr::null();
-    let success = unsafe { lt_activate_report(after.as_mut_ptr(), after.len(), &mut report, &mut error) };
+    let success = unsafe { lt_activate_report(after.as_mut_ptr(), after.len(), a6, &mut report, &mut error) };
     if success == 0 {
         let msg = if error.is_null() {
             "Unsupported activation path".to_string()
@@ -129,6 +152,9 @@ pub fn run(lockdownd: &[u8]) -> std::result::Result<(Vec<u8>, ActivationResult),
         output_sha256: sha256_hex(&after),
         patch: Some(patch),
         data_ark: None,
+        gestalt_overrides: None,
+        component: None,
+        native_cache_required: None,
     };
     Ok((after, result))
 }
@@ -139,6 +165,98 @@ fn cstr(p: *const c_char) -> String {
     } else {
         unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
     }
+}
+
+/// N42 10A405's Qualcomm activation handler predates the later development shortcut. Its
+/// ShouldHactivate answer alone does not complete activation without a modem. This qualifies the
+/// whole stock executable for that build's no-record block; no model or MobileGestalt identity changes.
+fn qualified_a6_factory(before: &[u8]) -> std::result::Result<Option<(Vec<u8>, ActivationResult)>, String> {
+    let input = sha256_hex(before);
+    let prepared = "dc5033e2bf1ba37790431cde3b3a19de8fe9dc799f46a348ad848eef3ca83fd4";
+    if input == prepared {
+        return Err("Activation shortcut is already prepared".into());
+    }
+    if input != "ecb3e46cedceb255ee423fd455f7291b1abca7c72ed9c35c32fdf0c9d7500230" {
+        return Ok(None);
+    }
+    const OFFSET: usize = 0x109ce;
+    const ORIGINAL: [u8; 46] = [
+        0xc8, 0xb9, 0x49, 0xf6, 0x37, 0x51, 0x00, 0x20, 0xc0, 0xf2, 0x04, 0x01, 0x49, 0xf2, 0x58, 0x22, 0xc0, 0xf2,
+        0x07, 0x02, 0x79, 0x44, 0x7a, 0x44, 0x4f, 0xf0, 0x00, 0x0b, 0x01, 0xf0, 0x5b, 0xff, 0x48, 0xf2, 0x92, 0x70,
+        0xc0, 0xf2, 0x07, 0x00, 0xcd, 0xf8, 0x20, 0xb0, 0x78, 0x44,
+    ];
+    const REPLACEMENT: [u8; 46] = [
+        0x00, 0xbf, 0x48, 0xf6, 0x74, 0x70, 0xc0, 0xf2, 0x07, 0x00, 0x78, 0x44, 0x09, 0x90, 0x00, 0x20, 0x04, 0x90,
+        0x06, 0x90, 0x08, 0x90, 0x83, 0x46, 0x82, 0x46, 0x43, 0xf6, 0xdc, 0x40, 0xc0, 0xf2, 0x07, 0x00, 0x78, 0x44,
+        0x00, 0x68, 0x00, 0x68, 0x80, 0x46, 0x00, 0xf0, 0x2b, 0xb9,
+    ];
+    if before.len() < OFFSET + ORIGINAL.len() || before[OFFSET..OFFSET + ORIGINAL.len()] != ORIGINAL {
+        return Err("Qualified A6 activation block differs".into());
+    }
+    let mut after = before.to_vec();
+    after[OFFSET..OFFSET + ORIGINAL.len()].copy_from_slice(&REPLACEMENT);
+    after = signed(&after).map_err(|e| e.message)?;
+    if sha256_hex(&after) != prepared {
+        return Err("Qualified A6 activation output differs".into());
+    }
+    let result = ActivationResult {
+        input_sha256: input,
+        output_sha256: prepared.into(),
+        patch: Some(Patch {
+            strategy: "a6-native-no-record-factory-shortcut".into(),
+            isa: "thumb".into(),
+            offset: OFFSET,
+            original: ORIGINAL.to_vec(),
+            replacement: REPLACEMENT.to_vec(),
+        }),
+        data_ark: None,
+        gestalt_overrides: None,
+        component: None,
+        native_cache_required: None,
+    };
+    Ok(Some((after, result)))
+}
+
+/// Stage an already-qualified N42 data-only route. No opaque cache is manufactured here: the native
+/// initializer must generate and verify it before a normal boot is permitted.
+pub fn native_gestalt_plan(component: &[u8], build: &str) -> Option<ActivationResult> {
+    let expected = match build {
+        "12A365" => "1a2ea9ac54a5b7685cc70292a722762f4007c5cd493f85feb00738697756c513",
+        "13A344" => "6f09a4c6cfc1738db32b6065c0f05d11d1604a57f5652ccb6b47d556ab3567f7",
+        "14G61" => "0261d2d149140ce0c7d290dc7e33a454168e6f5a2c424122af27da38e92ef753",
+        _ => return None,
+    };
+    if sha256_hex(component) != expected
+        || memchr::memmem::find(component, b"ShouldHactivate\0").is_none()
+        || memchr::memmem::find(
+            component,
+            if build == "14G61" {
+                b"Hactivation is enabled, short circuiting activation state to Activated."
+            } else {
+                b"Short circuiting activation state to Activated"
+            },
+        )
+        .is_none()
+    {
+        return None;
+    }
+    let h = sha256_hex(component);
+    Some(ActivationResult {
+        input_sha256: h.clone(),
+        output_sha256: h,
+        patch: None,
+        data_ark: None,
+        gestalt_overrides: Some(vec![("a6vjPkzcRjrsXmniFsm0dg".into(), true)]),
+        component: Some(
+            if build == "14G61" {
+                "usr/libexec/mobileactivationd"
+            } else {
+                "System/Library/PrivateFrameworks/MobileActivation.framework/Support/mobactivationd"
+            }
+            .into(),
+        ),
+        native_cache_required: Some(true),
+    })
 }
 
 /// iOS 6's lockdownd, which no binary strategy matches: its data ark says FactoryActivated. Offered only when
@@ -155,6 +273,9 @@ pub fn data_ark_route(lockdownd: &[u8]) -> Option<ActivationResult> {
         output_sha256: h,
         patch: None,
         data_ark: Some(vec![("com.apple.mobile.lockdown_cache-ActivationState".to_string(), "FactoryActivated".to_string())]),
+        gestalt_overrides: None,
+        component: None,
+        native_cache_required: None,
     })
 }
 

@@ -11105,5 +11105,20 @@
   "recipe": {"name": "n90", "version": 2, "storage": "16g", "system_mib": 1664, "data_size": "partition", "boot": "kboot", "options": {"ca_ogl": true, "appsync": true, "web_proxy": true}},
   "emulator": {"min_protocol": 1},
   "estimates": {"prepared_bytes": 1905891738, "peak_bytes": 4604616680, "seconds": 90}
+ },
+ {
+  "id": "n42ap-14G61",
+  "board": "n42ap",
+  "product_type": "iPhone5,2",
+  "version": "10.3.4",
+  "build": "14G61",
+  "released": "2019-07-22",
+  "status": "experimental",
+  "media": [],
+  "source": {"kind": "ipsw", "url": "https://updates.cdn-apple.com/2019/ios/091-25277-20190722-0C1B94DE-992C-11E9-A2EE-E2C9A77C2E40/iPhone_4.0_32bit_10.3.4_14G61_Restore.ipsw", "sha1": "2f88a216491667ce33e768ab54752d9d0f53dc20", "bytes": 2000796302},
+  "keys": {},
+  "recipe": {"name": "n42", "version": 1, "storage": "16g", "system_mib": 3072, "data_size": "partition", "boot": "kboot", "options": {"ca_ogl": true}},
+  "emulator": {"min_protocol": 1},
+  "estimates": {"prepared_bytes": 1503238554, "peak_bytes": 9000000000, "seconds": 600}
  }
 ]}

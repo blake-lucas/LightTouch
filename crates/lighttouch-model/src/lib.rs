@@ -1,6 +1,7 @@
 //! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod carrier;
 pub mod crash;
 pub mod diagnostics;
 pub mod gamepad;
@@ -112,6 +113,8 @@ pub struct Model {
     /// Game controllers and keyboard bindings (gamepad.rs).
     pub gamepads: gamepad::Gamepads,
     library: Option<Library>,
+    /// The carrier settings of the device last asked about (carrier.rs).
+    carrier: carrier::Cache,
     task: Option<(Activity, Task<Finished>)>,
     finished: Option<Finished>,
     /// Screenshots being written: the folder, and whether it worked.
@@ -150,6 +153,7 @@ impl Model {
             notice: None,
             error: None,
             library: None,
+            carrier: None,
             task: None,
             finished: None,
             screenshots: std::sync::mpsc::channel(),
@@ -685,5 +689,8 @@ pub fn usb_args(dirs: &DataDirs, resources: &Resources, record: &str) -> Option<
         daemon,
         pairing: dirs.pairing(record),
         log: dirs.logs().join(format!("usbmuxd-{}.log", &record[..8.min(record.len())])),
+        app_pairs: lighttouch_core::library::Library::open(&dirs.library())
+            .and_then(|l| l.record(record))
+            .is_ok_and(|r| r.board == "n42ap"),
     })
 }

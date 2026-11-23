@@ -89,6 +89,8 @@ pub struct RestoreInfo {
     pub product_build_version: String,
     pub product_version: String,
     pub board_config: String,
+    /// Every BoardConfig in DeviceMap: one IPSW can restore several boards.
+    pub boards: Vec<String>,
     pub platform: String,
     /// The 2.x component paths (3.x+ read them from the BuildManifest).
     pub kernel_cache: Option<String>,
@@ -133,6 +135,7 @@ impl RestoreInfo {
             .or(maps.first())
             .ok_or_else(missing)?;
         let board_config = string(map, "BoardConfig").ok_or_else(missing)?;
+        let boards: Vec<String> = maps.iter().filter_map(|m| string(m, "BoardConfig")).collect();
         let platform = string(map, "Platform").unwrap_or_default();
         let kernel_cache = dict(p, "KernelCachesByPlatform")
             .and_then(|k| dict(k, &platform))
@@ -157,6 +160,7 @@ impl RestoreInfo {
             product_build_version,
             product_version,
             board_config,
+            boards,
             platform,
             minimum_system_mib,
             system_padding_mib,
@@ -179,7 +183,10 @@ impl RestoreInfo {
         };
         let found = [&self.product_type, &self.product_build_version, &self.board_config];
         let want = [&entry.product_type, &entry.build, &entry.board];
-        if [&product, &self.product_build_version, &self.board_config] != want {
+        // One IPSW can serve several product types: iOS 10.3.4's iPhone 5 restore is built as iPhone5,1
+        // but lists iPhone5,1/5,2/5,3/5,4 in Restore.plist. The board and build still have to match.
+        let same_build_board = self.product_build_version == entry.build && self.boards.contains(&entry.board);
+        if [&product, &self.product_build_version, &self.board_config] != want && !same_build_board {
             return Err(crate::unsupported!(
                 "IPSW is {}, {} wants {}",
                 found.map(String::as_str).join(" "),

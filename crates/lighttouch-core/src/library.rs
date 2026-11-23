@@ -115,6 +115,23 @@ impl Library {
         check(unsafe { sys::lt_library_rename(self.raw, id.as_ptr(), name.as_ptr(), &mut error) }, &error)
     }
 
+    /// The record's carrier settings, or the defaults (`LT_UNSUPPORTED` for a device without a modem).
+    pub fn carrier(&self, id: &str) -> Result<crate::carrier::CarrierSettings> {
+        let id = cstring(id)?;
+        let mut raw = sys::lt_carrier::new();
+        let mut error = sys::lt_error::new();
+        check(unsafe { sys::lt_library_carrier(self.raw, id.as_ptr(), &mut raw, &mut error) }, &error)?;
+        Ok(crate::carrier::CarrierSettings::from_raw(&raw))
+    }
+
+    /// Check and save the record's carrier settings; a running device takes them with `Runtime::reload_carrier`.
+    pub fn set_carrier(&self, id: &str, settings: &crate::carrier::CarrierSettings) -> Result<()> {
+        let id = cstring(id)?;
+        let raw = settings.to_raw()?;
+        let mut error = sys::lt_error::new();
+        check(unsafe { sys::lt_library_set_carrier(self.raw, id.as_ptr(), &raw, &mut error) }, &error)
+    }
+
     /// Permanently delete a stopped record (`LT_BUSY` while it runs).
     pub fn remove(&self, id: &str) -> Result<()> {
         let id = cstring(id)?;

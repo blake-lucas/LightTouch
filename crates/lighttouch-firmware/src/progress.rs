@@ -118,6 +118,17 @@ impl StepPlan {
     pub fn plan(name: &str, major: u32) -> StepPlan {
         let seal = "seal.log";
         match (name, major) {
+            // The iPhone 5's 10.x first start (N42), which prints none of the 7.x lines: most of it is iOS setting
+            // itself up with little on the console. 14G61 on a Ryzen 7 3700X, 2026-11-22 (GL dirty checks batched):
+            // backboardd 20 s, the cameras 240 s, USB 273 s, SpringBoard 500 s, the agent's shutdown 532 s, done 552 s.
+            (SEAL_STEP, 10..) => StepPlan::new(552.0, "First start: loading iOS", vec![
+                m(seal, "FTL_Open", 3.0, "First start: opening the flash"),
+                m(seal, "Process backboardd (", 20.0, "First start: setting up iOS"),
+                m(seal, "ISP_LoadFirmware", 240.0, "First start: setting up iOS"),
+                m(seal, "AppleSynopsysOTGDevice - Configuration", 273.0, "First start: setting up iOS"),
+                m(seal, "Process SpringBoard (", 500.0, "First start: starting the Home screen"),
+                m(seal, "System shutdown initiated", 532.0, "First start: shutting down"),
+            ]),
             (SEAL_STEP, 7..) => StepPlan::new(331.0, "First start: loading iOS", vec![
                 m(seal, "FTL_Open", 4.0, "First start: opening the flash"),
                 m(seal, "launchd[1] has started", 8.0, "First start: starting iOS"),
@@ -164,6 +175,16 @@ impl StepPlan {
             ("Writing the identity and boot image", _) => StepPlan::new(1.0, "Writing the boot image", vec![]),
             ("Building the system and data volumes", _) => StepPlan::new(12.0, "Building the system and data volumes", vec![]),
             ("Writing the NAND", _) => StepPlan::new(8.0, "Writing the flash image", vec![]),
+            // The iPhone 5's restore boot (N42): 14G61 on a Ryzen 7 3700X, 2026-11-22: the stream's writes start when the
+            // restore job's 120 s delay ends (144 s into the step), the keybag at 212 s, done 221 s.
+            ("Restoring the flash", _) => StepPlan::new(
+                221.0,
+                "Restoring the flash",
+                vec![
+                    m("restore.log", "A6RESTORE", 144.0, "Restoring the flash: writing the volumes"),
+                    m("restore.log", "it_keybag:", 212.0, "Restoring the flash: creating the keybag"),
+                ],
+            ),
             ("Writing the lock", _) => StepPlan::new(4.0, "Packing the prepared flash", vec![]),
             ("Writing the identity, NOR and boot files", _) => StepPlan::new(2.0, "Writing the NOR and boot files", vec![]),
             ("Building the system volume", _) => StepPlan::new(20.0, "Building the system volume", vec![]),
@@ -393,5 +414,25 @@ mod tests {
         assert!(early > 0.0 && early < 0.1);
         let seen = [Some(4.0), Some(9.0), Some(42.0), Some(68.0), Some(125.0)];
         assert!(p.fraction(1e6, &seen) <= 0.99);
+    }
+
+    #[test]
+    fn ios10_first_start_moves_on_its_own_lines() {
+        // One line per milestone from a 14G61 first start's serial log (the first of each in it).
+        let log = "[NAND] WMR_Open:425 FTL_Open    [OK]
+Security: Process backboardd (64) creating global IOSurfaces accessible to any other process
+AppleH4CamIn::ISP_LoadFirmware_gated: fw len=1421316
+AppleSynopsysOTGDevice - Configuration: PTP
+Security: Process SpringBoard (49) creating global IOSurfaces accessible to any other process
+launchd[1] (com.apple.xpc.launchd.domain.system) <Notice>: System shutdown initiated by: it_agent.54<-launchd.1";
+        let p = StepPlan::plan(SEAL_STEP, 10);
+        assert_eq!(p.seconds, 552.0);
+        for m in &p.milestones {
+            assert!(log.contains(m.marker), "{} not in a 14G61 first start", m.marker);
+        }
+        // In the quiet stretch before SpringBoard the bar still moves, well short of the end.
+        let seen = [Some(3.0), Some(20.0), Some(240.0), Some(273.0), None, None];
+        let (a, b) = (p.fraction(350.0, &seen), p.fraction(400.0, &seen));
+        assert!(a < b && b < 0.8, "{a} {b}");
     }
 }

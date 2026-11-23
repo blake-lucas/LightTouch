@@ -149,6 +149,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val devices: List<DeviceSummary> get() { catalogVersion; return records.map { DeviceSummary.of(it, firmwareTargets) } }
     override val selected: DeviceSummary? get() = devices.firstOrNull { it.selected }
     override val settings by lazy { AppSettings(this) }
+    // Refusals show as a notice: the status poll replaces the error banner while the device runs.
+    override val carrier by lazy { CarrierController({ engine }, handler) { notice = it } }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
     override val storeInstalling get() = store.committed
@@ -261,6 +263,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private val pollThread = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
         Thread(task, "worker-status").apply { isDaemon = true }
     }
+    /** The current device has a modem and runs: the poll reads the modem's state. */
+    @Volatile private var carrierLive = false
     private val poll = object : Runnable {
         override fun run() {
             if (!active || pollInFlight) return
@@ -274,12 +278,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 var firmwareFailure: String? = null
                 try { engineState = observedEngine?.status() } catch (e: RemoteException) { engineFailure = e.message ?: "Worker exited" }
                 try { firmwareState = observedFirmware?.status() } catch (e: RemoteException) { firmwareFailure = e.message ?: "Firmware worker exited" }
+                carrier.poll(observedEngine, carrierLive)
                 handler.post {
                     pollInFlight = false
                     if (!active) return@post
                     if (engine?.asBinder() == observedEngine?.asBinder()) {
                         engineState?.let { b ->
                             status = b.getString("state") ?: "Unknown"
+                            carrier.follow(selected)
+                            carrierLive = status in listOf("running", "paused") && selected?.cellular == true
                             detail = b.getString("detail") ?: ""
                             displayAsleep = b.getBundle("observations")?.let {
                                 it.getBoolean("runtimeDiagnosticsAvailable") && it.getLong("engineReady") != 0L && it.getLong("displaySleeping") != 0L
@@ -437,6 +444,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null },
                             onSaveLogs = ::exportLogs, savingLogs = logsBusy)
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
+                        Screen.CARRIER -> CarrierScreen(this@MainActivity) { overlay = null }
                         Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }

@@ -29,6 +29,7 @@ typedef struct {
     Segment segments[64];
     size_t count;
     uint32_t text_va, text_size, text_off, message_va;
+    bool a6; /* the iPhone 5's lockdownd forms: the ShouldHactivate answer, MOV register and MOV.W #0 */
 } Image;
 typedef struct {
     size_t off;
@@ -36,7 +37,7 @@ typedef struct {
     unsigned width;
     const char *isa;
     uint8_t replacement[16];
-    bool legacy, shared_no_record, conditional;
+    bool legacy, shared_no_record, conditional, hactivation;
 } Match;
 #ifdef LT_ACTIVATION_LIBRARY
 #include <setjmp.h>
@@ -173,7 +174,9 @@ static bool log_message(const Image *m, uint32_t va) {
 }
 /* Accept only straight-line argument construction ending in a direct log call.
  * All register values used as evidence must have been established in this block. */
-static bool log_block(const Image *m, uint32_t pc, bool thumb, uint32_t *after) {
+static bool cfstring(const Image *m, uint32_t va, const char *text);
+static bool log_block_named(const Image *m, uint32_t pc, bool thumb, uint32_t *after, const char *context,
+                            const char *text) {
     uint32_t regs[16] = {0};
     unsigned known = 0;
     for (unsigned step = 0; step < 16; step++) {
@@ -200,6 +203,25 @@ static bool log_block(const Image *m, uint32_t pc, bool thumb, uint32_t *after) 
                     regs[rd] = (regs[rd] & 65535) | (imm << 16);
                 } else
                     regs[rd] = imm;
+                known |= 1u << rd;
+                pc += 4;
+            } else if (m->a6 && (ins & 0xff00) == 0x4600) { /* MOV register, not evidence from an unknown source */
+                rd = (ins & 7) | ((ins >> 4) & 8);
+                unsigned rm = (ins >> 3) & 15;
+                if (rd >= 13)
+                    return false;
+                if (known & (1u << rm)) {
+                    regs[rd] = regs[rm];
+                    known |= 1u << rd;
+                } else
+                    known &= ~(1u << rd);
+                pc += 2;
+            } else if (m->a6 && ins == 0xf04f && text_address(m, pc, 4) &&
+                       (u16(m->bytes + o + 2) & 0xf0ff) == 0) { /* MOV.W rN,#0 */
+                rd = (u16(m->bytes + o + 2) >> 8) & 15;
+                if (rd >= 13)
+                    return false;
+                regs[rd] = 0;
                 known |= 1u << rd;
                 pc += 4;
             } else if ((ins & 0xf800) == 0x2000) { /* MOVS immediate */
@@ -282,8 +304,13 @@ static bool log_block(const Image *m, uint32_t pc, bool thumb, uint32_t *after) 
                 return false;
         }
     }
-    return *after && (((known & 3) == 3 && cstring(m, regs[0], function) && log_message(m, regs[1])) ||
-                      ((known & 7) == 7 && regs[0] == 0 && cstring(m, regs[1], function) && log_message(m, regs[2])));
+    bool first = text == message ? log_message(m, regs[1]) : (cstring(m, regs[1], text) || cfstring(m, regs[1], text));
+    bool second = text == message ? log_message(m, regs[2]) : (cstring(m, regs[2], text) || cfstring(m, regs[2], text));
+    return *after && (((known & 3) == 3 && cstring(m, regs[0], context) && first) ||
+                      ((known & 7) == 7 && regs[0] == 0 && cstring(m, regs[1], context) && second));
+}
+static bool log_block(const Image *m, uint32_t pc, bool thumb, uint32_t *after) {
+    return log_block_named(m, pc, thumb, after, function, message);
 }
 static void encode16(uint8_t *d, uint16_t v) {
     d[0] = (uint8_t)v;
@@ -481,12 +508,51 @@ static bool conditional_initializer(const Image *m, size_t o, uint32_t va, Match
     encode32(out->replacement + 4, load);
     return true;
 }
+/* iOS 4-6's established Hacktiv8 recipe forces the ShouldHactivate answer,
+ * rather than changing the device's hardware identity. Recognize both ARMv7
+ * instruction schedules, additionally proving the argument is the native
+ * ShouldHactivate CFString and the result goes into the adjacent flag byte.
+ * Reference: Legacy-iOS-Kit resources/olsn0w/hacktiv8.py LOCKDOWN_PATCHES. */
+static bool hactivation_answer(const Image *m, size_t o, uint32_t va, Match *out) {
+    if (!text_address(m, va, 42) || u16(m->bytes + o) != 0x4601 || u16(m->bytes + o + 12) != 0x4478 ||
+        u16(m->bytes + o + 18) != 0x4602 || u16(m->bytes + o + 36) != 0x4478)
+        return false;
+    const uint8_t *p = m->bytes + o;
+    uint16_t low = u16(p + 2), lowhi = u16(p + 4), high = u16(p + 6), highhi = u16(p + 8);
+    if ((low & 0xfbf0) != 0xf240 || (high & 0xfbf0) != 0xf2c0 || (lowhi & 0x8f00) || (highhi & 0x8f00))
+        return false;
+    uint32_t lo = ((low & 15) << 12) | (((low >> 10) & 1) << 11) | (((lowhi >> 12) & 7) << 8) | (lowhi & 255);
+    uint32_t hi = ((high & 15) << 12) | (((high >> 10) & 1) << 11) | (((highhi >> 12) & 7) << 8) | (highhi & 255);
+    if (!cfstring(m, (hi << 16) + lo + va + 16, "ShouldHactivate"))
+        return false;
+    uint16_t before = u16(p + 10);
+    unsigned store = u16(p + 38) == 0x4479 ? 40 : 38;
+    if ((store == 38 && u16(p + 40) != 0x4479) || (before & 0xf807) != 0x7001 || (u16(p + store) & 0xf807) != 0x7002 ||
+        ((before >> 3) & 7) != ((u16(p + store) >> 3) & 7) || ((u16(p + store) >> 6) & 31) != ((before >> 6) & 31) + 1)
+        return false;
+    uint16_t bl = u16(p + 14), blhi = u16(p + 16);
+    if ((bl & 0xf800) != 0xf000 || (blhi & 0xd000) != 0xd000)
+        return false;
+    uint32_t s = (bl >> 10) & 1, imm = (s << 24) | ((!(((blhi >> 13) & 1) ^ s)) << 23) |
+                                       ((!(((blhi >> 11) & 1) ^ s)) << 22) | ((bl & 1023) << 12) | ((blhi & 2047) << 1);
+    uint32_t target = va + 18 + (uint32_t)((int32_t)(imm << 7) >> 7);
+    if (!text_address(m, target, 2))
+        return false;
+    *out = (Match){.off = o + 18, .va = va + 18, .target = target, .width = 2, .isa = "thumb", .hactivation = true};
+    encode16(out->replacement, 0x2201);
+    return true;
+}
 static Match locate(const Image *m) {
     Match result = {0};
     unsigned count = 0;
     for (size_t rel = 0; fits(rel, 8, m->text_size); rel += 2) {
         size_t o = m->text_off + rel;
         uint32_t va = m->text_va + (uint32_t)rel;
+        Match answer = {0};
+        if (m->a6 && hactivation_answer(m, o, va, &answer)) {
+            result = answer;
+            count++;
+        }
         uint16_t cmp = u16(m->bytes + o), b = u16(m->bytes + o + 2);
         uint32_t after = 0, target = 0;
         unsigned width = 0;
@@ -563,7 +629,7 @@ static Match locate(const Image *m) {
     return result;
 }
 #ifdef LT_ACTIVATION_LIBRARY
-int lt_activate_report(uint8_t *bytes, size_t size, LTActivationReport *report, const char **error) {
+int lt_activate_report(uint8_t *bytes, size_t size, bool a6, LTActivationReport *report, const char **error) {
     if (report)
         memset(report, 0, sizeof(*report));
     if (setjmp(failure)) {
@@ -572,11 +638,12 @@ int lt_activate_report(uint8_t *bytes, size_t size, LTActivationReport *report, 
     }
     if (size < 28 || size > LIMIT)
         fail("invalid input size");
-    Image m = {.bytes = bytes, .size = size};
+    Image m = {.bytes = bytes, .size = size, .a6 = a6};
     parse(&m);
     Match match = locate(&m);
     if (report) {
-        report->strategy = match.conditional        ? "conditional-no-record-initializer"
+        report->strategy = match.hactivation        ? "development-hactivation-answer"
+                           : match.conditional      ? "conditional-no-record-initializer"
                            : match.legacy           ? "legacy-no-record-initializer"
                            : match.shared_no_record ? "ipod-no-record-initializer"
                                                     : "development-activation-shortcut";
@@ -590,7 +657,7 @@ int lt_activate_report(uint8_t *bytes, size_t size, LTActivationReport *report, 
     return match.legacy ? 2 : 1;
 }
 int lt_activate(uint8_t *bytes, size_t size, const char **error) {
-    return lt_activate_report(bytes, size, NULL, error);
+    return lt_activate_report(bytes, size, false, NULL, error);
 }
 #else
 static void atomic_write(const char *path, const Image *m, const struct stat *original) {
@@ -630,23 +697,25 @@ static void atomic_write(const char *path, const Image *m, const struct stat *or
     free(temp);
 }
 int main(int argc, char **argv) {
-    bool probe = false, experimental = false;
+    bool probe = false, experimental = false, a6 = false;
     const char *path = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--probe"))
             probe = true;
         else if (!strcmp(argv[i], "--experimental-legacy"))
             experimental = true;
+        else if (!strcmp(argv[i], "--a6"))
+            a6 = true;
         else if (argv[i][0] != '-' && !path)
             path = argv[i];
         else {
-            fprintf(stderr, "Usage: %s [--probe] [--experimental-legacy] LOCKDOWND\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--probe] [--experimental-legacy] [--a6] LOCKDOWND\n", argv[0]);
             return 2;
         }
     }
     if (!path) {
         fprintf(stderr,
-                "Usage: %s [--probe] [--experimental-legacy] LOCKDOWND\nSigning is the caller's "
+                "Usage: %s [--probe] [--experimental-legacy] [--a6] LOCKDOWND\nSigning is the caller's "
                 "responsibility.\n",
                 argv[0]);
         return 2;
@@ -658,6 +727,7 @@ int main(int argc, char **argv) {
     if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 28 || st.st_size > LIMIT)
         fail("invalid input file size or type");
     Image m = {0};
+    m.a6 = a6;
     m.size = (size_t)st.st_size;
     m.bytes = malloc(m.size);
     if (!m.bytes)
@@ -688,7 +758,8 @@ int main(int argc, char **argv) {
     printf("{\"mode\":\"%s\",\"strategy\":\"%s\",\"isa\":\"%s\",\"file_offset\":%zu,\"virtual_"
            "address\":%" PRIu32 ",\"size\":%u,\"old\":\"%s\",\"new\":\"%s\"}\n",
            probe ? "probe" : "apply",
-           match.conditional        ? "conditional-no-record-initializer"
+           match.hactivation        ? "development-hactivation-answer"
+           : match.conditional      ? "conditional-no-record-initializer"
            : match.legacy           ? "legacy-no-record-initializer"
            : match.shared_no_record ? "ipod-no-record-initializer"
                                     : "development-activation-shortcut",

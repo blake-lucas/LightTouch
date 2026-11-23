@@ -1,7 +1,7 @@
 # Contributing to LightTouch
 
-LightTouch runs a library of emulated legacy iOS devices (iPhone, iPhone 3GS, iPhone 4, iPod touch 1G to 4G and
-iPad) on Android, Linux, Windows and macOS. Start with [README.md](README.md), [docs/DESKTOP.md](docs/DESKTOP.md) (the
+LightTouch runs a library of emulated legacy iOS devices (iPhone, iPhone 3GS, iPhone 4, iPhone 5, iPod touch 1G to
+4G and iPad) on Android, Linux, Windows and macOS. Start with [README.md](README.md), [docs/DESKTOP.md](docs/DESKTOP.md) (the
 desktop app) and [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Layout
@@ -89,7 +89,9 @@ A board's facts have two homes. The emulator's: qemu-ios's `qemu_ios_device_info
 (`contrib/ios-app/qemu-ios-ui.c`): the `-M` machine, the board ID, the screen, the modem, the USB host and the
 `panel=` limits; `firmwarekit oneshot '{"mode":{"machines":{}}}'` lists them. The preparer's: `Board` in
 `crates/lighttouch-firmware/src/boot.rs` and its recipe (`k48_recipe.rs` for the S5L8920 and S5L8930 boards,
-`n72_recipe.rs`, `n45_recipe.rs`). Names and models for the UI are in `crates/lighttouch-catalog` (and
+`n72_recipe.rs`, `n45_recipe.rs`, and `n42_recipe.rs` with the `a6_*` modules for the iPhone 5, whose store is restored
+in the guest by the IPSW's own restore ramdisk). The core's boot route for each board is `boot_route` in
+`Portable/src/Storage.cpp`. Names and models for the UI are in `crates/lighttouch-catalog` (and
 `FirmwareCatalog.kt` on Android). A new board's firmware is catalog entries.
 
 `device.lock.json` is written by `firmwarekit` and read by the core when a prepared device is added and started.

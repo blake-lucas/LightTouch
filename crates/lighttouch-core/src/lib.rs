@@ -1,6 +1,7 @@
 //! Safe Rust over the shared LightTouch core: the device library, the engine runtime (worker side), the worker
 //! protocol, the shared-memory frame transport and app paths. No UI code lives here.
 pub mod bundle;
+pub mod carrier;
 mod clock;
 mod ffi;
 pub mod frames;

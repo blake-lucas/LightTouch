@@ -66,7 +66,7 @@ internal class PrepareState {
 }
 
 /** Order devices appear in: iPods, iPhones, then the iPad, each oldest first. */
-private val deviceOrder = listOf("iPod1,1", "iPod2,1", "iPod3,1", "iPod4,1", "iPhone1,1", "iPhone1,2", "iPhone2,1", "iPhone3,1", "iPad1,1")
+private val deviceOrder = listOf("iPod1,1", "iPod2,1", "iPod3,1", "iPod4,1", "iPhone1,1", "iPhone1,2", "iPhone2,1", "iPhone3,1", "iPhone5,2", "iPad1,1")
 
 /** Version strings compared numerically: 3.1.10 after 3.1.3. */
 private val versionOrder = Comparator<CatalogFirmware> { a, b ->

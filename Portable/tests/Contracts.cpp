@@ -7,6 +7,7 @@
 #include "../src/Elapsed.hpp"
 #include "../src/Lifecycle.hpp"
 #include <zlib.h>
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <filesystem>
@@ -270,7 +271,25 @@ int main() {
     assert(args.find("kboot=" + n90base + "/kboot.bin") != std::string::npos);
     assert(args.find("baseband=on") != std::string::npos && args.find("imei=012345678901234") != std::string::npos);
     assert(args.find("nor-rw=") == std::string::npos && args.find("bootrom=") == std::string::npos);
+    {
+        // The modem starts with the carrier defaults (no record: nothing saved), each -global one argv element.
+        std::vector<std::string> all(argv, argv + argc);
+        auto has = [&](const std::string &v) { return std::find(all.begin(), all.end(), v) != all.end(); };
+        assert(has("ios-baseband.carrier=Light Touch") && has("ios-baseband.mcc-mnc=00101"));
+        assert(has("ios-baseband.registered=on") && has("ios-baseband.sim-present=on"));
+        assert(has("ios-baseband.signal-dbm=-63") && has("ios-baseband.gps-fix=37.334900,-122.009000,0,0.00,-1.0,5"));
+    }
     lt_device_close(d);
+    // The modem's rules.
+    assert(lt_board_has_modem("n90ap") && lt_board_has_modem("n88ap") && !lt_board_has_modem("n81ap"));
+    assert(lt_carrier_number_ok("+15555550100") && lt_carrier_number_ok("911") && !lt_carrier_number_ok("+"));
+    assert(!lt_carrier_number_ok("555-0100") && !lt_carrier_number_ok("123456789012345678901"));
+    uint32_t sms_limit = 0;
+    assert(lt_carrier_sms_length("Hello", &sms_limit) == 5 && sms_limit == 160);
+    assert(lt_carrier_sms_length("a{b}", &sms_limit) == 6 && sms_limit == 160);           // escapes count twice
+    assert(lt_carrier_sms_length("caf\xc3\xa9 \xe2\x80\x99", &sms_limit) == 6 && sms_limit == 70); // UCS-2
+    lt_carrier_sms_length("\xf0\x9f\x8e\xb5", &sms_limit);
+    assert(sms_limit == 0);
     std::string n45base = prepared("n45",
         "{\"format\":1,\"board\":\"n45ap\",\"build\":\"3A101a\",\"machine\":{\"wifi-mac\":\"\"},\"outputs\":{"
         "\"nor\":{\"path\":\"nor.bin\",\"sha256\":\"" + hash(nor) + "\"},\"iboot\":{\"path\":\"iBoot.bin\",\"sha256\":\"" +
@@ -396,6 +415,49 @@ int main() {
             break;
     }
     assert(std::string(renamed.display_name) == "Kai\xe2\x80\x99s iPod \xf0\x9f\x8e\xb5");
+    // Carrier settings: only for boards with a modem; checked, saved with the record and read at its boot.
+    lt_carrier carrier{};
+    carrier.size = sizeof carrier;
+    carrier.version = 1;
+    assert(lt_library_carrier(l, first.id, &carrier, &e) == LT_UNSUPPORTED);
+    {
+        lt_library_import_config phone{sizeof(phone), 1, n90base.c_str(), nullptr, "Phone", nullptr, nullptr, 0,
+                                       nullptr, nullptr};
+        lt_record_info phone_record{sizeof(phone_record), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+        assert(lt_library_import(l, &phone, &phone_record, &e) == LT_OK);
+        assert(lt_library_carrier(l, phone_record.id, &carrier, &e) == LT_OK);
+        assert(std::string(carrier.carrier) == "Light Touch" && carrier.bars == 5 && !carrier.dock_button);
+        snprintf(carrier.carrier, sizeof carrier.carrier, "Carrier, \"quoted\"");
+        assert(lt_carrier_check(&carrier, &e) == LT_INVALID);
+        assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_INVALID);
+        snprintf(carrier.carrier, sizeof carrier.carrier, "Fake, Inc.");
+        snprintf(carrier.mcc_mnc, sizeof carrier.mcc_mnc, "3104");
+        assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_INVALID);
+        snprintf(carrier.mcc_mnc, sizeof carrier.mcc_mnc, "310410");
+        carrier.bars = 6;
+        assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_INVALID);
+        carrier.bars = 2;
+        carrier.registered = 0;
+        carrier.dock_button = 1;
+        snprintf(carrier.last_caller, sizeof carrier.last_caller, "+4420");
+        assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_OK);
+        lt_carrier back{};
+        back.size = sizeof back;
+        back.version = 1;
+        assert(lt_library_carrier(l, phone_record.id, &back, &e) == LT_OK);
+        assert(std::string(back.carrier) == "Fake, Inc." && std::string(back.mcc_mnc) == "310410" && back.bars == 2);
+        assert(!back.registered && back.sim_present && back.dock_button && std::string(back.last_caller) == "+4420");
+        assert(lt_library_device_open(l, phone_record.id, 0, &d, &e) == LT_OK);
+        lt_boot_config phone_boot{sizeof(phone_boot), 1, "iPhone-4", nullptr, nullptr, nullptr, 0};
+        assert(lt_device_boot_argv(d, &phone_boot, &argc, &argv, &e) == LT_OK);
+        std::vector<std::string> all(argv, argv + argc);
+        auto has = [&](const std::string &v) { return std::find(all.begin(), all.end(), v) != all.end(); };
+        assert(has("ios-baseband.carrier=Fake, Inc.") && has("ios-baseband.mcc-mnc=310410"));
+        assert(has("ios-baseband.registered=off") && has("ios-baseband.signal-dbm=-97"));
+        lt_device_close(d);
+        assert(lt_library_remove(l, phone_record.id, &e) == LT_OK);
+        assert(lt_library_count(l, &count, &e) == LT_OK && count == 2);
+    }
     assert(lt_library_device_open(l, second_record.id, 0, &d, &e) == LT_OK);
     assert(lt_library_remove(l, second_record.id, &e) == LT_BUSY);
     lt_device_close(d);

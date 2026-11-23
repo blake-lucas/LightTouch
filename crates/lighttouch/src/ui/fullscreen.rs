@@ -205,6 +205,11 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         if ui.button(widgets::icon_label(icons::CHART, "Inspect frames", None)).clicked() {
             open_inspector(app, ui);
         }
+        if super::carrier::wants_dock_button(app) {
+            ui.menu_button(widgets::icon_label(icons::CELL_SIGNAL, "Carrier", None), |ui| {
+                super::carrier::menu_items(app, ui);
+            });
+        }
         if ui.button(widgets::icon_label(icons::GEAR, "Settings", None)).clicked() {
             let ctx = ui.ctx().clone();
             app.set_fullscreen(&ctx, false);

@@ -1,5 +1,6 @@
 //! The egui frontend. It only draws `lighttouch_model::Model` and calls its methods; behaviour lives in the model so
 //! another toolkit could replace this module.
+mod carrier;
 mod controller;
 mod device_frame;
 mod devshot;
@@ -36,6 +37,8 @@ pub enum Page {
     Licenses,
     /// Settings → Network.
     Network,
+    /// Settings → Carrier, or the dock's Carrier menu (devices with a modem; `App::carrier` holds its fields).
+    Carrier,
     /// Settings → iPad size (its unsaved measure is `App::ipad_size`).
     IpadSize,
     /// The frame inspector (the guest is paused; its state is `App::inspector`).
@@ -68,6 +71,15 @@ pub enum Dialog {
         bundle_id: String,
         name: String,
     },
+    /// Carrier: ring the running device from a number.
+    CarrierCall {
+        number: String,
+    },
+    /// Carrier: a text arrives on the running device.
+    CarrierText {
+        number: String,
+        text: String,
+    },
 }
 
 pub struct App {
@@ -85,6 +97,7 @@ pub struct App {
     pub licenses: licenses::LicenseState,
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
+    pub carrier: carrier::CarrierUi,
     pub ipad_size: ipad_size::IpadSizeState,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
@@ -170,6 +183,8 @@ pub fn run() -> eframe::Result {
         // Metal on macOS, where an OpenGL window is held to 60 Hz on ProMotion panels (Cargo.toml); OpenGL elsewhere.
         #[cfg(target_os = "macos")]
         renderer: eframe::Renderer::Wgpu,
+        #[cfg(target_os = "linux")]
+        event_loop_builder: linux_backend(),
         ..Default::default()
     };
     eframe::run_native(
@@ -180,6 +195,16 @@ pub fn run() -> eframe::Result {
                 lighttouch_core::app_log!("window GPU: {gpu}");
                 let _ = GPU.set(gpu);
             }
+            #[cfg(target_os = "linux")]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let backend = match cc.window_handle().map(|h| h.as_raw()) {
+                    Ok(RawWindowHandle::Wayland(_)) => "Wayland",
+                    Ok(RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_)) => "X11",
+                    _ => "unknown",
+                };
+                lighttouch_core::app_log!("window backend: {backend}");
+            }
             theme::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // The Windows single-file build unpacks its resources at a version's first start: show it doing so.
@@ -189,6 +214,26 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(Root::Ready(Box::new(ready_app(&cc.egui_ctx)))))
         }),
     )
+}
+
+/// LIGHTTOUCH_BACKEND=x11 or wayland picks the windowing system on Linux; otherwise winit's choice (Wayland when the
+/// session has it). On GNOME's Wayland the window draws an Adwaita-style title bar of its own; under X11 (XWayland)
+/// the window manager draws its usual one, for those who prefer it.
+#[cfg(target_os = "linux")]
+fn linux_backend() -> Option<eframe::EventLoopBuilderHook> {
+    use winit::platform::{wayland::EventLoopBuilderExtWayland, x11::EventLoopBuilderExtX11};
+    match std::env::var("LIGHTTOUCH_BACKEND").ok()?.to_ascii_lowercase().as_str() {
+        "x11" => Some(Box::new(|builder| {
+            builder.with_x11();
+        })),
+        "wayland" => Some(Box::new(|builder| {
+            builder.with_wayland();
+        })),
+        other => {
+            lighttouch_core::app_log!("LIGHTTOUCH_BACKEND={other} is neither x11 nor wayland; ignored");
+            None
+        }
+    }
 }
 
 fn ready_app(ctx: &egui::Context) -> App {
@@ -325,6 +370,7 @@ impl App {
             licenses: licenses::LicenseState::default(),
             inspector: None,
             controller: controller::ControllerUi::default(),
+            carrier: carrier::CarrierUi::default(),
             ipad_size: Default::default(),
             paused_for_hidden: false,
             pulse_release: None,
@@ -344,6 +390,15 @@ impl App {
         if self.applied != Some(key) {
             self.palette = if dark { theme::DARK } else { theme::LIGHT };
             theme::apply(ctx, &self.palette);
+            // The title bar LightTouch draws itself on GNOME's Wayland follows the app's theme too.
+            #[cfg(target_os = "linux")]
+            if self.applied.is_none_or(|(old, _)| old != self.model.settings.theme) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(match self.model.settings.theme {
+                    Theme::Dark => egui::SystemTheme::Dark,
+                    Theme::Light => egui::SystemTheme::Light,
+                    Theme::System => egui::SystemTheme::SystemDefault,
+                }));
+            }
             self.applied = Some(key);
         }
     }
@@ -686,6 +741,20 @@ impl App {
                         }
                     });
                 }
+                Dialog::CarrierCall { mut number } => {
+                    if carrier::call_dialog(self, ui, &mut number) {
+                        close = true;
+                    } else if matches!(self.dialog, Some(Dialog::CarrierCall { .. })) {
+                        self.dialog = Some(Dialog::CarrierCall { number });
+                    }
+                }
+                Dialog::CarrierText { mut number, mut text } => {
+                    if carrier::text_dialog(self, ui, &mut number, &mut text) {
+                        close = true;
+                    } else if matches!(self.dialog, Some(Dialog::CarrierText { .. })) {
+                        self.dialog = Some(Dialog::CarrierText { number, text });
+                    }
+                }
                 Dialog::RemoveApp { bundle_id, name } => {
                     ui.label(widgets::icon_text(icons::TRASH, 26.0).color(theme::DANGER));
                     ui.add_space(6.0);
@@ -791,6 +860,7 @@ impl eframe::App for App {
                     Page::Settings => settings::show(self, ui),
                     Page::Licenses => licenses::show(self, ui),
                     Page::Network => network::show(self, ui),
+                    Page::Carrier => carrier::show(self, ui),
                     Page::IpadSize => ipad_size::show(self, ui),
                     Page::Inspector => inspector::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),

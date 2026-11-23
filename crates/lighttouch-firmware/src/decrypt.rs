@@ -69,6 +69,9 @@ pub fn decrypt(ipsw: &Ipsw, entry: &Entry, dir: &Path, rootfs: bool, log: &dyn F
     let mut plain_tail = false;
     let kernel = if apple8900::is_container(&kc_raw) {
         lzss::complzss(&apple8900::body(&kc_raw)?)?
+    } else if !has_kbag(&kc_raw)? {
+        // Several 10.x kernelcaches carry no KBAG: the payload is the plain complzss image.
+        lzss::complzss(&img3::payload(&kc_raw)?)?
     } else {
         let (iv, key) = img3_key(&kc_path)?;
         match img3::decrypt(&kc_raw, &iv, &key, false).and_then(|d| lzss::complzss(&d)) {
@@ -121,12 +124,28 @@ pub fn decrypt(ipsw: &Ipsw, entry: &Entry, dir: &Path, rootfs: bool, log: &dyn F
     }
     if rootfs {
         let os = path("OS")?;
-        let k = entry.key_for_path(&os)?;
-        let key = from_hex(&k.key).filter(|k| k.len() == 36).ok_or_else(|| {
-            Error::new(Code::KeyMissing, format!("{}: no key for the root filesystem {os}", entry.id))
-        })?;
         let out = dir.join("rootfs.dmg");
-        ipsw.stream(&os, |reader| vfdecrypt::decrypt(reader, &out, &key))?;
+        // Several 10.x install images ship an unencrypted (plain UDIF) root filesystem even when the
+        // catalog carries no VFDecrypt key; an encrypted one starts with "encrcdsa".
+        let mut magic = [0u8; 8];
+        let mut seen = 0usize;
+        ipsw.stream(&os, |reader| {
+            seen = std::io::Read::read(reader, &mut magic).map_err(|e| crate::internal!("{os}: {e}"))?;
+            Ok(())
+        })?;
+        let encrypted = seen >= 8 && &magic == b"encrcdsa";
+        let key = entry.key_for_path(&os).ok().and_then(|k| from_hex(&k.key)).filter(|k| k.len() == 36);
+        if let Some(key) = key {
+            ipsw.stream(&os, |reader| vfdecrypt::decrypt(reader, &out, &key))?;
+        } else if encrypted {
+            return Err(Error::new(Code::KeyMissing, format!("{}: no key for the root filesystem {os}", entry.id)));
+        } else {
+            let mut writer = std::fs::File::create(&out)?;
+            ipsw.stream(&os, |reader| {
+                std::io::copy(reader, &mut writer).map_err(|e| crate::internal!("{os}: {e}"))?;
+                Ok(())
+            })?;
+        }
         files.push("rootfs.dmg".to_string());
     }
     Ok(Decrypted { plain_tail, paths: comp, files })

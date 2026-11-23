@@ -87,6 +87,25 @@ impl Skin {
         face: rgb(0x0B0B0C),
         rim: [rgb(0xC7C7CC), rgb(0x6E6E73), rgb(0xAEAEB2)],
     };
+    /// iPhone 5: 123.8 x 58.6 mm, a 4" 640x1136 panel at 326 ppi (49.9 x 88.5 mm), black glass, slate rim.
+    pub const IPHONE_5: Skin = Skin {
+        width: 58.6,
+        height: 123.8,
+        corner: 8.5,
+        screen_left: 4.35,
+        screen_top: 17.65,
+        screen_width: 49.9,
+        screen_height: 88.5,
+        home_center_y: 115.0,
+        home_diameter: 10.9,
+        rim_width: 0.7,
+        power: (38.0, 11.5),
+        volume_right: false,
+        volume_up: (22.0, 7.5),
+        volume_down: (32.0, 7.5),
+        face: rgb(0x0B0B0C),
+        rim: [rgb(0x5A5A5E), rgb(0x2C2C2E), rgb(0x48484A)],
+    };
     /// iPad (first generation): 242.8 x 189.7 mm, 9.7" 4:3 panel (197.1 x 147.8 mm) centred in the glass, a wide
     /// aluminium rim, Sleep/Wake at the top right and the volume rocker on the right edge below the side switch.
     pub const IPAD: Skin = Skin {
@@ -111,6 +130,7 @@ impl Skin {
     pub fn for_board(board: Option<&str>) -> Skin {
         match board {
             Some(b) if b.starts_with("n81") => Self::IPOD_TOUCH_4,
+            Some(b) if b.starts_with("n42") => Self::IPHONE_5,
             Some(b) if b.starts_with("k48") => Self::IPAD,
             Some(b) if ["m68", "n82", "n88", "n90"].iter().any(|p| b.starts_with(p)) => Self::IPHONE,
             _ => Self::IPOD_TOUCH_2,

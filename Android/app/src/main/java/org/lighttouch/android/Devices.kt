@@ -7,6 +7,8 @@ data class DeviceSummary(
     val id: String, val name: String, val board: String, val build: String,
     val selected: Boolean, val dirty: Boolean, val contacts: String, val accelerometer: Boolean, val gyroscope: Boolean,
     val target: StoreTarget?,
+    /** The board has a cellular modem (iPhone 3GS, iPhone 4): it takes carrier settings. */
+    val cellular: Boolean = false,
 ) {
     /** "iPod touch 2G" from the catalog, else the board. */
     val model get() = target?.let { shortProductName(it.productType) } ?: board
@@ -18,14 +20,14 @@ data class DeviceSummary(
             record.getString("id") ?: "", record.getString("name") ?: "", record.getString("board") ?: "", record.getString("build") ?: "",
             record.getBoolean("selected"), record.getBoolean("dirty"), record.getString("contacts") ?: "1",
             record.getBoolean("acceleration"), record.getBoolean("gyro"),
-            targets["${record.getString("board")}-${record.getString("build")}"])
+            targets["${record.getString("board")}-${record.getString("build")}"], record.getBoolean("cellular"))
     }
 }
 
 internal fun shortProductName(productType: String): String = when (productType) {
     "iPod1,1" -> "iPod touch"; "iPod2,1" -> "iPod touch 2G"; "iPod3,1" -> "iPod touch 3G"; "iPod4,1" -> "iPod touch 4G"
     "iPhone1,1" -> "iPhone"; "iPhone1,2" -> "iPhone 3G"; "iPhone2,1" -> "iPhone 3GS"; "iPhone3,1" -> "iPhone 4"
-    "iPad1,1" -> "iPad"; else -> productType
+    "iPhone5,2" -> "iPhone 5"; "iPad1,1" -> "iPad"; else -> productType
 }
 
 /** Whether a name being typed fits: 60 characters, and the library's 127-byte UTF-8 limit (an emoji or CJK name reaches it first). */
