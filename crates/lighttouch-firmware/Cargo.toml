@@ -9,6 +9,11 @@ license.workspace = true
 name = "firmwarekit"
 path = "src/bin/firmwarekit.rs"
 
+[features]
+# Debuggable builds only (scripts/build.sh when LT_DEBUGGABLE isn't false): `firmwarekit oneshot` honors
+# LT_ONESHOT_CRASH=SECONDS[:null|write|abort], a deliberate engine-process crash to test the crash report.
+crash-test = []
+
 [dependencies]
 aes = "0.8"
 cbc = "0.1"

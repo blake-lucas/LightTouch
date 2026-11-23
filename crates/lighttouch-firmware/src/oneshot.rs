@@ -490,6 +490,9 @@ pub fn engine_main(args: &[String]) -> i32 {
         eprintln!("usage: firmwarekit oneshot argv0 qemu-arguments...");
         return 64;
     }
+    // Before the engine loads, so its constructors are covered too: a crash goes into the prepare log (crashlog.rs).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    crate::crashlog::install();
     let path = engine_path();
     let lib = match load(&path) {
         Ok(l) => l,
@@ -538,6 +541,11 @@ pub fn engine_main(args: &[String]) -> i32 {
         return 70;
     };
     let quit: unsafe extern "C" fn() = *quit;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        crate::crashlog::attach_engine(&lib);
+        crate::crashlog::crash_test();
+    }
     prefer_fast_cores(); // before any thread starts, so they all inherit it
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {

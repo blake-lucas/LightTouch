@@ -135,6 +135,14 @@ class FirmwareService : Service() {
             put("LTM_QEMU_DYLIB", File(libs, "libqemu-arm.so").path)
             put("LD_LIBRARY_PATH", libs.path)
             put("HOME", filesDir.path); put("TMPDIR", cacheDir.path)
+            // Debug builds: files/debug-env's KEY=VALUE lines reach the preparation's boots too, as they reach the
+            // running engine (EngineService), e.g. LT_ONESHOT_CRASH=30 for the crash-report test (crashlog.rs).
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                File(filesDir, "debug-env").takeIf { it.exists() }?.readLines()?.forEach { line ->
+                    val (key, value) = line.split('=', limit = 2).takeIf { it.size == 2 } ?: return@forEach
+                    put(key.trim(), value.trim())
+                }
+            }
         }
         check(!cancelling) { "Cancelled" }
         val child = builder.start().also { process = it }
