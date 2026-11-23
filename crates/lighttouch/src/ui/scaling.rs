@@ -3,7 +3,8 @@
 //! Smooth and Crisp sample bilinearly, Sharp and Pixel perfect take the nearest pixel. Crisp (sharp-bilinear) first
 //! repeats each pixel a whole number of times, the largest that fits but at least 2 once the picture is shown larger
 //! than it is (1 would be as soft as Smooth), then bilinear brings it to the size shown, so only about a screen pixel
-//! at each edge is blended. The Android presenter uses the same rule.
+//! at each edge is blended. The Android presenter keeps 1 below 2x: it draws the multiple on the CPU, and a Retina
+//! screen at 2x would cost it 4 times the pixels.
 use eframe::egui::{self, Color32, ColorImage, Rect, TextureHandle, TextureOptions};
 use lighttouch_model::rotation::Rotation;
 use lighttouch_model::settings::Scaling;
@@ -43,15 +44,15 @@ pub fn prescale(image: ColorImage, k: usize) -> ColorImage {
         return image;
     }
     let [w, h] = image.size;
-    let mut pixels = Vec::with_capacity(w * h * k * k);
-    let mut row = Vec::with_capacity(w * k);
-    for y in 0..h {
-        row.clear();
-        for &p in &image.pixels[y * w..(y + 1) * w] {
-            row.extend(std::iter::repeat_n(p, k));
+    let mut pixels = vec![Color32::TRANSPARENT; w * h * k * k];
+    let stride = w * k;
+    for (y, rows) in pixels.chunks_exact_mut(stride * k).enumerate() {
+        let (first, rest) = rows.split_at_mut(stride);
+        for (out, &p) in first.chunks_exact_mut(k).zip(&image.pixels[y * w..(y + 1) * w]) {
+            out.fill(p);
         }
-        for _ in 0..k {
-            pixels.extend_from_slice(&row);
+        for row in rest.chunks_exact_mut(stride) {
+            row.copy_from_slice(first);
         }
     }
     ColorImage::new([w * k, h * k], pixels)
@@ -144,5 +145,25 @@ mod tests {
         let big = prescale(image, 2);
         assert_eq!(big.size, [4, 2]);
         assert_eq!(big.pixels, [Color32::RED, Color32::RED, Color32::BLUE, Color32::BLUE].repeat(2));
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+
+    /// `cargo test --release -p lighttouch prescale_cost -- --ignored --nocapture`: Crisp's CPU cost per frame.
+    #[test]
+    #[ignore]
+    fn prescale_cost() {
+        for (w, h, k) in [(320, 480, 1), (640, 960, 1), (320, 480, 2), (320, 480, 4), (640, 960, 2), (1024, 768, 2)] {
+            let rgba = vec![200u8; w * h * 4];
+            let start = std::time::Instant::now();
+            for _ in 0..50 {
+                let image = prescale(ColorImage::from_rgba_unmultiplied([w, h], &rgba), k);
+                std::hint::black_box(image);
+            }
+            println!("{w}x{h} at {k}x: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0 / 50.0);
+        }
     }
 }

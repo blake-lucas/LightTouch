@@ -55,10 +55,10 @@ internal fun wholeMultiple(pixels: IntSize, roomWidth: Float, roomHeight: Float,
 }
 
 /**
- * Crisp's prescale, as the presenter makes it: the largest whole multiple that fits, but 2 below twice the screen's
- * size, where 1 would leave it as soft as Smooth.
+ * Crisp's prescale, as the presenter makes it: the largest whole multiple that fits (1 below 2x, as Smooth; the
+ * desktop app, which prescales on its GPU's behalf, uses 2 there).
  */
-internal fun crispMultiple(scale: Float): Int = floor(scale + 0.01f).toInt().let { if (it >= 2) it else if (scale > 1.01f) 2 else 1 }.coerceAtMost(8)
+internal fun crispMultiple(scale: Float): Int = floor(scale + 0.01f).toInt().coerceIn(1, 8)
 
 /** The screens the preview can show. */
 private enum class PreviewScreen(val label: String, val pixels: IntSize, val skin: DeviceSkin) {
