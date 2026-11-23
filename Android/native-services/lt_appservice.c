@@ -52,6 +52,7 @@
 #include <libimobiledevice/libimobiledevice.h>
 #include <libimobiledevice/lockdown.h>
 #include <libimobiledevice/afc.h>
+#include <usbmuxd.h>
 #include <libimobiledevice/installation_proxy.h>
 #include <libimobiledevice/syslog_relay.h>
 #include <plist/plist.h>
@@ -270,17 +271,33 @@ static int session_open(struct session *s)
 	int64_t deadline = now_ms() + CONNECT_WINDOW_MS;
 	const char *phase = "find guest";
 	int code = 0;
+	int forgot = 0;
 	for (;;) {
 		idevice_error_t derr = idevice_new_with_options(&s->device, NULL, IDEVICE_LOOKUP_USBMUX);
 		if (derr == IDEVICE_E_SUCCESS) {
 			lockdownd_error_t lerr = lockdownd_client_new_with_handshake(s->device, &s->lockdown, CLIENT_LABEL);
 			if (lerr == LOCKDOWN_E_SUCCESS)
 				return 0;
+			/* The guest no longer knows the stored host (iOS 10 drops a pairing unused for 180 days, Reset All
+			 * Settings drops them all; the iPhone 5's comes from preparation). libimobiledevice pairs again only
+			 * when there is no record, so forget it once: the next handshake pairs, and asks for Trust. */
+			if (lerr == LOCKDOWN_E_INVALID_HOST_ID && !forgot) {
+				char *udid = NULL;
+				if (idevice_get_udid(s->device, &udid) == IDEVICE_E_SUCCESS && udid) {
+					usbmuxd_delete_pair_record(udid);
+					free(udid);
+					forgot = 1;
+				}
+			}
 			phase = "lockdown handshake";
 			code = lerr;
 			s->lockdown = NULL;
 			idevice_free(s->device);
 			s->device = NULL;
+			if (forgot == 1) {
+				forgot = 2;
+				continue;
+			}
 		} else {
 			phase = "find guest";
 			code = derr;
@@ -290,7 +307,10 @@ static int session_open(struct session *s)
 			break;
 		sleep_ms(CONNECT_RETRY_MS);
 	}
-	emit_error("%s failed (device error %d). Try again after iOS finishes starting.", phase, code);
+	if (code == LOCKDOWN_E_PAIRING_DIALOG_RESPONSE_PENDING)
+		emit_error("Unlock the guest and tap Trust on its screen to let LightTouch install apps.");
+	else
+		emit_error("%s failed (device error %d). Try again after iOS finishes starting.", phase, code);
 	return -1;
 }
 
