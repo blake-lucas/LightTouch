@@ -116,8 +116,6 @@ pub struct ScreenScalingState {
     squares: bool,
     sample: Sample,
     pictures: HashMap<(Sample, Screen), (ColorImage, Scaled)>,
-    /// How far a picture larger than the preview has been dragged from centred, in points.
-    pan: egui::Vec2,
 }
 
 /// Open the page from Settings, starting from the saved measure.
@@ -199,13 +197,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             ui.add_space(16.0);
             let top = ui.cursor().min;
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 640.0), Sense::hover());
-            preview(app, ui, Rect::from_min_max(top, rect.max), draft);
+            preview(app, ui, Rect::from_min_max(top, rect.max), draft, area);
         }
         ui.add_space(28.0);
     });
     if wide {
         let right = Rect::from_min_max(egui::pos2(left.right() + 28.0, area.top() + 26.0), area.max - vec2(24.0, 24.0));
-        preview(app, ui, right, draft);
+        preview(app, ui, right, draft, area);
     }
     ui.allocate_rect(area, Sense::hover());
 
@@ -541,7 +539,7 @@ fn drag(ui: &Ui, handle: Rect, down: bool, draft: &mut f32, ppp: f32, length: f3
 }
 
 /// The preview: its choices along the top, then the picture in the rest of `rect`.
-fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
+fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let p = app.palette;
     let selected = Screen::for_board(app.model.current().map(|d| d.board.as_str()));
     let mut ui = ui.new_child(egui::UiBuilder::new().id_salt("screen-scaling-preview").max_rect(rect));
@@ -590,7 +588,8 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
     }
     ui.add_space(6.0);
     let caption_at = ui.cursor().min;
-    let area = Rect::from_min_max(caption_at + vec2(0.0, 24.0), rect.max);
+    // Up to two lines of caption above the picture.
+    let area = Rect::from_min_max(caption_at + vec2(0.0, 40.0), rect.max);
     if area.height() < 120.0 {
         return;
     }
@@ -600,22 +599,29 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
     let caption = if app.screen_scaling.squares {
         squares(app, ui, space, screen, draft)
     } else {
-        sample(app, ui, space, screen, draft)
+        sample(app, ui, space, screen, draft, page)
     };
-    // One line, cut short with an ellipsis where the column is narrow.
-    let mut job = egui::text::LayoutJob::simple_singleline(
+    let mut job = egui::text::LayoutJob::simple(
         caption,
         FontId::new(12.5, egui::FontFamily::Proportional),
         p.on_surface_variant,
+        rect.width() - 4.0,
     );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 4.0);
+    job.wrap.max_rows = 2;
     let galley = ui.painter().layout_job(job);
-    ui.painter().galley(caption_at + vec2(2.0, 10.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
+    ui.painter().galley(caption_at + vec2(2.0, 20.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
 }
 
-/// A sample picture drawn as the settings draw a device's screen (the draft measure for real size). Returns the
-/// caption: how large it's shown.
-fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -> String {
+/// "2×", "2.37×".
+fn times(x: f32) -> String {
+    if (x - x.round()).abs() < 0.01 { format!("{}×", x.round()) } else { format!("{x:.2}×") }
+}
+
+/// A sample picture as the device view will show it: the size the device page gives the screen (Pixel perfect's
+/// multiple, real size with the draft measure, or fitted), drawn by the same method on whole physical pixels. When
+/// that's larger than the preview, Pixel perfect shows the largest multiple that fits here and the other methods are
+/// fitted; the caption says what's shown.
+fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, page: Rect) -> String {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let mut settings = app.model.settings.clone();
@@ -624,32 +630,59 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -
     }
     let skin = screen.skin();
     let pixels = screen.pixels();
-    let mut placed = device_frame::place_for(&skin, space, Rotation::Portrait, false, &settings, &ctx, pixels);
-    // A Pixel perfect multiple too large for the preview is still shown at that multiple, not shrunk to fit: the
-    // picture is cropped and pans with a drag.
-    if let (Scaling::PixelPerfect, k @ 1..) = (settings.scaling, settings.integer_scale) {
-        let size = vec2((k as u32 * pixels[0]) as f32, (k as u32 * pixels[1]) as f32) / ppp;
-        placed.screen = Rect::from_center_size(space.center(), size);
-    }
-    let spare = (placed.screen.size() - space.size()).max(egui::Vec2::ZERO) / 2.0;
-    let drag = ui.interact(space, ui.scope_id().with("preview-pan"), Sense::drag());
-    let pan = &mut app.screen_scaling.pan;
-    if spare == egui::Vec2::ZERO {
-        *pan = egui::Vec2::ZERO;
+    // The device page's room for the device, as it was last laid out (else its usual bars and margins).
+    let [l, t, r, b] = app.device_view_insets.unwrap_or([24.0, 80.0, 24.0, 108.0]);
+    let view = Rect::from_min_max(page.min + vec2(l, t), page.max - vec2(r, b));
+    let frame = settings.device_frame;
+    let in_view = device_frame::place_for(&skin, view, Rotation::Portrait, frame, &settings, &ctx, pixels).screen;
+    let view_scale = in_view.width() * ppp / pixels[0] as f32;
+    let fits = |k: f32| {
+        pixels[0] as f32 * k <= space.width() * ppp + 0.5 && pixels[1] as f32 * k <= space.height() * ppp + 0.5
+    };
+    let fit = (space.width() * ppp / pixels[0] as f32).min(space.height() * ppp / pixels[1] as f32);
+    let (scale, caption) = if settings.scaling == Scaling::PixelPerfect {
+        let k = view_scale.round().max(1.0);
+        let here = (1..=12).rev().map(|k| k as f32).find(|&k| fits(k)).unwrap_or(1.0);
+        let shown = k.min(here);
+        let fixed = settings.integer_scale as f32;
+        let capped = if fixed > k {
+            format!("{} doesn't fit the device view, so it uses {}. ", times(fixed), times(k))
+        } else {
+            String::new()
+        };
+        let note = if shown < k {
+            format!("{} doesn't fit here; showing {}", times(k), times(shown))
+        } else {
+            format!("Scaled {} — each original pixel is {k}×{k} screen pixels", times(k))
+        };
+        // A multiple counts physical pixels: at 200% display scaling, 1x looks half the size of other windows' 1x.
+        let hidpi = if ppp > 1.01 {
+            format!(". At {:.0}% display scaling, 1× looks smaller", ppp * 100.0)
+        } else {
+            String::new()
+        };
+        (shown, format!("Device view: {capped}{note}{hidpi}"))
     } else {
-        if drag.dragged() {
-            *pan += drag.drag_delta();
-        }
-        *pan = pan.clamp(-spare, spare);
-        placed.screen = placed.screen.translate(*pan);
-        drag.on_hover_cursor(egui::CursorIcon::Grab);
-    }
-    if settings.scaling == Scaling::PixelPerfect {
-        // On whole physical pixels, as the device's screen is.
-        let at = placed.screen.min;
-        let at = egui::pos2((at.x * ppp).round() / ppp, (at.y * ppp).round() / ppp);
-        placed.screen = Rect::from_min_size(at, placed.screen.size());
-    }
+        let scale = if fits(view_scale) { view_scale } else { fit };
+        let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], scale);
+        let what = match settings.scaling {
+            Scaling::Sharp if (scale - scale.round()).abs() < 0.01 => {
+                format!("Stretched {} — every pixel the same width", times(scale))
+            }
+            Scaling::Sharp => format!("Stretched {} — pixels vary in width", times(scale)),
+            Scaling::Crisp if (scale - k as f32).abs() < 0.01 => format!("{k}× crisp"),
+            Scaling::Crisp => format!("{k}× crisp, then smoothed to {}", times(scale)),
+            _ => format!("Smoothed to {} — soft edges", times(scale)),
+        };
+        let real = device_frame::real_scale(&skin, &settings, &ctx).is_some();
+        let shrunk =
+            if fits(view_scale) { String::new() } else { format!(" (the device view shows {})", times(view_scale)) };
+        (scale, format!("Device view: {}{what}{shrunk}", if real { "Real size: " } else { "" }))
+    };
+    // Centred on whole physical pixels.
+    let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
+    let corner = space.center() - size / 2.0;
+    let rect = Rect::from_min_size(egui::pos2((corner.x * ppp).round() / ppp, (corner.y * ppp).round() / ppp), size);
     let key = (app.screen_scaling.sample, screen);
     let (image, texture) = app.screen_scaling.pictures.entry(key).or_insert_with(|| {
         let decoded = image::load_from_memory(key.0.png(screen)).map(|i| i.to_rgba8());
@@ -659,19 +692,12 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -
         };
         (image, Scaled::default())
     });
-    let shown = scaling::shown_px(placed.screen, ppp);
-    texture.update(&ctx, "scaling-preview", false, settings.scaling, image.size, shown, || image.clone());
+    texture.update(&ctx, "scaling-preview", false, settings.scaling, image.size, scaling::shown_px(rect, ppp), || {
+        image.clone()
+    });
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
-    texture.paint(&painter, placed.screen, Rotation::Portrait, false);
-    if !space.expand(0.5).contains_rect(placed.screen) {
-        crop_note(ui, space, "Drag to see the rest");
-    }
-    let times = placed.screen.width() * ppp / pixels[0] as f32;
-    if (times - times.round()).abs() < 0.01 {
-        format!("Shown at {}× its pixels", times.round())
-    } else {
-        format!("Shown at {times:.2}× its pixels")
-    }
+    texture.paint(&painter, rect, Rotation::Portrait, false);
+    caption
 }
 
 /// The screen at its real size (the draft measure) over 1 cm squares, in the drawn device. Returns the caption.

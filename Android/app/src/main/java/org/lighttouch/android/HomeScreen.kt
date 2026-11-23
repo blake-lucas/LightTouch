@@ -51,7 +51,7 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
                     screen = { modifier -> GuestScreen(host, guestSurface, modifier, overlayScale = 0.85f, inDeviceView = true) },
                     modifier = Modifier.fillMaxSize(), haptics = host.settings.haptics,
                     pixels = screenPixels(host.selected?.board).takeIf { host.settings.scaling == ScreenScaling.PIXEL_PERFECT },
-                    multiple = host.settings.integerScale)
+                    multiple = host.settings.integerScale, realPxPerMm = host.settings.realPxPerMm(host.selected?.board))
             }
             // Stopped, the screen itself offers Start or Recover; the dock is for a running session.
             AnimatedVisibility(host.active, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) { Dock(host) { confirmStop = true } }

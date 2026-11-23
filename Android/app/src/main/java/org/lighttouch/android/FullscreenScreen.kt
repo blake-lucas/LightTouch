@@ -52,14 +52,14 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
         // when it can hold them; the guest shrinks a little to make room before they float instead.
         val bar = 88.dp
         val fit = with(LocalDensity.current) {
-            fullscreenFit(aspect, screenPixels(host.selected?.board), maxWidth.toPx(), maxHeight.toPx(), bar.toPx(),
-                host.settings.scaling, host.settings.integerScale)
+            fullscreenFit(skin, screenPixels(host.selected?.board), maxWidth.toPx(), maxHeight.toPx(), bar.toPx(),
+                host.settings.scaling, host.settings.integerScale, host.settings.realPxPerMm(host.selected?.board))
         }
         val docked = fit.docked
         val screenWidth = with(LocalDensity.current) { fit.width.toDp() }
         val screenHeight = with(LocalDensity.current) { fit.height.toDp() }
         if (docked) {
-            GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
+            GuestScreen(host, guestSurface, Modifier.requiredSize(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height((maxHeight - screenHeight) / 2), contentAlignment = Alignment.Center) {
                 ButtonBar(host, Modifier.fillMaxWidth().height(64.dp)) { confirmStop = true }
             }
@@ -67,7 +67,7 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
             var visible by remember { mutableStateOf(true) }
             var touched by remember { mutableIntStateOf(0) }
             LaunchedEffect(visible, touched) { if (visible) { delay(4_000); visible = false } }
-            GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
+            GuestScreen(host, guestSurface, Modifier.requiredSize(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
             AnimatedVisibility(visible, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
                 ButtonBar(host, Modifier.padding(16.dp).background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(28.dp))
                     .height(88.dp).widthIn(max = 420.dp).fillMaxWidth(), onInteract = { touched++ }) { confirmStop = true }

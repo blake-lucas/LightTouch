@@ -303,7 +303,7 @@ pub fn screen_pixels(board: Option<&str>) -> [u32; 2] {
 }
 
 /// `place` by the Screen scaling settings: fitted, at the real size, or (Pixel perfect) at a whole multiple of the
-/// screen's `pixels`, on the physical pixel grid. Pixel perfect falls back to fitting when not even 1x fits.
+/// screen's `pixels`, on the physical pixel grid, never a fraction: below 1x the screen is cropped.
 pub fn place_for(
     skin: &Skin,
     space: Rect,
@@ -315,17 +315,14 @@ pub fn place_for(
 ) -> Placed {
     let ppp = ctx.pixels_per_point();
     if settings.scaling == lighttouch_model::settings::Scaling::PixelPerfect {
-        if let Some(placed) = place_whole(skin, space, rotation, frame, settings.integer_scale, pixels, ppp) {
-            return placed;
-        }
-        return place(skin, space, rotation, frame, None);
+        return place_whole(skin, space, rotation, frame, settings.integer_scale, pixels, ppp);
     }
     place(skin, space, rotation, frame, real_scale(skin, settings, ctx))
 }
 
-/// The multiple Pixel perfect shows: `fixed` (0 for the largest that fits) where it fits, else the largest that does.
-/// With the device drawn, Auto picks the largest showing all of it when one does (else the device isn't drawn).
-/// None when not even 1x fits.
+/// The multiple Pixel perfect shows: the largest the whole device fits around (with the device drawn), else the
+/// largest the screen alone fits (the device left out), else 1x (the screen cropped). A `fixed` multiple is a cap on
+/// that, so a window made smaller steps down a whole multiple at a time and back up as it grows.
 pub fn whole_multiple(
     skin: &Skin,
     space: Rect,
@@ -334,18 +331,15 @@ pub fn whole_multiple(
     fixed: u8,
     pixels: [u32; 2],
     ppp: f32,
-) -> Option<u32> {
+) -> u32 {
     let fits = |k: u32, whole: bool| {
         let layout = layout_turned_at(skin, space.center(), mm_scale(skin, k, pixels, ppp), rotation);
         let r = if whole { layout.body } else { layout.screen };
         r.width() <= space.width() + 0.5 && r.height() <= space.height() + 0.5
     };
     let largest = |whole: bool| (1..=12).rev().find(|&k| fits(k, whole));
-    match fixed {
-        0 => frame.then(|| largest(true)).flatten().or_else(|| largest(false)),
-        k if fits(k as u32, false) => Some(k as u32),
-        _ => largest(false),
-    }
+    let auto = frame.then(|| largest(true)).flatten().or_else(|| largest(false)).unwrap_or(1);
+    if fixed > 0 { auto.min(fixed as u32) } else { auto }
 }
 
 /// Points per millimetre that make the screen `k` times its pixels wide.
@@ -361,8 +355,8 @@ fn place_whole(
     fixed: u8,
     pixels: [u32; 2],
     ppp: f32,
-) -> Option<Placed> {
-    let k = whole_multiple(skin, space, rotation, frame, fixed, pixels, ppp)?;
+) -> Placed {
+    let k = whole_multiple(skin, space, rotation, frame, fixed, pixels, ppp);
     let mut placed = place(skin, space, rotation, frame, Some(mm_scale(skin, k, pixels, ppp)));
     // A device that doesn't fit around the screen at this multiple isn't drawn cut off: the screen shows alone.
     if placed.device.is_some_and(|d| d.body.width() > space.width() + 0.5 || d.body.height() > space.height() + 0.5) {
@@ -378,7 +372,7 @@ fn place_whole(
     let by = min - placed.screen.min;
     placed.device = placed.device.map(|layout| shifted(layout, by));
     placed.screen = Rect::from_min_size(min, size);
-    Some(placed)
+    placed
 }
 
 /// Draw the device (everything except the screen contents). `pressed` darkens held buttons.

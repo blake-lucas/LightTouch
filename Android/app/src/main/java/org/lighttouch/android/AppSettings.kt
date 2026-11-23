@@ -21,6 +21,9 @@ enum class ScreenScaling(val label: String, val about: String, val native: Int) 
     PIXEL_PERFECT("Pixel perfect", "Whole-number sizes only, with a border", 1),
 }
 
+/** Settings → Screen scaling → Real size: which devices show at the real device's size. */
+enum class RealSize(val label: String) { OFF("Off"), IPADS("iPads"), ALL("All") }
+
 /** User preferences, as Compose state backed by SharedPreferences. Read on the main thread. */
 class AppSettings(private val context: Context) {
     private val networkState = mutableStateOf(NetworkConfiguration.load(context))
@@ -69,6 +72,22 @@ class AppSettings(private val context: Context) {
     private val scalingState = mutableStateOf(prefs.getString("screenScaling", null)?.let { name -> ScreenScaling.entries.firstOrNull { it.name == name } }
         ?: if (prefs.getString("scaling", null) == "SHARP") ScreenScaling.CRISP else ScreenScaling.SMOOTH)
     var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("screenScaling", v.name).apply() }
+
+    private val realSizeState = enumPref("realSize", RealSize.OFF)
+    var realSize: RealSize get() = realSizeState.value; set(v) { realSizeState.value = v; prefs.edit().putString("realSize", v.name).apply() }
+
+    /* This phone's measured pixels per millimetre (Measure this display); 0 uses what the system reports. */
+    private val displayPxPerMmState = mutableStateOf(prefs.getFloat("displayPxPerMm", 0f))
+    var displayPxPerMm: Float get() = displayPxPerMmState.value; set(v) { displayPxPerMmState.value = v; prefs.edit().putFloat("displayPxPerMm", v).apply() }
+    /** The density the system reports, in pixels per millimetre (many phones are a few percent off). */
+    val systemPxPerMm: Float get() = context.resources.displayMetrics.let { (it.xdpi + it.ydpi) / 2f / 25.4f }
+    val pxPerMm: Float get() = displayPxPerMm.takeIf { it > 0f } ?: systemPxPerMm
+    /** Pixels per millimetre when [board] shows at its real size; null when it doesn't (Pixel perfect sets its own size). */
+    fun realPxPerMm(board: String?): Float? = when {
+        scaling == ScreenScaling.PIXEL_PERFECT -> null
+        realSize == RealSize.ALL || (realSize == RealSize.IPADS && board?.startsWith("k48") == true) -> pxPerMm
+        else -> null
+    }
 
     /* Pixel perfect's multiple; 0 is the largest that fits. */
     private val integerScaleState = mutableStateOf(prefs.getInt("integerScale", 0))

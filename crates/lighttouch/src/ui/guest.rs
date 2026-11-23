@@ -42,6 +42,8 @@ pub struct GuestView {
     size: [usize; 2],
     /// The longer side of the screen as last drawn, in physical pixels: Crisp's prescale follows it.
     shown_px: std::cell::Cell<f32>,
+    /// The screen's rect as last logged for LIGHTTOUCH_UI_LOG_SCREEN (devshot.rs), in physical pixels.
+    logged: Option<[i32; 4]>,
     record: Option<String>,
     /// Mouse buttons holding a contact: (contact id, last position).
     mouse: HashMap<u32, Pos2>,
@@ -212,6 +214,14 @@ impl GuestView {
     /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
     /// as on the device: the engine sends no frames then, so the last one would otherwise stay up.
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &mut Model, interactive: bool) -> egui::Response {
+        if super::devshot::log_screen() {
+            let ppp = ui.ctx().pixels_per_point();
+            let px = [rect.left(), rect.top(), rect.width(), rect.height()].map(|v| (v * ppp).round() as i32);
+            if self.logged != Some(px) {
+                self.logged = Some(px);
+                lighttouch_core::app_log!("guest screen {}x{} px at {},{}", px[2], px[3], px[0], px[1]);
+            }
+        }
         let response = ui.interact(rect, ui.scope_id().with("guest-screen"), Sense::click_and_drag());
         ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
         let asleep = model.session.as_ref().is_some_and(|s| s.display_asleep());

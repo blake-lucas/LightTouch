@@ -100,6 +100,9 @@ pub struct App {
     pub controller: controller::ControllerUi,
     pub carrier: carrier::CarrierUi,
     pub screen_scaling: screen_scaling::ScreenScalingState,
+    /// Where the device page last put the device's room within the page: left, top, right and bottom insets in
+    /// points. The Screen scaling preview predicts the device view from it.
+    pub device_view_insets: Option<[f32; 4]>,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -403,6 +406,7 @@ impl App {
             controller: controller::ControllerUi::default(),
             carrier: carrier::CarrierUi::default(),
             screen_scaling: Default::default(),
+            device_view_insets: None,
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
