@@ -759,7 +759,11 @@ static u64 b_fs_write(u32 n)   /* n KiB */
         for (u32 i = 0; i < IO_CHUNK; i += 4096) io_buffer[i] = (char)(done + i);
         if (write(fd, io_buffer, IO_CHUNK) != IO_CHUNK) { close(fd); return 0; }
     }
+#ifdef IO_FULLSYNC   /* durability tests: F_FULLFSYNC, the only sync HFS+ makes survive power loss */
+    if (fcntl(fd, 51, 0) != 0) { close(fd); return 0; }
+#else
     if (fsync(fd) != 0) { close(fd); return 0; }
+#endif
     close(fd);
     io_ready = n >= IO_FILE_KIB;
     return now_ns() - t;
