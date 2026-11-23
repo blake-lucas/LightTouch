@@ -159,12 +159,18 @@ impl Guest {
 
     /// The newest crash report: its file name and text (the readable report inside a .plist when it is one).
     pub fn last_crash(&mut self) -> Result<Option<(String, String)>> {
+        self.last_crash_named("")
+    }
+
+    /// The newest crash report whose name contains `part` (developer runs: `lighttouch guest SOCKET crash PART`).
+    pub fn last_crash_named(&mut self, part: &str) -> Result<Option<(String, String)>> {
         let mut afc = Afc::new(self.service(CRASH_REPORTS, AFC_TIMEOUT)?);
         let newest = afc
             .read_dir("/")?
             .into_iter()
             .filter(|n| {
-                !n.starts_with('.')
+                n.contains(part)
+                    && !n.starts_with('.')
                     && !n.starts_with("LatestCrash")
                     && (n.ends_with(".plist") || n.ends_with(".ips") || n.ends_with(".crash"))
             })
