@@ -403,6 +403,9 @@ pub fn install(system: &Path, helpers: &Path) -> Result<()> {
             "System/Library/LaunchDaemons/com.apple.SpringBoard.plist",
             "System/Library/LaunchDaemons/com.apple.mobile.installd.plist",
             "System/Library/LaunchDaemons/com.apple.installd.plist",
+            // Disabled by the bake (no HCI on the UART): iOS 10's launchd reads only this cache, so without it
+            // BTServer and the BlueTool it starts ran anyway (~20 s of the first start's guest CPU).
+            crate::system_edits::BT_JOB,
         ],
     )?;
     v.commit()?;
