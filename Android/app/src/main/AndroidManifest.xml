@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Settings > Microphone (off by default): iOS apps that record hear the phone's microphone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Settings > Vibration: the phone vibrates while an emulated iPhone runs its vibration motor. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <application android:label="${appLabel}" android:icon="@mipmap/ic_launcher" android:theme="@style/AppTheme" android:allowBackup="false" android:supportsRtl="true">
         <profileable android:shell="${profileable}" />
         <activity android:name=".MainActivity" android:exported="true">

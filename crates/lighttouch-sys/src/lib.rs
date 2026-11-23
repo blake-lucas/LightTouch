@@ -243,6 +243,11 @@ abi_struct!(lt_mic_info {
     pushed_frames: u64,
     dropped_frames: u64,
 });
+abi_struct!(lt_vibrator_info {
+    on: u32,
+    reserved: u32,
+    pulses: u64,
+});
 abi_struct!(lt_carrier {
     carrier: [c_char; 64],
     mcc_mnc: [c_char; 8],
@@ -441,6 +446,7 @@ unsafe extern "C" {
     ) -> lt_status;
     pub fn lt_runtime_mic_info(runtime: *mut lt_runtime, info: *mut lt_mic_info, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_mic_flush(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_vibrator(runtime: *mut lt_runtime, info: *mut lt_vibrator_info, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_reload_carrier(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_modem(
         runtime: *mut lt_runtime,
@@ -576,6 +582,7 @@ mod tests {
             size_of::<lt_carrier>(),
             size_of::<lt_export_config>(),
             size_of::<lt_transfer_import_config>(),
+            size_of::<lt_vibrator_info>(),
         ];
         let mut c = [0u32; 32];
         let count = unsafe { lt_rust_layout(c.as_mut_ptr(), c.len() as u32) } as usize;

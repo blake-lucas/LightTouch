@@ -44,6 +44,10 @@ class AppSettings(private val context: Context) {
     private val hapticsState = mutableStateOf(prefs.getBoolean("haptics", true))
     var haptics: Boolean get() = hapticsState.value; set(v) { hapticsState.value = v; prefs.edit().putBoolean("haptics", v).apply() }
 
+    /* The phone vibrates while an emulated iPhone runs its vibration motor (EngineService's guest-vibrator). */
+    private val vibrationState = mutableStateOf(prefs.getBoolean("vibration", true))
+    var vibration: Boolean get() = vibrationState.value; set(v) { vibrationState.value = v; prefs.edit().putBoolean("vibration", v).apply() }
+
     private val autoResumeState = mutableStateOf(prefs.getBoolean("autoResume", true))
     var autoResume: Boolean get() = autoResumeState.value; set(v) { autoResumeState.value = v; prefs.edit().putBoolean("autoResume", v).apply() }
 
