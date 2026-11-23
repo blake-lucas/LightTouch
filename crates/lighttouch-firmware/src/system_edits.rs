@@ -127,8 +127,11 @@ impl Options {
 /// What the helpers directory holds, by file name (flat).
 pub mod helpers {
     /// guest tool -> (install path, mode).
-    pub const TOOLS: [(&str, &str, u16); 3] =
-        [("it_pbd", "usr/local/bin/it_pbd", 0o755), ("it_prefs", "usr/local/bin/it_prefs", 0o755), MSM_QUIET];
+    pub const TOOLS: [(&str, &str, u16); 3] = [
+        ("it_pbd", "usr/local/bin/it_pbd", 0o755),
+        ("it_prefs", "usr/local/bin/it_prefs", 0o755),
+        MSM_QUIET,
+    ];
     pub const MSM_QUIET: (&str, &str, u16) = ("it_msmquiet.dylib", "usr/local/lib/it_msmquiet.dylib", 0o755);
     pub const SEAL: (&str, &str, u16) = ("it_seal", "usr/local/bin/it_seal", 0o755);
     pub const GL_TEST: (&str, &str, u16) = ("it_gltest", "usr/local/bin/it_gltest", 0o755);
@@ -183,10 +186,7 @@ pub const SPRINGBOARD_JOB: &str = "System/Library/LaunchDaemons/com.apple.Spring
 /// MobileStorageMounter through 4.x; 5.x moved it to USBDeviceArbitrator; 7.x to DeviceOMatic.
 pub const NOTICE_JOBS: [(&str, &str); 3] = [
     ("System/Library/LaunchDaemons/com.apple.mobile.storage_mounter.plist", "com.apple.mobile.storage_mounter"),
-    (
-        "System/Library/LaunchDaemons/com.apple.mobile.usb_device_arbitrator.plist",
-        "com.apple.mobile.usb_device_arbitrator",
-    ),
+    ("System/Library/LaunchDaemons/com.apple.mobile.usb_device_arbitrator.plist", "com.apple.mobile.usb_device_arbitrator"),
     ("System/Library/LaunchDaemons/com.apple.device-o-matic.plist", "com.apple.device-o-matic"),
 ];
 pub const BT_JOB: &str = "System/Library/LaunchDaemons/com.apple.BTServer.plist";
@@ -278,14 +278,8 @@ pub fn build_k48(
 ) -> Result<Built> {
     let system = work.join("system.img");
     let data = work.join("data.img");
-    let mut result = Built {
-        system: system.clone(),
-        data: data.clone(),
-        activation: None,
-        engine: None,
-        guest_package: None,
-        notes: Vec::new(),
-    };
+    let mut result =
+        Built { system: system.clone(), data: data.clone(), activation: None, engine: None, guest_package: None, notes: Vec::new() };
     let helper = |name: &str| -> Result<PathBuf> {
         let p = helpers_dir.join(name);
         if !p.is_file() {
@@ -329,9 +323,7 @@ pub fn build_k48(
         let v = Volume::open(&system, false)?;
         let bytes = v.total_blocks * v.block_size;
         if bytes > system_bytes {
-            return Err(crate::unsupported!(
-                "system volume ({bytes} bytes) is larger than partition 1 ({system_bytes})"
-            ));
+            return Err(crate::unsupported!("system volume ({bytes} bytes) is larger than partition 1 ({system_bytes})"));
         }
         log(&format!(
             "{} {} x {} B blocks, {} free; partition 1 is {} MiB",
@@ -487,8 +479,7 @@ pub fn build_k48(
         disable(&mut ed, BT_JOB)?;
     }
     if o.quiet_services {
-        let quieted: Vec<String> =
-            DEAD_SERVICE_JOBS.iter().map(|n| job(&format!("{n}.plist"))).filter(|j| ed.exists(j)).collect();
+        let quieted: Vec<String> = DEAD_SERVICE_JOBS.iter().map(|n| job(&format!("{n}.plist"))).filter(|j| ed.exists(j)).collect();
         for j in &quieted {
             disable(&mut ed, j)?;
         }
@@ -533,8 +524,7 @@ pub fn build_k48(
         omitted.insert(format!("/{}", msm.1));
     }
     if o.guest_tools {
-        let (seeded, record) =
-            seed_guest_package(&mut ed, helpers_dir, &o.firmware_arch, result.engine.is_some(), &omitted, fit, log)?;
+        let (seeded, record) = seed_guest_package(&mut ed, helpers_dir, &o.firmware_arch, result.engine.is_some(), &omitted, fit, log)?;
         result.guest_package = Some(record);
         root_owned.extend(seeded);
     }
@@ -550,8 +540,7 @@ pub fn build_k48(
     ed.commit()?;
 
     let sys = Volume::open(&system, true)?;
-    let mut n = sys.set_owner(&refs(&root_owned), 0, 0, None, None)?
-        + sys.set_owner(&refs(&mobile_owned), 501, 501, None, None)?;
+    let mut n = sys.set_owner(&refs(&root_owned), 0, 0, None, None)? + sys.set_owner(&refs(&mobile_owned), 501, 501, None, None)?;
     for (path, mode) in &root_modes {
         n += sys.set_owner(&[path.as_str()], 0, 0, Some(*mode), None)?;
     }
@@ -569,18 +558,7 @@ pub fn build_k48(
         let source = Editor::open_read_only(&system)?;
         copy_tree(&source, "private/var", &mut dv, "")?;
     }
-    seed_data(
-        &mut dv,
-        "",
-        o,
-        product_major,
-        &product_version,
-        result.activation.as_ref().and_then(|a| a.data_ark.as_deref()),
-        keyboards.as_ref(),
-        formats.as_ref(),
-        now,
-        log,
-    )?;
+    seed_data(&mut dv, "", o, product_major, &product_version, result.activation.as_ref().and_then(|a| a.data_ark.as_deref()), keyboards.as_ref(), formats.as_ref(), now, log)?;
     let region = REGION.split('/').next().unwrap_or("");
     // The N42 Swift bake does not install the preinstalled-asset catalog; keep that path off for
     // the A6 volumes so the Data image matches the reference.
@@ -630,15 +608,7 @@ pub fn build_k48(
 /// into the skeleton: folders, symlinks as symlinks, file contents written plainly (an HFS-compressed source lands
 /// uncompressed), permission bits kept; no owners, flags or extended attributes. `to`'s own folder takes `from`'s mode.
 pub fn copy_tree(src: &Editor, from: &str, dst: &mut Editor, to: &str) -> Result<()> {
-    let join = |base: &str, rel: &str| {
-        if base.is_empty() {
-            rel.to_string()
-        } else if rel.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base}/{rel}")
-        }
-    };
+    let join = |base: &str, rel: &str| if base.is_empty() { rel.to_string() } else if rel.is_empty() { base.to_string() } else { format!("{base}/{rel}") };
     let top = src.stat(from)?.ok_or_else(|| crate::internal!("no {from} to copy"))?;
     if !to.is_empty() && !dst.exists(to) {
         dst.mkdirs(to)?;
@@ -707,9 +677,7 @@ pub fn install_app_sync(ed: &mut Editor, helper: &Path, cache: &str, log: &dyn F
     log(&line);
     ed.mkdirs(parent(APPSYNC_PATH))?;
     ed.write(APPSYNC_PATH, bytes, Some(0o644))?;
-    if let Some(j) =
-        ["com.apple.mobile.installd.plist", "com.apple.installd.plist"].iter().map(|n| job(n)).find(|j| ed.exists(j))
-    {
+    if let Some(j) = ["com.apple.mobile.installd.plist", "com.apple.installd.plist"].iter().map(|n| job(n)).find(|j| ed.exists(j)) {
         plistedit::rewrite(ed, &j, |d| {
             plistedit::dyld_insert(d, &format!("/{APPSYNC_PATH}"));
             Ok(())
@@ -877,8 +845,7 @@ pub fn current_network(d: &mut Dictionary) -> &mut Dictionary {
     if !d.contains_key("CurrentSet") {
         d.insert("CurrentSet".into(), format!("/Sets/{NET_SET}").into());
     }
-    let current =
-        d.get("CurrentSet").and_then(Value::as_string).unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
+    let current = d.get("CurrentSet").and_then(Value::as_string).unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
     let set = dict_or(dict(d, "Sets"), &current, || dictionary([("UserDefinedName", "Automatic".into())]));
     dict(set, "Network")
 }
@@ -915,10 +882,8 @@ pub fn wifi_proxy_prefs(d: &mut Dictionary) -> Result<()> {
     });
     svc.insert("Proxies".into(), pac_proxies());
     let net = current_network(d);
-    dict(net, "Service").insert(
-        WIFI_SERVICE.into(),
-        Value::Dictionary(dictionary([("__LINK__", format!("/NetworkServices/{WIFI_SERVICE}").into())])),
-    );
+    dict(net, "Service")
+        .insert(WIFI_SERVICE.into(), Value::Dictionary(dictionary([("__LINK__", format!("/NetworkServices/{WIFI_SERVICE}").into())])));
     dict_or(dict(net, "Interface"), "en0", || {
         dictionary([("AirPort", Value::Dictionary(dictionary([("JoinMode", "Automatic".into())])))])
     });
@@ -946,14 +911,12 @@ pub fn seed_data(
     if o.web_proxy {
         plistedit::seed(ed, &at("preferences/SystemConfiguration/preferences.plist"), wifi_proxy_prefs)?;
     }
-    let language =
-        setup::seed_language(ed, var_root, o.language.as_deref(), o.keyboards.as_deref(), keyboards, formats)?;
+    let language = setup::seed_language(ed, var_root, o.language.as_deref(), o.keyboards.as_deref(), keyboards, formats)?;
     if let Some(l) = &language {
         log(&format!("language {}, region {}, keyboards {:?}", l.language, l.locale, l.keyboards));
     }
     if o.skip_setup && product_major >= 5 {
-        let (l, locale) =
-            language.as_ref().map(|l| (l.language.as_str(), l.locale.as_str())).unwrap_or(("en", "en_US"));
+        let (l, locale) = language.as_ref().map(|l| (l.language.as_str(), l.locale.as_str())).unwrap_or(("en", "en_US"));
         setup::seed_finished_setup_with(
             ed,
             var_root,
