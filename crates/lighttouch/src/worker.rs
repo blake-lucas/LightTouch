@@ -28,7 +28,7 @@ pub fn main(args: &[String]) -> i32 {
     // The USB bridge listens before the engine starts (the engine dials it when the guest brings USB up), and its
     // address goes into the environment before this process has other threads.
     let usb = parsed.usb.as_ref().map(|usb| {
-        let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log);
+        let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log, usb.app_pairs);
         if let Ok(bridge) = &bridge {
             set_engine_env("IT_USB_TCP", &bridge.guest_socket.to_string_lossy());
         }

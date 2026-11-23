@@ -150,6 +150,10 @@ impl Lockdown {
             // The Windows daemon is built without libimobiledevice, so it never pairs: pair here, as
             // libimobiledevice's clients do. LIGHTTOUCH_SELF_PAIR does the same elsewhere, for testing.
             None if cfg!(windows) || std::env::var_os("LIGHTTOUCH_SELF_PAIR").is_some() => lockdown.pair()?,
+            // iOS 10 (the iPhone 5): its daemon runs with -p (UsbArgs::app_pairs), as the daemon's own pairing
+            // waited, after Trust was tapped, for a "request_pair" notification this guest never sent. Pair here;
+            // until Trust is tapped the error says so.
+            None if lockdown.version.0 >= 10 => lockdown.pair()?,
             None => {
                 return Err(Error("The guest isn't paired yet; try again once iOS has finished starting.".into()));
             }
