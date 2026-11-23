@@ -6,7 +6,7 @@
 # Launch it by tapping its "LT Bench" icon; it runs once at launch and again on each tap, and
 # shows the best ns/op of each test on screen when done.
 set -euo pipefail
-PKG=org.lighttouch.android
+PKG=${LT_PKG:-org.lighttouch.android}
 as() { adb shell "run-as $PKG sh -c '$1'"; }
 case "${1:-}" in
 install)

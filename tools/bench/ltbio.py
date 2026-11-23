@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """LT Bench storage runs on the desktop, headless: boot a record, unlock, launch LT Bench, collect its lines, stop.
 
-  ltbio.py RECORD [--install LTBench.ipa] [--recover] [--passes N] [--env K=V ...] [--out DIR] [--tag NAME]
+  ltbio.py RECORD [--host desktop|android] [--install LTBench.ipa] [--recover] [--passes N] [--env K=V ...] [--out DIR] [--tag NAME]
 
 The app runs one pass at launch and another on each tap. Uses bench.py's desktop session (`lighttouch run --control`)
 with LT_BENCH_LIGHTTOUCH (default WORK/lt-dev.sh, one word); --env values reach the worker, so engine A/B switches go there.
 Prints one line per test (`name best median`) and writes OUT/TAG.log (the session's stderr, engine log included).
+--host android drives the LT_PKG app over ADB instead (debuggable build; tools/guestbench/android.sh installs).
 """
 import argparse, os, re, sys, time
 from pathlib import Path
@@ -17,6 +18,8 @@ BUNDLE = "org.lighttouch.ltbench"
 
 p = argparse.ArgumentParser()
 p.add_argument("record")
+p.add_argument("--host", choices=["desktop", "android"], default="desktop",
+               help="android: the LT_PKG app over ADB (debuggable build; ANDROID_SERIAL)")
 p.add_argument("--install")
 p.add_argument("--passes", type=int, default=1)
 p.add_argument("--recover", action="store_true", help="start a device that was not shut down cleanly")
@@ -69,11 +72,23 @@ class Recorder(bench.Desktop):
 
 
 t0 = time.monotonic()
-s = Recorder(a.record, out)
-logpath = out / f"{a.record}.log"
+if a.host == "android":
+    s = bench.Android(a.record, out)
+    logpath = out / f"{a.tag}.android.log"
+    logpath.write_text("")
+else:
+    s = Recorder(a.record, out)
+    logpath = out / f"{a.record}.log"
+
+
+def run_as(script):
+    return bench.Android.adb("exec-out", "run-as", bench.PKG, "sh", "-c", script)
 
 
 def worker_pid():
+    if a.host == "android":
+        out = bench.Android.adb("shell", "pidof", bench.PKG).split()
+        return int(out[0]) if out else None
     for d in Path("/proc").iterdir():
         try:
             if d.name.isdigit() and b"worker" in (d / "cmdline").read_bytes() and \
@@ -87,18 +102,32 @@ def worker_pid():
 def thread_cpu(pid):
     """Thread name -> CPU seconds (user + system), threads of one name summed."""
     out = {}
-    for t in Path(f"/proc/{pid}/task").iterdir():
+    if a.host == "android":
+        stats = run_as(f"for t in /proc/{pid}/task/*; do cat $t/stat; done").splitlines()
+        tick = 100
+    else:
+        stats = []
+        for t in Path(f"/proc/{pid}/task").iterdir():
+            try:
+                stats.append((t / "stat").read_text())
+            except OSError:
+                pass
+        tick = os.sysconf("SC_CLK_TCK")
+    for st in stats:
         try:
-            st = (t / "stat").read_text()
             name = st[st.index("(") + 1:st.rindex(")")]
             f = st.rsplit(")", 1)[1].split()
-            out[name] = out.get(name, 0) + (int(f[11]) + int(f[12])) / os.sysconf("SC_CLK_TCK")
-        except (OSError, ValueError):
+            out[name] = out.get(name, 0) + (int(f[11]) + int(f[12])) / tick
+        except (ValueError, IndexError):
             pass
     return out
 
 
 def log_text():
+    if a.host == "android":   # the engine log's LT Bench lines, kept in TAG.android.log
+        text = run_as("cat files/logs/engine.log 2>/dev/null | grep -a ltbench")
+        logpath.write_text(text)
+        return text
     return logpath.read_text(errors="replace")
 
 
@@ -116,7 +145,7 @@ def wait_for(pattern, seconds, start=0):
         m = re.search(pattern, text[start:])
         if m:
             return m
-        time.sleep(0.25)
+        time.sleep(0.25 if a.host == "desktop" else 2)
     return None
 
 
@@ -124,7 +153,11 @@ try:
     if not bench.wait_for_home(s):
         sys.exit("no home screen")
     print(f"home at {time.monotonic() - t0:.0f} s", flush=True)
-    if a.install and not wait_for(r"installed |install failed", 600):
+    if a.install and a.host == "android":
+        r = bench.subprocess.run([str(bench.REPO / "tools/guestbench/android.sh"), "install", a.install],
+                                 env={**os.environ, "LT_PKG": bench.PKG}, capture_output=True, text=True)
+        print("install:", (r.stdout + r.stderr).strip()[-300:], flush=True)
+    elif a.install and not wait_for(r"installed |install failed", 600):
         sys.exit("install did not finish")
     pid = worker_pid()
     if a.launch:
@@ -163,4 +196,5 @@ try:
 finally:
     clean = s.stop()
     print(f"stopped clean={clean} after {time.monotonic() - t0:.0f} s", flush=True)
-    os.replace(logpath, out / f"{a.tag}.log")
+    if a.host == "desktop":
+        os.replace(logpath, out / f"{a.tag}.log")

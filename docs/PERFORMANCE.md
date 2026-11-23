@@ -515,12 +515,14 @@ in bursts (host busy 1–5%) while it boots and starts Infinity Blade, and 20–
 **How a device's NAND is stored** decides the write path. Devices prepared since v0.0.12 hold it in a qcow2
 container; older ones keep the format they were prepared with (nothing converts them).
 
-| Format | Boards, made by | Page program on the host |
-| --- | --- | --- |
-| qcow2 container: system image + the device's overlay | every board, v0.0.12 on | a `pwrite` into the overlay (the first one in a 64 KiB cluster goes through qcow2); synced to disk when iOS stops |
-| Packed base + one file per written page | iPod touch 2G, v0.0.11 and earlier | write a temporary file, `fsync` it, rename it over `N.page` |
-| Chip files written in place | iPod touch 2G, early desktop | block-layer write, no sync until stop |
-| Chip files + ownership map | A4 boards, v0.0.11 and earlier | `pwrite`; the map is a shared mapping |
+| Format | Boards, made by | Page program on the host | In-guest `fs-write-big`, desktop |
+| --- | --- | --- | --- |
+| qcow2 container: system image + the device's overlay | every board, v0.0.12 on | a `pwrite` into the overlay (the first one in a 64 KiB cluster goes through qcow2); synced to disk when iOS stops | 2G 3.1.3 150 MB/s, 4G 42–48, 3GS 48 |
+| Packed base + one file per written page | iPod touch 2G, v0.0.11 and earlier | write a temporary file, `fsync` it, rename it over `N.page` | 2G 3.1.3 6–8 MB/s |
+| Chip files written in place | iPod touch 2G, early desktop | a block-layer write (a thread-pool round trip), no sync until stop | 2G 4.2.1 30–42 MB/s |
+| Chip files + ownership map | A4 boards, v0.0.11 and earlier | `pwrite`; the map is a shared mapping | 3GS 52–57 MB/s (`fs-fullfsync-4k` 5.0 ms, `fs-create` 5.6 ms) |
+
+Importing an exported device keeps its format; nothing converts an old device to a container.
 
 **In-guest results, desktop.** Writes from 64 KiB to 256 KiB are uncached (`F_NOCACHE`) and end with `fsync`, so
 they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of the bytes the test wrote.
@@ -550,6 +552,19 @@ they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of
 - **Old iPod touch 2G devices (page files) are bound by the host's `fsync`:** the vCPU is only ~40% busy, and every
   4 KiB page costs a new file, an `fsync` and a rename (~0.4–0.6 ms on this desktop's disk). A guest write program
   carries 5–8 pages for long writes and 1–2 for synchronous ones.
+
+**When a write is safe on the host.** A container device makes no `fsync` while it runs (`strace` over 10 s of the
+4G's `F_FULLFSYNC` loop: 9264 `pwrite`s, 688 hole punches, no `fsync`/`fdatasync`); the stop syncs the overlay. So a
+guest `F_FULLFSYNC` survives a killed engine (the data is in the host's page cache) but not a host crash or power
+loss until iOS stops. The old 2G page files are synced page by page, but their renames are not, so a host crash can
+lose recent pages there too (it cannot tear one).
+
+| Old 2G page files: tried, not done | Measured (host, 4160-byte pages) | Why not |
+| --- | --- | --- |
+| Drop the per-page `fsync` | desktop 62–95 µs/page vs 470–560 with it | after a host crash a renamed page can be empty, and a short page file reads back as zeros: silent corruption inside a file |
+| One `syncfs` per guest write program, then the renames | desktop 8 pages 335 µs/page; Poco 1454 µs/page (one `syncfs` = an f2fs checkpoint, ~8.6 ms) vs 464 now | slower on the phone |
+| `fsync` the program's pages from 8 threads at once | desktop 257–452 µs/page vs 605–660 serial; Poco 513–694 vs 676–755 | no clear gain on the phone (f2fs here is `fsync_mode=nobarrier`: an `fsync` is already cheap) |
+| An append-only page log, one `fdatasync` per program | desktop 66, Poco 60 µs/page | changes how an existing device's writes are stored and recovered (erase markers, relocation, the session page cache): too risky for a format only pre-v0.0.12 2G devices have. Converting those devices to containers would also remove it. |
 
 ### Frame pacing on the iPod touch 4G (2026-10-25)
 
