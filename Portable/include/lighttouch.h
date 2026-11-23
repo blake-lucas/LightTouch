@@ -435,6 +435,16 @@ lt_status lt_runtime_mic_info(lt_runtime *, lt_mic_info *, lt_error *);
 /* Drop what was pushed and not yet taken: a recorder that stops does this, so the next recording starts at the
  * microphone and not with the tail of the last one. */
 lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *);
+/* The device's vibration motor (an iPhone's; the iPods and the iPad have none and never run it): on while the guest
+ * runs it, and pulses, how many times it has started since the engine loaded, so a poller that missed a short buzz
+ * between two reads still sees it. A paused guest leaves it as it was. LT_UNSUPPORTED from engines before the
+ * motor. Any thread; two atomic reads. */
+typedef struct {
+    uint32_t size, version;
+    uint32_t on, reserved;
+    uint64_t pulses;
+} lt_vibrator_info;
+lt_status lt_runtime_vibrator(lt_runtime *, lt_vibrator_info *, lt_error *);
 /* The running modem (devices whose board lt_board_has_modem). LT_UNSUPPORTED without a modem or from engines without
  * its hooks.
  * reload_carrier: read the record's saved carrier settings again and write the properties that changed to the modem;

@@ -56,7 +56,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Controls") {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
                     SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
-                    SwitchRow(LtIcons.Vibrate, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
+                    SwitchRow(LtIcons.TouchApp, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
+                    SwitchRow(LtIcons.Vibrate, "Vibration", "Vibrate this phone when the iPhone does", s.vibration, "vibration_toggle") { s.vibration = it; host.applySettings() }
                 }
                 SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",

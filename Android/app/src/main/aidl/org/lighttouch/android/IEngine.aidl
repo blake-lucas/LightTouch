@@ -54,6 +54,8 @@ interface IEngine {
     void setDetailedTiming(boolean enabled);
     /** Settings > Microphone, already checked against the RECORD_AUDIO permission. */
     void setMicrophone(boolean enabled);
+    /** Settings > Vibration: the phone vibrates while the guest runs its vibration motor. */
+    void setVibration(boolean enabled);
     /** End the worker now, without waiting for iOS to shut down (the Stop deadline's disposal, early). */
     void forceStop();
     Bundle hitchSnapshot();

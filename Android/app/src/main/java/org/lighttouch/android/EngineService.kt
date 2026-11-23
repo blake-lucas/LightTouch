@@ -100,6 +100,7 @@ class EngineService : Service() {
         override fun setPresentScale(mode: Int) = Native.setPresentScale(mode)
         override fun setPresentVisible(visible: Boolean) = Native.setPresentVisible(visible)
         override fun setMicrophone(enabled: Boolean) { microphone = enabled }
+        override fun setVibration(enabled: Boolean) { vibration = enabled }
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
@@ -685,6 +686,62 @@ class EngineService : Service() {
             synchronized(audioGuard) { audio?.release(); audio = null }
         }, "guest-audio").start()
         Thread(::microphoneLoop, "guest-microphone").start()
+        Thread(::vibratorLoop, "guest-vibrator").start()
+    }
+
+    /** Settings > Vibration (on unless turned off). */
+    @Volatile private var vibration = true
+
+    /**
+     * The guest's vibration motor on this phone's: a vibration starts when the motor does and is cancelled when it
+     * stops. Each one is a one-shot of at most [VIBRATION_CAP_MS], so a motor left running (a stuck guest, a lost
+     * cancel) can't buzz the phone without end; past the cap it waits for the motor to stop and start again. Polled
+     * every 20 ms while the motor has run in the last 2 s (the guest's buzzes run 200 ms and up), every 100 ms
+     * otherwise (an iPod's motor never runs); a start counted between two polls (the motor's pulses moved but it is
+     * off again) still gives a short buzz. Nothing while the guest is paused or stopping, or the setting is off.
+     * Media usage, so the phone's ring and notification vibration settings and silent mode don't mute it.
+     */
+    private fun vibratorLoop() {
+        val phone = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java)?.defaultVibrator
+            else @Suppress("DEPRECATION") getSystemService(Vibrator::class.java)
+        if (phone == null || !phone.hasVibrator()) { AppLog.i("Vibration: this phone has no vibrator"); return }
+        fun buzz(ms: Long) = try {
+            val effect = VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
+            if (Build.VERSION.SDK_INT >= 33) phone.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA))
+            else @Suppress("DEPRECATION") phone.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).build())
+            true
+        } catch (failure: RuntimeException) { AppLog.w("Vibration failed: ${failure.message}"); false }
+        var buzzing = false; var seen = -1L; var buzzes = 0L; var loggedAt = 0L; var activeAt = 0L
+        try {
+            while (alive.get()) {
+                val motor = Native.vibrator()
+                val allowed = vibration && !userPaused && !focusPaused && !stopping.get()
+                if (motor.size < 2) {
+                    if (buzzing) { phone.cancel(); buzzing = false }
+                    Thread.sleep(500)
+                    continue
+                }
+                val on = motor[0] != 0L; val pulses = motor[1]
+                val started = seen >= 0 && pulses != seen  // the motor started since the last poll
+                seen = pulses
+                when {
+                    !allowed -> if (buzzing) { phone.cancel(); buzzing = false }
+                    on && (!buzzing || started) -> buzzing = buzz(VIBRATION_CAP_MS)
+                    !on && buzzing -> { phone.cancel(); buzzing = false }
+                    !on && started -> buzz(VIBRATION_MISSED_MS)
+                    else -> {}
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (on || started) activeAt = now
+                if (allowed && started) {
+                    buzzes++
+                    if (now - loggedAt >= 5000) { loggedAt = now; AppLog.i("Vibration: the guest's motor started (buzz $buzzes, motor pulses $pulses)") }
+                }
+                Thread.sleep(if (now - activeAt < 2000) 20 else 100)
+            }
+        } finally {
+            if (buzzing) phone.cancel()
+        }
     }
 
     /** Settings > Microphone, already checked against RECORD_AUDIO by the activity. */
@@ -841,3 +898,8 @@ class EngineService : Service() {
     }
     override fun onDestroy() { networkThread.shutdownNow(); detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
 }
+
+/** The longest one vibration runs while the guest's motor stays on. */
+private const val VIBRATION_CAP_MS = 5000L
+/** A buzz that began and ended between two polls. */
+private const val VIBRATION_MISSED_MS = 100L

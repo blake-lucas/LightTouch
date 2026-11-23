@@ -82,4 +82,6 @@ internal object Native {
     external fun micFlush()
     /** capturing, port rate, queued, pushed, dropped; empty when the engine has no microphone input. */
     external fun micInfo(): LongArray
+    /** The guest's vibration motor: on (0 or 1) and how many times it has started; empty without a running engine. */
+    external fun vibrator(): LongArray
 }

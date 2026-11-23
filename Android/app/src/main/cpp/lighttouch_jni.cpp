@@ -1372,6 +1372,14 @@ JNI(micInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_micInfo(JNIEn
     jlong data[5]={jlong(info.capturing),jlong(info.sample_rate),jlong(info.queued_frames),jlong(info.pushed_frames),jlong(info.dropped_frames)};
     jlongArray arr=env->NewLongArray(5);env->SetLongArrayRegion(arr,0,5,data);return arr;
 }
+// The guest's vibration motor: on (0/1) and its starts so far; empty without a runtime or from an engine without it.
+JNI(vibrator) jlongArray JNICALL Java_org_lighttouch_android_Native_vibrator(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_vibrator_info info=LT_INIT(lt_vibrator_info);lt_error error=LT_INIT(lt_error);
+    if(!runtime||lt_runtime_vibrator(runtime,&info,&error)!=LT_OK)return env->NewLongArray(0);
+    jlong data[2]={jlong(info.on),jlong(info.pulses)};
+    jlongArray arr=env->NewLongArray(2);env->SetLongArrayRegion(arr,0,2,data);return arr;
+}
 JNI(micFlush) void JNICALL Java_org_lighttouch_android_Native_micFlush(JNIEnv *,jobject) {
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
     lt_error error=LT_INIT(lt_error);lt_runtime_mic_flush(runtime,&error);

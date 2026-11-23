@@ -649,8 +649,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (!settings.tilt) stopSensors(release = true) else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
+        val vibration = settings.vibration
         val microphone = settings.microphone && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.setMicrophone(microphone); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.setMicrophone(microphone); worker.setVibration(vibration); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
         busy = true

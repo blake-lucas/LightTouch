@@ -143,6 +143,8 @@ struct Engine {
     decltype(&qemu_ios_ui_modem_set) modem_set = nullptr;
     decltype(&qemu_ios_ui_modem_status) modem_status = nullptr;
     decltype(&qemu_ios_ui_modem_free) modem_free = nullptr;
+    // Optional: the vibration motor (engines before API 2.2 lack it).
+    decltype(&qemu_ios_ui_vibrator) vibrator = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -230,6 +232,7 @@ struct Engine {
             modem_free = reinterpret_cast<decltype(modem_free)>(lt::os::library_symbol(library, "qemu_ios_ui_modem_free"));
             if (!modem_set || !modem_status || !modem_free)
                 modem_set = nullptr, modem_status = nullptr, modem_free = nullptr;
+            vibrator = reinterpret_cast<decltype(vibrator)>(lt::os::library_symbol(library, "qemu_ios_ui_vibrator"));
         } catch (...) {
             lt::os::library_close(library);
             library = nullptr;
@@ -1013,6 +1016,16 @@ lt_status lt_runtime_mic_flush(lt_runtime *r, lt_error *e) {
         lt::require(r, "null runtime");
         lt::require(r->engine->mic_flush, "engine has no microphone input", LT_UNSUPPORTED);
         r->engine->mic_flush();
+    });
+}
+lt_status lt_runtime_vibrator(lt_runtime *r, lt_vibrator_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        lt::require(r->engine->vibrator, "engine has no vibration motor", LT_UNSUPPORTED);
+        uint64_t pulses = 0;
+        const bool on = r->engine->vibrator(&pulses);
+        *out = {sizeof(*out), 1, on ? 1u : 0u, 0, pulses};
     });
 }
 lt_status lt_runtime_reload_carrier(lt_runtime *r, lt_error *e) {
