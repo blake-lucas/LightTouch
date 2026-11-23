@@ -535,7 +535,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private val importDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importDeviceFrom(uri) }
     override fun exportDevice(device: DeviceSummary) {
         if (transfer != null || busy) return
-        if (active && device.selected) { error = "Stop ${device.name} before exporting it"; return }
+        // (MainActivity's own `active` is the activity's, not the session's.)
+        if (device.selected && status in listOf("running", "paused", "starting", "stopping")) { error = "Stop ${device.name} before exporting it"; return }
         transferPrefs.edit().putString("export", device.id).apply()
         exportDocument.launch(TransferState.fileName(device.name))
     }
