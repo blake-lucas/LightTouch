@@ -388,6 +388,12 @@ fn prefer_fast_cores() {
 /// placement (2.3x on a Pixel's guest; without it a Pixel's iPod touch 3G seal boot ran past 10 minutes), and an idle
 /// one is left alone. API 33+, resolved at run time; does nothing without hint sessions (the Poco's HAL).
 /// LT_ADPF=off skips it.
+/// Set once QEMU has returned: the hint thread stops calling into libandroid before the process's exit handlers run.
+/// On a Pixel 10 a report racing exit aborted the iPhone 5's restore boot after QEMU had already returned 0
+/// ("FORTIFY: pthread_mutex_lock called on a destroyed mutex"), harmless only because exit won the race.
+#[cfg(target_os = "android")]
+static HINTS_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "android")]
 fn performance_hint() {
     use std::ffi::c_void;
@@ -442,8 +448,12 @@ fn performance_hint() {
         eprintln!("firmwarekit oneshot: no performance hints on this device");
         return;
     }
+    let stopped = || HINTS_STOP.load(std::sync::atomic::Ordering::Acquire);
     let mut tids = Vec::new();
     for _ in 0..60 {
+        if stopped() {
+            return;
+        }
         tids = vcpu_tids();
         if !tids.is_empty() {
             break;
@@ -462,6 +472,9 @@ fn performance_hint() {
     let Some(mut last) = cpu_ns(&tids) else { return };
     loop {
         std::thread::sleep(Duration::from_millis(20));
+        if stopped() {
+            break;
+        }
         let Some(now) = cpu_ns(&tids) else { break };
         if now > last {
             unsafe { report(session, now - last) };
@@ -601,14 +614,17 @@ pub fn engine_main(args: &[String]) -> i32 {
     }
     unsafe { attach(std::ptr::null(), std::ptr::null()) };
     #[cfg(target_os = "android")]
-    if std::env::var("LT_ADPF").as_deref() != Ok("off") {
-        std::thread::spawn(performance_hint);
-    }
+    let hints = (std::env::var("LT_ADPF").as_deref() != Ok("off")).then(|| std::thread::spawn(performance_hint));
     let owned: Vec<CString> = args.iter().map(|a| CString::new(a.as_str()).unwrap_or_default()).collect();
     let mut argv: Vec<*mut std::ffi::c_char> = owned.iter().map(|a| a.as_ptr() as *mut _).collect();
     argv.push(std::ptr::null_mut());
     let status = unsafe { qemu_main(owned.len() as i32, argv.as_mut_ptr()) };
     eprintln!("firmwarekit oneshot: QEMU returned {status}");
+    #[cfg(target_os = "android")]
+    if let Some(hints) = hints {
+        HINTS_STOP.store(true, std::sync::atomic::Ordering::Release);
+        let _ = hints.join(); // within one 20 ms period, or as soon as the session setup gives up
+    }
     std::mem::forget(lib); // QEMU's threads may outlive main's return until exit
     status
 }

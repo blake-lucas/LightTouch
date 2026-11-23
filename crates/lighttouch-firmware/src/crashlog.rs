@@ -36,9 +36,9 @@ struct Scratch {
     unwound: Unwound,
     modules: [Module; MODULES],
     which: [usize; FRAMES],
+    fileoff: [u64; FRAMES],
     chunk: [u8; 2048],
     line: [u8; 512],
-    run_path: [u8; PATH],
 }
 
 static mut SCRATCH: Scratch = Scratch {
@@ -47,12 +47,13 @@ static mut SCRATCH: Scratch = Scratch {
     unwound: Unwound { frames: [0; FRAMES], n: 0, seen_pc: false, pc: 0 },
     modules: [NO_MODULE; MODULES],
     which: [usize::MAX; FRAMES],
+    fileoff: [0; FRAMES],
     chunk: [0; 2048],
     line: [0; 512],
-    run_path: [0; PATH],
 };
 
-/// qemu-ios hw/arm/gles-host.c QemuIosCrashNote, version 1.
+/// qemu-ios hw/arm/gles-host.c QemuIosCrashNote: version 1 is the newest call; version 2 adds the newest draw and a
+/// ring of the newest calls.
 #[repr(C)]
 struct CrashNote {
     version: u32,
@@ -62,7 +63,31 @@ struct CrashNote {
     gl_api: u32,
     gl_stage: u32,
     gl_calls: u64,
+    // version 2
+    ring_size: u32,
+    draw_mode: u32,
+    draw_count: u32,
+    draw_guest_fb: u32,
+    draw_host_fb: u32,
+    draw_fb_status: u32,
+    draw_guest_program: u32,
+    draw_host_program: u32,
+    draw_attribs: u32,
+    draw_fetch: u32,
+    draw_call: u64,
+    ring: [CrashCall; 32],
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CrashCall {
+    slot: u32,
+    ctx: u32,
+    a: [u32; 4],
+}
+
+/// Size of the version 1 note.
+const NOTE_V1: usize = 32;
 
 /// Installs the handlers (once, before the engine starts). The calling thread gets an alternate signal stack if it has
 /// none; bionic gives every thread one, glibc none (a stack overflow on a desktop engine thread goes unreported).
@@ -106,7 +131,12 @@ pub fn attach_engine(lib: &libloading::Library) {
     unsafe {
         if let Ok(note) = lib.get::<unsafe extern "C" fn() -> *const c_void>(b"qemu_ios_crash_note") {
             let p = note() as *const CrashNote;
-            if !p.is_null() && (*p).version == 1 && (*p).size as usize >= std::mem::size_of::<CrashNote>() {
+            let fits = |v: u32, size: u32| match v {
+                1 => size as usize >= NOTE_V1,
+                2 => size as usize >= std::mem::size_of::<CrashNote>(),
+                _ => false,
+            };
+            if !p.is_null() && fits((*p).version, (*p).size) {
                 NOTE.store(p as usize, Ordering::Relaxed);
             }
         }
@@ -264,33 +294,128 @@ fn strip(addr: u64) -> u64 {
     addr
 }
 
-// ---- modules: the mapping each address falls in, and its ELF load bias and build ID
+// ---- modules: the mapping each address falls in, and where that is in its ELF file (offset, build ID)
 
 #[derive(Clone, Copy)]
 struct Module {
+    /// The first mapping of the file's run (or the unnamed mapping itself): what tells modules apart.
     base: u64,
+    /// In memory: `base` minus the first PT_LOAD's page, when an ELF header is at `base`.
     bias: u64,
     path: [u8; PATH],
     path_len: usize,
     build_id: [u8; 32],
     build_id_len: usize,
-    /// An ELF image starts at `base` (else offsets are meaningless: anonymous memory such as TCG's generated code).
+    /// An ELF header was found at `base` in memory.
     elf: bool,
+    /// From the file itself (read with pread): each PT_LOAD's file offset, size in the file and address, so a frame's
+    /// file offset gives its address in the ELF whatever the mappings look like.
+    loads: [[u64; 3]; 8],
+    nloads: usize,
+    /// A file (a path), not unnamed or [bracketed] memory.
+    file: bool,
 }
 
-const NO_MODULE: Module =
-    Module { base: 0, bias: 0, path: [0; PATH], path_len: 0, build_id: [0; 32], build_id_len: 0, elf: false };
+const NO_MODULE: Module = Module {
+    base: 0,
+    bias: 0,
+    path: [0; PATH],
+    path_len: 0,
+    build_id: [0; 32],
+    build_id_len: 0,
+    elf: false,
+    loads: [[0; 3]; 8],
+    nloads: 0,
+    file: false,
+};
 
-/// Module index per frame (usize::MAX: none), from one pass over /proc/self/maps.
+/// One /proc/self/maps line: start, end, file offset and path (empty for unnamed memory).
+fn parse_map_line(l: &[u8]) -> Option<(u64, u64, u64, &[u8])> {
+    let (start, rest) = parse_hex(l)?;
+    let (end, rest) = parse_hex(rest.get(1..)?)?;
+    let rest = rest.get(1..)?;
+    let perms = rest.iter().position(|&c| c == b' ')?;
+    let (offset, _) = parse_hex(rest.get(perms + 1..)?)?;
+    Some((start, end, offset, map_path(l)))
+}
+
+/// Unnamed memory and [bracketed] names ([anon:.bss], the PROT_NONE gaps of a library aligned to 16 KiB pages on a
+/// 4 KiB-page kernel, a page-size compatibility region) don't end a file's run of mappings.
+fn transparent(path: &[u8]) -> bool {
+    path.is_empty() || path[0] == b'['
+}
+
+/// The scan's state between maps lines.
+struct MapScan {
+    run_path: [u8; PATH],
+    run_len: usize,
+    run_start: u64,
+}
+
+impl MapScan {
+    fn new() -> MapScan {
+        MapScan { run_path: [0; PATH], run_len: usize::MAX, run_start: 0 }
+    }
+
+    /// One maps line: each frame inside it gets its module and its file offset (`fileoff`).
+    #[allow(clippy::too_many_arguments)]
+    fn line(
+        &mut self,
+        l: &[u8],
+        frames: &[u64],
+        modules: &mut [Module; MODULES],
+        count: &mut usize,
+        which: &mut [usize; FRAMES],
+        fileoff: &mut [u64; FRAMES],
+    ) {
+        let Some((start, end, offset, path)) = parse_map_line(l) else { return };
+        let len = path.len().min(PATH);
+        let skip = transparent(path);
+        if !skip && !(self.run_len == len && self.run_path[..len] == path[..len]) {
+            self.run_len = len;
+            self.run_path[..len].copy_from_slice(&path[..len]);
+            self.run_start = start;
+        }
+        // A frame in unnamed or bracketed memory (TCG's generated code, the vdso) is a module of its own.
+        let (base, name): (u64, &[u8]) =
+            if skip { (start, &path[..len]) } else { (self.run_start, &self.run_path[..self.run_len]) };
+        for (i, &f) in frames.iter().enumerate() {
+            if f < start || f >= end || which[i] != usize::MAX {
+                continue;
+            }
+            fileoff[i] = f - start + offset;
+            let found = modules[..*count].iter().position(|m| m.base == base);
+            which[i] = match found {
+                Some(m) => m,
+                None if *count < MODULES => {
+                    let m = &mut modules[*count];
+                    *m = NO_MODULE;
+                    m.base = base;
+                    m.path_len = name.len();
+                    m.path[..name.len()].copy_from_slice(name);
+                    m.file = !skip;
+                    if !(m.file && file_facts(m)) {
+                        elf_facts(m);
+                    }
+                    *count += 1;
+                    *count - 1
+                }
+                None => usize::MAX,
+            };
+        }
+    }
+}
+
+/// Module index and file offset per frame (usize::MAX: none), from one pass over /proc/self/maps.
 #[allow(clippy::too_many_arguments)]
 fn resolve(
     frames: &[u64],
     modules: &mut [Module; MODULES],
     count: &mut usize,
     which: &mut [usize; FRAMES],
+    fileoff: &mut [u64; FRAMES],
     chunk: &mut [u8; 2048],
     line: &mut [u8; 512],
-    run_path: &mut [u8; PATH],
 ) {
     for w in which.iter_mut() {
         *w = usize::MAX;
@@ -299,11 +424,8 @@ fn resolve(
     if fd < 0 {
         return;
     }
+    let mut scan = MapScan::new();
     let mut line_len = 0;
-    // The run of consecutive mappings of one file: its first start is the module's base. Unnamed mappings don't end
-    // a run: a library aligned to 16 KiB pages has PROT_NONE gaps between its segments on a 4 KiB-page kernel.
-    let mut run_len = usize::MAX;
-    let mut run_start = 0u64;
     loop {
         let n = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut c_void, chunk.len()) };
         if n <= 0 {
@@ -317,41 +439,8 @@ fn resolve(
                 }
                 continue;
             }
-            let l = &line[..line_len];
+            scan.line(&line[..line_len], frames, modules, count, which, fileoff);
             line_len = 0;
-            // start-end perms offset dev inode path
-            let Some((start, rest)) = parse_hex(l) else { continue };
-            let Some((end, _)) = parse_hex(&rest[1..]) else { continue };
-            let path = map_path(l);
-            let anonymous = path.is_empty();
-            let same = run_len == path.len().min(PATH) && run_path[..run_len] == path[..path.len().min(PATH)];
-            if !same && !anonymous {
-                run_len = path.len().min(PATH);
-                run_path[..run_len].copy_from_slice(&path[..run_len]);
-                run_start = start;
-            }
-            // A frame in unnamed memory (TCG's generated code) is a module of its own, never an ELF image.
-            let (base, base_len) = if anonymous { (start, 0) } else { (run_start, run_len) };
-            for (i, &f) in frames.iter().enumerate() {
-                if f < start || f >= end || which[i] != usize::MAX {
-                    continue;
-                }
-                let found = modules[..*count].iter().position(|m| m.base == base);
-                which[i] = match found {
-                    Some(m) => m,
-                    None if *count < MODULES => {
-                        let m = &mut modules[*count];
-                        *m = NO_MODULE;
-                        m.base = base;
-                        m.path_len = base_len;
-                        m.path[..base_len].copy_from_slice(&run_path[..base_len]);
-                        elf_facts(m);
-                        *count += 1;
-                        *count - 1
-                    }
-                    None => usize::MAX,
-                };
-            }
         }
     }
     unsafe { libc::close(fd) };
@@ -388,7 +477,90 @@ fn map_path(l: &[u8]) -> &[u8] {
     &l[i..]
 }
 
-/// The load bias (base minus the first PT_LOAD's page) and the GNU build ID, from the ELF image in memory.
+/// The PT_LOADs and the GNU build ID from the module's file, read with pread (async-signal-safe), so a frame's place
+/// in the ELF doesn't depend on how the loader laid the mappings out (Android 17's vendor libraries and libc printed
+/// as "<not a module>" when it was read from the first mapping in memory). False when there is no such ELF file.
+fn file_facts(m: &mut Module) -> bool {
+    let mut cpath = [0u8; PATH + 1];
+    if m.path_len == 0 || m.path[0] != b'/' {
+        return false;
+    }
+    cpath[..m.path_len].copy_from_slice(&m.path[..m.path_len]);
+    let fd = unsafe { libc::open(cpath.as_ptr() as *const libc::c_char, libc::O_RDONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return false;
+    }
+    let pread = |buf: &mut [u8], at: u64| -> bool {
+        let n = unsafe { libc::pread(fd, buf.as_mut_ptr() as *mut c_void, buf.len(), at as libc::off_t) };
+        n == buf.len() as isize
+    };
+    let mut eh = [0u8; 64];
+    let ok = pread(&mut eh, 0) && &eh[..4] == b"\x7fELF" && eh[4] == 2;
+    let (phoff, phentsize, phnum) = (
+        u64::from_le_bytes(eh[32..40].try_into().unwrap()),
+        u16::from_le_bytes([eh[54], eh[55]]) as u64,
+        u16::from_le_bytes([eh[56], eh[57]]) as u64,
+    );
+    let mut notes: [(u64, u64); 4] = [(0, 0); 4];
+    let mut note_count = 0;
+    if ok && phentsize >= 56 && phnum <= 64 {
+        for i in 0..phnum {
+            let mut ph = [0u8; 56];
+            if !pread(&mut ph, phoff + i * phentsize) {
+                break;
+            }
+            let kind = u32::from_le_bytes(ph[0..4].try_into().unwrap());
+            let offset = u64::from_le_bytes(ph[8..16].try_into().unwrap());
+            let vaddr = u64::from_le_bytes(ph[16..24].try_into().unwrap());
+            let filesz = u64::from_le_bytes(ph[32..40].try_into().unwrap());
+            if kind == 1 && m.nloads < m.loads.len() {
+                m.loads[m.nloads] = [offset, filesz, vaddr];
+                m.nloads += 1;
+            } else if kind == 4 && note_count < notes.len() {
+                notes[note_count] = (offset, filesz);
+                note_count += 1;
+            }
+        }
+    }
+    'notes: for &(offset, size) in &notes[..note_count] {
+        let mut at = offset;
+        let end = offset.saturating_add(size.min(4096));
+        while at + 12 <= end {
+            let mut h = [0u8; 12];
+            if !pread(&mut h, at) {
+                break;
+            }
+            let namesz = u32::from_le_bytes(h[0..4].try_into().unwrap()) as u64;
+            let descsz = u32::from_le_bytes(h[4..8].try_into().unwrap()) as u64;
+            let kind = u32::from_le_bytes(h[8..12].try_into().unwrap());
+            let desc_at = at + 12 + namesz.div_ceil(4) * 4;
+            if kind == 3 && namesz == 4 && descsz > 0 && descsz <= 32 {
+                let mut name = [0u8; 4];
+                if pread(&mut name, at + 12) && &name == b"GNU\0" {
+                    let n = descsz as usize;
+                    if pread(&mut m.build_id[..n], desc_at) {
+                        m.build_id_len = n;
+                    }
+                    break 'notes;
+                }
+            }
+            at = desc_at + descsz.div_ceil(4) * 4;
+        }
+    }
+    unsafe { libc::close(fd) };
+    m.nloads > 0
+}
+
+/// A frame's address in its module's ELF, from its file offset and the file's PT_LOADs.
+fn file_address(m: &Module, fileoff: u64) -> Option<u64> {
+    m.loads[..m.nloads]
+        .iter()
+        .find(|l| fileoff >= l[0] && fileoff < l[0].saturating_add(l[1]))
+        .map(|l| fileoff - l[0] + l[2])
+}
+
+/// The load bias (base minus the first PT_LOAD's page) and the GNU build ID, from the ELF image in memory: the
+/// fallback for a module whose file can't be read (an APK-embedded library).
 fn elf_facts(m: &mut Module) {
     m.bias = m.base;
     let mut eh = [0u8; 64];
@@ -666,27 +838,63 @@ fn note(o: &mut Out) {
     }
     o.s("(id ").dec(slot as i64).s("), context ").x(ctx as u64).s(", guest API ").dec(api as i64);
     o.s(", call #").dec(calls as i64).line();
+    if unsafe { (*p).version } < 2 {
+        return;
+    }
+    // Read in place: a copy would put the ring (~800 bytes) on a signal stack of a few KiB.
+    let n: &CrashNote = unsafe { &*p };
+    if n.draw_call != 0 {
+        o.s("    newest draw (call #").dec(n.draw_call as i64).s("): mode ").x(n.draw_mode as u64);
+        o.s(" count ").dec(n.draw_count as i64).s(", framebuffer ").dec(n.draw_guest_fb as i64);
+        o.s(" (host ").dec(n.draw_host_fb as i64).s(", status ");
+        if n.draw_fb_status == 0 { o.s("unchecked") } else { o.x(n.draw_fb_status as u64) };
+        o.s("), program ").dec(n.draw_guest_program as i64).s(" (host ").dec(n.draw_host_program as i64);
+        o.s(if n.draw_fetch != 0 { ", reads gl_LastFragData" } else { "" }).s("), attribute arrays ");
+        o.x(n.draw_attribs as u64).line();
+    }
+    let size = (n.ring_size as u64).clamp(1, 32);
+    let first = calls.saturating_sub(size);
+    o.s("    newest guest GL calls (call #, name, context, first arguments):").line();
+    for k in first..calls {
+        let c = n.ring[(k % size) as usize];
+        o.s("      #").dec(k as i64 + 1).s(" ");
+        if name != 0 {
+            let f: unsafe extern "C" fn(u32) -> *const u8 = unsafe { std::mem::transmute(name) };
+            o.cstr(unsafe { f(c.slot) }, 64);
+        }
+        o.s(" (").dec(c.slot as i64).s(") ").x(c.ctx as u64);
+        for v in c.a {
+            o.s(" ").x(v as u64);
+        }
+        o.line();
+    }
 }
 
 /// The first `n` frame-record frames, or unwound ones.
 fn print_frames(sc: &mut Scratch, n: usize, unwound: bool, count: &mut usize) {
     let frames: &[u64] = if unwound { &sc.unwound.frames[..n] } else { &sc.frames[..n] };
-    resolve(frames, &mut sc.modules, count, &mut sc.which, &mut sc.chunk, &mut sc.line, &mut sc.run_path);
-    let (o, modules, which) = (&mut sc.out, &sc.modules, &sc.which);
+    resolve(frames, &mut sc.modules, count, &mut sc.which, &mut sc.fileoff, &mut sc.chunk, &mut sc.line);
+    let (o, modules, which, fileoff) = (&mut sc.out, &sc.modules, &sc.which, &sc.fileoff);
     for (i, &f) in frames.iter().enumerate() {
         o.s("      #").s(if i < 10 { "0" } else { "" }).dec(i as i64).s(" pc ");
-        match which[i] {
-            usize::MAX => {
+        let m = (which[i] != usize::MAX).then(|| &modules[which[i]]);
+        // The address in the ELF: from the file's PT_LOADs, else from the header in memory.
+        let address = m.and_then(|m| file_address(m, fileoff[i]).or(m.elf.then(|| f.wrapping_sub(m.bias))));
+        match (m, address) {
+            (None, _) => {
                 o.hex(f, 16).s("  <unknown>");
             }
-            m if !modules[m].elf => {
-                let m = &modules[m];
+            (Some(m), None) if m.file => {
+                // A file, but not one whose ELF could be read: its offset still places the frame.
+                o.hex(f, 16).s("  <").bytes(&m.path[..m.path_len]).s(" at file offset ");
+                o.x(fileoff[i]).s(">");
+            }
+            (Some(m), None) => {
                 o.hex(f, 16).s("  <not a module: ");
                 o.bytes(if m.path_len > 0 { &m.path[..m.path_len] } else { b"anonymous memory" }).s(">");
             }
-            m => {
-                let m = &modules[m];
-                o.hex(f.wrapping_sub(m.bias), 16).s("  ");
+            (Some(m), Some(address)) => {
+                o.hex(address, 16).s("  ");
                 o.bytes(&m.path[..m.path_len]);
                 if m.build_id_len > 0 {
                     o.s(" (BuildId: ");
@@ -775,3 +983,75 @@ fn crash_now(kind: &str) {
 
 #[cfg(not(feature = "crash-test"))]
 pub fn crash_test() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Frames against maps lines; returns (module index, file offset) per frame and the modules.
+    fn scan(lines: &[&str], frames: &[u64]) -> (Vec<(usize, u64)>, Vec<Module>) {
+        let mut modules = [NO_MODULE; MODULES];
+        let (mut count, mut which, mut fileoff) = (0, [usize::MAX; FRAMES], [0u64; FRAMES]);
+        let mut s = MapScan::new();
+        for l in lines {
+            s.line(l.as_bytes(), frames, &mut modules, &mut count, &mut which, &mut fileoff);
+        }
+        ((0..frames.len()).map(|i| (which[i], fileoff[i])).collect(), modules[..count].to_vec())
+    }
+
+    #[test]
+    fn library_with_unnamed_and_bracketed_gaps_is_one_module() {
+        let lines = [
+            "720e60b000-720eb6a000 r--p 00000000 fc:29 783387                         /data/app/x/lib/arm64/libqemu-arm.so",
+            "720eb6a000-720eb6d000 ---p 00000000 00:00 0 ",
+            "720eb6d000-720f4e9000 r-xp 0055e000 fc:29 783387                         /data/app/x/lib/arm64/libqemu-arm.so",
+            "720f4e9000-720f4ec000 ---p 00000000 00:00 0                              [page size compat]",
+            "720f4ec000-720f5a9000 r--p 00ed9000 fc:29 783387                         /data/app/x/lib/arm64/libqemu-arm.so",
+            "720f7cb000-720fcf5000 rw-p 00000000 00:00 0                              [anon:.bss]",
+            "7300000000-7300100000 rwxp 00000000 00:00 0 ",
+        ];
+        let (frames, modules) = scan(&lines, &[0x720eb6d010, 0x720f4ec020, 0x720f7cb100, 0x7300000040]);
+        assert_eq!(frames[0], (0, 0x55e010));
+        assert_eq!(frames[1], (0, 0xed9020), "a segment after gaps stays in the library's module");
+        assert_eq!(modules[0].base, 0x720e60b000);
+        assert!(modules[0].file);
+        assert_eq!(&modules[0].path[..modules[0].path_len], b"/data/app/x/lib/arm64/libqemu-arm.so");
+        let bss = &modules[frames[2].0];
+        assert_eq!(&bss.path[..bss.path_len], b"[anon:.bss]");
+        assert!(!bss.file);
+        let tcg = &modules[frames[3].0];
+        assert_eq!(tcg.path_len, 0, "unnamed memory is a module of its own");
+        assert_eq!(tcg.base, 0x7300000000);
+        assert!(!tcg.file);
+    }
+
+    #[test]
+    fn file_address_uses_the_loads() {
+        let mut m = NO_MODULE;
+        m.loads[0] = [0, 0x55e000, 0];
+        m.loads[1] = [0x55e000, 0x97b000, 0x562000];
+        m.nloads = 2;
+        assert_eq!(file_address(&m, 0x100), Some(0x100));
+        assert_eq!(file_address(&m, 0x55e010), Some(0x562010));
+        assert_eq!(file_address(&m, 0xf00000), None);
+    }
+
+    #[test]
+    fn map_line_fields() {
+        let l = b"720eb6d000-720f4e9000 r-xp 0055e000 fc:29 783387   /vendor/lib64/egl/libGLESv2_powervr.so";
+        let (start, end, offset, path) = parse_map_line(l).unwrap();
+        assert_eq!((start, end, offset), (0x720eb6d000, 0x720f4e9000, 0x55e000));
+        assert_eq!(path, b"/vendor/lib64/egl/libGLESv2_powervr.so");
+    }
+
+    #[test]
+    fn file_facts_read_this_test_binary() {
+        let exe = std::env::current_exe().unwrap();
+        let path = exe.to_str().unwrap().as_bytes();
+        let mut m = NO_MODULE;
+        m.path[..path.len()].copy_from_slice(path);
+        m.path_len = path.len();
+        assert!(file_facts(&mut m));
+        assert!(m.nloads >= 2);
+    }
+}
