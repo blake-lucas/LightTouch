@@ -463,13 +463,8 @@ pub fn text_dialog(app: &mut App, ui: &mut Ui, number: &mut String, text: &mut S
 fn unavailable_reason(app: &App) -> String {
     match app.model.current() {
         None => "Select an iPhone to change its carrier, calls and texts.".to_string(),
-        Some(d) if d.board == "n42ap" => {
-            "The iPhone 5's modem isn't supported yet. Carrier settings apply to the original iPhone, iPhone 3GS and \
-             iPhone 4."
-                .to_string()
-        }
         Some(d) => format!(
-            "{} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4.",
+            "{} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS, iPhone 4 and iPhone 5.",
             d.model
         ),
     }

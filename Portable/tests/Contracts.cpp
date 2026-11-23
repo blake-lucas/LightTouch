@@ -281,7 +281,8 @@ int main() {
     }
     lt_device_close(d);
     // The modem's rules.
-    assert(lt_board_has_modem("n90ap") && lt_board_has_modem("n88ap") && !lt_board_has_modem("n81ap"));
+    assert(lt_board_has_modem("n90ap") && lt_board_has_modem("n88ap") && lt_board_has_modem("n42ap") &&
+           !lt_board_has_modem("n81ap"));
     assert(lt_carrier_number_ok("+15555550100") && lt_carrier_number_ok("911") && !lt_carrier_number_ok("+"));
     assert(!lt_carrier_number_ok("555-0100") && !lt_carrier_number_ok("123456789012345678901"));
     uint32_t sms_limit = 0;
