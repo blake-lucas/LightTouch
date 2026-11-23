@@ -300,7 +300,8 @@ fn resolve(
         return;
     }
     let mut line_len = 0;
-    // The run of consecutive mappings of one file: its first start is the module's base.
+    // The run of consecutive mappings of one file: its first start is the module's base. Unnamed mappings don't end
+    // a run: a library aligned to 16 KiB pages has PROT_NONE gaps between its segments on a 4 KiB-page kernel.
     let mut run_len = usize::MAX;
     let mut run_start = 0u64;
     loop {
@@ -322,25 +323,28 @@ fn resolve(
             let Some((start, rest)) = parse_hex(l) else { continue };
             let Some((end, _)) = parse_hex(&rest[1..]) else { continue };
             let path = map_path(l);
+            let anonymous = path.is_empty();
             let same = run_len == path.len().min(PATH) && run_path[..run_len] == path[..path.len().min(PATH)];
-            if !same {
+            if !same && !anonymous {
                 run_len = path.len().min(PATH);
                 run_path[..run_len].copy_from_slice(&path[..run_len]);
                 run_start = start;
             }
+            // A frame in unnamed memory (TCG's generated code) is a module of its own, never an ELF image.
+            let (base, base_len) = if anonymous { (start, 0) } else { (run_start, run_len) };
             for (i, &f) in frames.iter().enumerate() {
                 if f < start || f >= end || which[i] != usize::MAX {
                     continue;
                 }
-                let found = modules[..*count].iter().position(|m| m.base == run_start);
+                let found = modules[..*count].iter().position(|m| m.base == base);
                 which[i] = match found {
                     Some(m) => m,
                     None if *count < MODULES => {
                         let m = &mut modules[*count];
                         *m = NO_MODULE;
-                        m.base = run_start;
-                        m.path_len = run_len;
-                        m.path[..run_len].copy_from_slice(&run_path[..run_len]);
+                        m.base = base;
+                        m.path_len = base_len;
+                        m.path[..base_len].copy_from_slice(&run_path[..base_len]);
                         elf_facts(m);
                         *count += 1;
                         *count - 1
