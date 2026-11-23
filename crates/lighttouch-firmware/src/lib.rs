@@ -27,6 +27,7 @@
 pub mod a6_assets;
 pub mod a6_firstboot;
 pub mod a6_graphics;
+pub mod a6_pairing;
 pub mod a6_preparation;
 pub mod a6_restore;
 pub mod a6_storage;

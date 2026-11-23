@@ -17,11 +17,14 @@ hex = "0.4"
 hmac = "0.12"
 memchr = "2"
 plist = "1"
+# The iPhone 5's pairing (a6_pairing): RSA keys and PKCS#1 v1.5 signatures, pure Rust so every firmwarekit build has them.
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = "0.9"
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
-sha2 = "0.10"
+sha2 = { version = "0.10", features = ["oid"] }
 tar = { version = "0.4", default-features = false }
 unicode-normalization = "0.1"
 ureq = "3"
@@ -30,6 +33,10 @@ libloading = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# a6_pairing's test checks its certificates with OpenSSL.
+openssl = "0.10"
 
 [build-dependencies]
 # Compiles the vendored iBoot32Patcher C sources (vendor/iBoot32Patcher) into the crate for the iPad's real-iBoot

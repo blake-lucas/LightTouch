@@ -54,6 +54,10 @@ pub struct UsbArgs {
     /// notification the daemon's pairing waits for once Trust is tapped.
     #[serde(default)]
     pub app_pairs: bool,
+    /// The prepared record's own pairing (`base/pairing`, the iPhone 5's): copied into `pairing` where missing,
+    /// so the guest trusts the app without asking.
+    #[serde(default)]
+    pub pairing_seed: Option<PathBuf>,
 }
 
 fn yes() -> bool {
