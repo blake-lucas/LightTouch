@@ -744,12 +744,12 @@ fn remove_old_logs(dir: &Path) {
 /// The USB link for a session of `record`, when this build has the bridge.
 pub fn usb_args(dirs: &DataDirs, resources: &Resources, record: &str) -> Option<lighttouch_core::protocol::UsbArgs> {
     let daemon = resources.usbmuxd();
+    let info = lighttouch_core::library::Library::open(&dirs.library()).and_then(|l| l.record(record)).ok();
     daemon.is_file().then(|| lighttouch_core::protocol::UsbArgs {
         daemon,
         pairing: dirs.pairing(record),
         log: dirs.logs().join(format!("usbmuxd-{}.log", &record[..8.min(record.len())])),
-        app_pairs: lighttouch_core::library::Library::open(&dirs.library())
-            .and_then(|l| l.record(record))
-            .is_ok_and(|r| r.board == "n42ap"),
+        app_pairs: info.as_ref().is_some_and(|r| r.board == "n42ap"),
+        pairing_seed: info.as_ref().map(|r| r.base_path.join("pairing")).filter(|p| p.is_dir()),
     })
 }

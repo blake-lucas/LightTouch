@@ -145,7 +145,7 @@ impl Lockdown {
     /// a missing record means the guest is still starting.
     pub fn session(mux: &Mux, device: &MuxDevice, timeout: Duration) -> Result<Self> {
         let mut lockdown = Self::connect(mux, device, timeout)?;
-        let record = match mux.pair_record(&device.udid)? {
+        let mut record = match mux.pair_record(&device.udid)? {
             Some(record) => record,
             // The Windows daemon is built without libimobiledevice, so it never pairs: pair here, as
             // libimobiledevice's clients do. LIGHTTOUCH_SELF_PAIR does the same elsewhere, for testing.
@@ -158,7 +158,7 @@ impl Lockdown {
                 return Err(Error("The guest isn't paired yet; try again once iOS has finished starting.".into()));
             }
         };
-        let buid = if record.system_buid.is_empty() { mux.buid()? } else { record.system_buid.clone() };
+        let mut buid = if record.system_buid.is_empty() { mux.buid()? } else { record.system_buid.clone() };
         if lockdown.version.0 < 7 {
             let pair = Dictionary::from_iter([
                 ("DeviceCertificate", Value::Data(record.device_certificate.clone())),
@@ -172,10 +172,20 @@ impl Lockdown {
                 Dictionary::from_iter([("PairRecord", Value::Dictionary(pair)), ("ProtocolVersion", Value::from("2"))]),
             )?;
         }
-        let reply = lockdown.request(
-            "StartSession",
-            Dictionary::from_iter([("HostID", Value::from(record.host_id.clone())), ("SystemBUID", Value::from(buid))]),
-        )?;
+        let start = |host_id: &str, buid: &str| {
+            Dictionary::from_iter([("HostID", Value::from(host_id)), ("SystemBUID", Value::from(buid))])
+        };
+        let reply = match lockdown.request("StartSession", start(&record.host_id, &buid)) {
+            // iOS 10 no longer knows this host: lockdownd drops a pairing unused for 180 days (and Reset All Settings
+            // drops them all), while the record here (the one made at preparation, say) stays. Pair again, as for a
+            // guest without a record, so the Trust alert is asked instead of failing for good.
+            Err(e) if lockdown.version.0 >= 10 && e.0.contains("InvalidHostID") => {
+                record = lockdown.pair()?;
+                buid = if record.system_buid.is_empty() { mux.buid()? } else { record.system_buid.clone() };
+                lockdown.request("StartSession", start(&record.host_id, &buid))?
+            }
+            other => other?,
+        };
         if reply.get("EnableSessionSSL").and_then(|v| v.as_boolean()).unwrap_or(false) {
             let conn = std::mem::replace(&mut lockdown.conn, Conn::Plain(Box::new(Empty)));
             lockdown.conn = conn.into_tls(&record, lockdown.version.0)?;

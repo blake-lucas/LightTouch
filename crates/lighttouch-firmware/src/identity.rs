@@ -71,6 +71,13 @@ pub fn iphone_udid(serial: &str, imei: &str, wifi_mac: &str, bt_mac: &str) -> St
     sha1_hex(&format!("{serial}{imei}{}{}", wifi_mac.to_lowercase(), bt_mac.to_lowercase()))
 }
 
+/// An A6 device's UDID (the iPhone 5's), which MobileGestalt hashes the ECID into, in decimal:
+/// SHA1(serial + ECID + Wi-Fi MAC + BT MAC). `ecid` is identity.json's "0x…".
+pub fn a6_udid(serial: &str, ecid: &str, wifi_mac: &str, bt_mac: &str) -> Option<String> {
+    let ecid = u64::from_str_radix(ecid.trim_start_matches("0x"), 16).ok()?;
+    Some(sha1_hex(&format!("{serial}{ecid}{}{}", wifi_mac.to_lowercase(), bt_mac.to_lowercase())))
+}
+
 /// The IMEI: the synthetic TAC, six digits from the seed, and the Luhn digit.
 pub fn imei(seed: &str) -> String {
     let h = sha256(&format!("imei:{seed}"));
@@ -217,6 +224,17 @@ impl UnitIdentity {
         id
     }
 
+    /// This identity with an A6 device's UDID (`a6_udid`) in place of the older boards' (unchanged if a field is missing).
+    pub fn with_a6_udid(&self) -> UnitIdentity {
+        let mut id = self.clone();
+        let (serial, ecid) = (id.synthesized("serial-number"), id.synthesized("unique-chip-id"));
+        if let Some(u) = a6_udid(&serial, &ecid, &id.synthesized("wifi-mac"), &id.synthesized("bt-mac")) {
+            id.fields.retain(|(k, _)| k != "udid");
+            id.fields.push(s("udid", u));
+        }
+        id
+    }
+
     /// Python's json.dump(obj, f, indent=1) (ensure_ascii, no trailing newline).
     pub fn json(&self) -> Vec<u8> {
         fn q(s: &str) -> String {
@@ -319,6 +337,15 @@ impl crate::n72nor::Identity for UnitIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a6_udid_is_the_guests() {
+        // n42ap 14G61's lockdownd named itself so (the host's pair record) for this seed's identity.
+        let id = UnitIdentity::synthesize("iphone5-14G61-default", "16g", Some("MD299")).unwrap().adding_imei("iphone5-14G61-default");
+        assert_eq!(id.get("serial-number"), Some("8RZJCSMWNNP"));
+        assert_eq!(id.with_a6_udid().udid(), Some("25f7fd1e8d8d1d3102bd68dea5f7087e6853178a"));
+        assert_eq!(id.with_a6_udid().get("imei"), id.get("imei"));
+    }
 
     fn sha(d: &[u8]) -> String {
         hex::encode(Sha256::digest(d))

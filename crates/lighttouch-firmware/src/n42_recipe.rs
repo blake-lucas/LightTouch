@@ -206,7 +206,8 @@ impl Board for N42Board {
         Ok(())
     }
     fn identity(&mut self, _c: &mut Context, seed: &str, path: &Path) -> Result<Option<String>> {
-        let ident = UnitIdentity::synthesize(seed, STORAGE, Some(MODEL_NUMBER))?.adding_imei(seed);
+        // The UDID is the guest's own (the A6 hashes its ECID, not the IMEI): the host's pair record is named by it.
+        let ident = UnitIdentity::synthesize(seed, STORAGE, Some(MODEL_NUMBER))?.adding_imei(seed).with_a6_udid();
         ident.write(path)?;
         let udid = ident.udid().map(str::to_string);
         self.ident = Some(ident);
@@ -241,6 +242,14 @@ impl Board for N42Board {
         for n in &vols.notes {
             c.warn(n);
         }
+        // The guest trusts LightTouch from its first start (a6_pairing): its key and pair record in Data, the host's
+        // side in the prepared folder.
+        let ident = self.ident.as_ref().ok_or_else(|| create::filled("the identity"))?;
+        let udid = ident.udid().ok_or_else(|| create::filled("the UDID"))?;
+        let pairing = crate::a6_pairing::make(udid, ident.get("wifi-mac").unwrap_or_default(), c.now)?;
+        pairing.install(&vols.data, &c.e().build)?;
+        pairing.write_host(&c.o.out)?;
+        c.log(&format!("Paired with LightTouch at preparation (host {})", pairing.host_id));
         c.activation = vols.activation.clone();
         c.guest_package = vols.guest_package.clone();
         c.engine = vols.engine.clone();

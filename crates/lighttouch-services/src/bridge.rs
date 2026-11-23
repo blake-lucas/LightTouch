@@ -23,10 +23,14 @@ pub struct Bridge {
 
 impl Bridge {
     /// Start the daemon and wait (up to 5 s) for both sockets. `log` receives its output.
-    /// `app_pairs`: the daemon leaves pairing to the app (`-p`; lockdown.rs pairs on iOS 10).
-    pub fn start(daemon: &Path, pairing: &Path, log: &Path, app_pairs: bool) -> Result<Self> {
+    /// `app_pairs`: the daemon leaves pairing to the app (`-p`; lockdown.rs pairs on iOS 10). `seed`: a folder of
+    /// pairing files made at preparation (`seed_pairing`).
+    pub fn start(daemon: &Path, pairing: &Path, seed: Option<&Path>, log: &Path, app_pairs: bool) -> Result<Self> {
         if !daemon.is_file() {
             return Err(Error("Guest app services are not included in this build.".into()));
+        }
+        if let Some(seed) = seed {
+            seed_pairing(pairing, seed)?;
         }
         #[cfg(windows)]
         {
@@ -223,6 +227,37 @@ impl Drop for Bridge {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Copy the pairing files a preparation made (the iPhone 5's `base/pairing`: `<UDID>.plist` and
+/// `SystemConfiguration.plist`) into the record's pairing folder, each only where that folder has none, so a pairing
+/// made later stays. Owner-only, as the daemon keeps them.
+pub fn seed_pairing(pairing: &Path, seed: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(pairing)?;
+        std::fs::set_permissions(pairing, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(pairing)?;
+    for entry in std::fs::read_dir(seed)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let target = pairing.join(&name);
+        if !entry.file_type()?.is_file() || !name.to_string_lossy().ends_with(".plist") || target.exists() {
+            continue;
+        }
+        let partial = pairing.join(format!(".{}.seed", name.to_string_lossy()));
+        std::fs::copy(entry.path(), &partial)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&partial, &target)?;
+    }
+    Ok(())
 }
 
 const PREFIX: &str = "lighttouch-usb-";

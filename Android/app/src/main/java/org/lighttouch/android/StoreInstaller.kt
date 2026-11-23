@@ -102,13 +102,26 @@ internal class StoreInstaller private constructor(private val context: Context) 
         if (!context.bindService(Intent(context, EngineService::class.java), connection, 0)) context.unbindService(connection)
     }
 
+    /**
+     * The socket, waiting out a short pause: coming back from the file picker the guest is paused for a moment and
+     * the activity clears the socket, so an IPA picked there reached its install step with none (seen on the Poco).
+     */
+    private fun liveSocket(cancelled: () -> Boolean): String? {
+        val deadline = SystemClock.elapsedRealtime() + 15_000
+        while (true) {
+            socket?.takeIf { it.isNotEmpty() }?.let { return it }
+            if (cancelled() || SystemClock.elapsedRealtime() > deadline) return null
+            Thread.sleep(250)
+        }
+    }
+
     /** What the running guest is, asked once per guest. */
     private fun exactTarget(socket: String): StoreTarget = synchronized(this) {
         exact?.takeIf { it.first == socket }?.second ?: apps.target(socket).also { exact = socket to it }
     }
 
     override fun fetch(payload: InstallRequest, report: QueueReport, cancelled: () -> Boolean): File {
-        val socket = socket ?: throw StoreError("Start the guest to install apps.")
+        val socket = liveSocket(cancelled) ?: throw StoreError("Start the guest to install apps.")
         report.update("Preparing", 0f)
         val target = exactTarget(socket)
         when (payload) {
@@ -137,7 +150,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
     }
 
     override fun install(payload: InstallRequest, file: File, report: QueueReport, cancelled: () -> Boolean) {
-        val socket = socket ?: throw StoreError("The guest stopped. Start it to install apps.")
+        val socket = liveSocket(cancelled) ?: throw StoreError("The guest stopped. Start it to install apps.")
         val target = exactTarget(socket)
         report.update("Checking app", null)
         val prepared = File(file.parentFile, "Install.ipa")
