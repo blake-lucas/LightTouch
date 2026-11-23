@@ -24,6 +24,8 @@ p.add_argument("--env", action="append", default=[])
 p.add_argument("--out", default=".")
 p.add_argument("--tag", default="ltbio")
 p.add_argument("--timeout", type=float, default=900, help="seconds for one pass")
+p.add_argument("--launch", help="instead of LT Bench: launch this bundle id and watch for --watch seconds")
+p.add_argument("--watch", type=float, default=60)
 a = p.parse_args()
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
 for kv in a.env:
@@ -38,22 +40,83 @@ if extra:
     wrapper.chmod(0o755)
     bench.LIGHTTOUCH = str(wrapper)
 
+storage_log = open(out / f"{a.tag}.storage.tsv", "w")
+
+
+class Recorder(bench.Desktop):
+    """Also writes each status event's storage counters (the overlay's source) to TAG.storage.tsv."""
+
+    def _read(self):
+        import json
+        for line in self.p.stdout:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            kind = e.get("event")
+            if kind == "guest_result":
+                self.results.put(e)
+            elif kind == "status":
+                self.status = e
+                st = e.get("storage")
+                if st:
+                    storage_log.write(f"{time.monotonic() - t0:.3f}\t" + "\t".join(
+                        str(st.get(k, 0)) for k in ("read_ops", "read_bytes", "read_ns", "write_ops", "write_bytes",
+                                                    "write_ns", "erase_ops", "erase_ns")) + "\n")
+                    storage_log.flush()
+            elif kind == "exit":
+                self.exited = e
+
+
 t0 = time.monotonic()
-s = bench.Desktop(a.record, out)
+s = Recorder(a.record, out)
 logpath = out / f"{a.record}.log"
+
+
+def worker_pid():
+    for d in Path("/proc").iterdir():
+        try:
+            if d.name.isdigit() and b"worker" in (d / "cmdline").read_bytes() and \
+                    int((d / "stat").read_text().rsplit(")", 1)[1].split()[1]) == s.p.pid:
+                return int(d.name)
+        except (OSError, ValueError, IndexError):
+            pass
+    return None
+
+
+def thread_cpu(pid):
+    """Thread name -> CPU seconds (user + system), threads of one name summed."""
+    out = {}
+    for t in Path(f"/proc/{pid}/task").iterdir():
+        try:
+            st = (t / "stat").read_text()
+            name = st[st.index("(") + 1:st.rindex(")")]
+            f = st.rsplit(")", 1)[1].split()
+            out[name] = out.get(name, 0) + (int(f[11]) + int(f[12])) / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError):
+            pass
+    return out
 
 
 def log_text():
     return logpath.read_text(errors="replace")
 
 
+seen_lines = set()
+
+
 def wait_for(pattern, seconds, start=0):
     end = time.monotonic() + seconds
     while time.monotonic() < end and s.running():
-        m = re.search(pattern, log_text()[start:])
+        text = log_text()
+        for line in text[start:].splitlines():   # when each LT Bench line appeared, for the storage log
+            if "[ltbench]" in line and line not in seen_lines:
+                seen_lines.add(line)
+                storage_log.write(f"# {time.monotonic() - t0:.3f} {line}\n")
+        m = re.search(pattern, text[start:])
         if m:
             return m
-        time.sleep(1)
+        time.sleep(0.25)
     return None
 
 
@@ -63,8 +126,21 @@ try:
     print(f"home at {time.monotonic() - t0:.0f} s", flush=True)
     if a.install and not wait_for(r"installed |install failed", 600):
         sys.exit("install did not finish")
-    for n in range(1, a.passes + 1):
+    pid = worker_pid()
+    if a.launch:
+        bench.home(s)
+        print(f"launch {a.launch} at {time.monotonic() - t0:.1f} s: "
+              f"{s.guest(bench.GUEST_LAUNCH_APP, a.launch, timeout=20) is not None}", flush=True)
+        c0, w0 = thread_cpu(pid) if pid else {}, time.monotonic()
+        time.sleep(a.watch)
+        if pid:
+            c1, wall = thread_cpu(pid), time.monotonic() - w0
+            busy = sorted(((c1.get(k, 0) - c0.get(k, 0), k) for k in c1), reverse=True)[:4]
+            print(f"{a.tag} watch threads over {wall:.1f} s: " +
+                  ", ".join(f"{k} {v / wall * 100:.0f}%" for v, k in busy), flush=True)
+    for n in range(1, a.passes + 1 if not a.launch else 0):
         mark = len(log_text())
+        cpu0, w0 = thread_cpu(pid) if pid else {}, time.monotonic()
         if n == 1:
             bench.home(s)
             if s.guest(bench.GUEST_LAUNCH_APP, BUNDLE, timeout=20) is None:
@@ -73,6 +149,11 @@ try:
             s.tap(0.5, 0.5)
         if not wait_for(r"\[ltbench\] done pass", a.timeout, mark):
             sys.exit(f"pass {n} did not finish")
+        if pid:
+            cpu1, wall = thread_cpu(pid), time.monotonic() - w0
+            busy = sorted(((cpu1.get(k, 0) - cpu0.get(k, 0), k) for k in cpu1), reverse=True)[:6]
+            print(f"{a.tag} pass{n} threads over {wall:.1f} s: " +
+                  ", ".join(f"{k} {v / wall * 100:.0f}%" for v, k in busy), flush=True)
         for line in log_text()[mark:].splitlines():
             m = re.search(r"\[ltbench\] (\S+) best (\S+) median (\S+)", line)
             if m:

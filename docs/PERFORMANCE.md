@@ -501,6 +501,56 @@ with its whole-cache clean-by-set/way loops (~8.7K cache ops a call, no-ops unde
 ~5%. Further gains need faster translated code in general, not storage changes. Tried and dropped: serving
 the IOP's cache-control registers without the BQL (no change).
 
+### Storage writes (2026-11-23)
+
+Reports said every device writes at only 1–2 MB/s, in bursts. Where each number below comes from:
+**in-guest** = LT Bench inside iOS (`tools/bench/ltbio.py`, desktop headless; best of 3); **host** = the
+engine's own counters of NAND page programs, which are also what the performance overlay's "write" line shows.
+
+**What the overlay shows.** Its write figure is the bytes of NAND pages the engine programmed (page plus spare)
+over the last second, refreshed four times a second, with "busy" the share of wall time the host spent on them.
+It measures what iOS asks for, not what the device can do. On the desktop the iPod touch 4G shows 0.3–1.9 MB/s
+in bursts (host busy 1–5%) while it boots and starts Infinity Blade, and 20–54 MB/s when LT Bench writes.
+
+**How a device's NAND is stored** decides the write path. Devices prepared since v0.0.12 hold it in a qcow2
+container; older ones keep the format they were prepared with (nothing converts them).
+
+| Format | Boards, made by | Page program on the host |
+| --- | --- | --- |
+| qcow2 container: system image + the device's overlay | every board, v0.0.12 on | a `pwrite` into the overlay (the first one in a 64 KiB cluster goes through qcow2); synced to disk when iOS stops |
+| Packed base + one file per written page | iPod touch 2G, v0.0.11 and earlier | write a temporary file, `fsync` it, rename it over `N.page` |
+| Chip files written in place | iPod touch 2G, early desktop | block-layer write, no sync until stop |
+| Chip files + ownership map | A4 boards, v0.0.11 and earlier | `pwrite`; the map is a shared mapping |
+
+**In-guest results, desktop.** Writes from 64 KiB to 256 KiB are uncached (`F_NOCACHE`) and end with `fsync`, so
+they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of the bytes the test wrote.
+
+| Test | iPod touch 2G 3.1.3, container | iPod touch 2G 3.1.3, page files | iPod touch 4G 6.1.6, container | iPhone 3GS 5.1.1, container |
+| --- | --- | --- | --- | --- |
+| `fs-write` (64 KiB writes, 8 MiB, `fsync`) | 18 µs/KiB (57 MB/s) | 158–195 µs/KiB (5–6 MB/s) | 39–40 µs/KiB (26 MB/s) | 37 µs/KiB (28 MB/s) |
+| `fs-write-big` (256 KiB writes, 16 MiB, `fsync`) | 6.8 µs/KiB (150 MB/s) | 133–162 µs/KiB (6–8 MB/s) | 22–24 µs/KiB (42–48 MB/s) | 21 µs/KiB (48 MB/s) |
+| `fs-write-cached` (through iOS's cache, `fsync`) | 5.9 µs/KiB | 111–158 µs/KiB | 16 µs/KiB | 14 µs/KiB |
+| `fs-rand-4k` (scattered 4 KiB, one `fsync`) | 136 µs (30 MB/s) | 568–822 µs (5–7 MB/s) | 305–398 µs (10–13 MB/s) | 305 µs (13 MB/s) |
+| `fs-fsync-4k` (4 KiB + `fsync`) | 450 µs | 1.5–2.0 ms | 487–575 µs | 423 µs |
+| `fs-fullfsync-4k` (4 KiB + `F_FULLFSYNC`) | 531 µs | 1.7–2.0 ms | 4.2–4.8 ms (~1 MB/s) | 2.8 ms (~1.4 MB/s) |
+| `fs-create` (new 16 KiB file) | 787 µs | 3.2–5.6 ms | 3.2–4.0 ms (~4–5 MB/s) | 3.2 ms (~5 MB/s) |
+
+- **Container devices are not limited to 1–2 MB/s.** Long writes run at 26–150 MB/s in the guest. What lands near
+  1–5 MB/s are small synchronous writes (a database commit, a new small file), whose cost is a fixed latency per
+  NAND request, not bandwidth.
+- **A4 boards (4G, 3GS): each NAND request is a round trip between the main CPU (AP) and the storage processor
+  (IOP).** In the 4G's `F_FULLFSYNC` loop (host, `LT_NAND_PROF=1`): ~1500 requests a second, mostly one page each;
+  per request ~400 µs on the AP and ~235 µs on the IOP side, of which the IOP thread is busy ~127 µs (about 250
+  cache-control register writes and the controller's MMIO), host `pread`+`pwrite` ~26 µs. A host profile of the AP
+  (`perf` with QEMU's `QEMU_PERFMAP_DIR` naming translated code by guest address): 72% translated guest code, 99% of
+  that iOS's kernel, flat across XNU and the storage kexts; 6% `tb_jmp_cache_clear_page` (iOS's per-page TLB
+  invalidations). So a small synchronous write costs mostly guest kernel work, as reads did (above).
+- **App installs (4G, host counters):** the upload ran at ~9.5 MB/s with the AP about half idle (waiting on the USB
+  link), the unpack at ~6.3 MB/s with the AP 50–90% busy (unzip and file creation in iOS).
+- **Old iPod touch 2G devices (page files) are bound by the host's `fsync`:** the vCPU is only ~40% busy, and every
+  4 KiB page costs a new file, an `fsync` and a rename (~0.4–0.6 ms on this desktop's disk). A guest write program
+  carries 5–8 pages for long writes and 1–2 for synchronous ones.
+
 ### Frame pacing on the iPod touch 4G (2026-10-25)
 
 Epic Citadel's guided tour (`fcbench.py APK 60 n81-ec-tour`) on the Poco: ~44 fps cool, 1% low ~20; ~30 / 15
