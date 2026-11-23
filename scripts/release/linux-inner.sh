@@ -26,9 +26,12 @@ echo "=== RUNTIME (the engine, the USB bridge and the libraries they load beyond
 rm -rf /build/runtime; mkdir -p /build/runtime/lib
 cp /build/engine/libqemu-arm.so /build/mobile-private-runtime-ui15/prefix/bin/usbmuxd-qemu /build/runtime/
 export LD_LIBRARY_PATH=/build/deps-full/prefix/lib:/build/crypto/prefix/lib:/build/mobile-private-runtime-ui15/prefix/lib
-for l in libfdt.so.1 libimobiledevice-1.0.so.6 libimobiledevice-glue-1.0.so.0 libplist-2.0.so.4 libusbmuxd-2.0.so.7 \
+# A name ending in "." matches any version after it: libplist's soname moved with 2.8.0 (the recipe's) while older
+# prebuilt runtimes still carry the earlier one.
+for l in libfdt.so.1 libimobiledevice-1.0.so.6 libimobiledevice-glue-1.0.so.0 libplist-2.0.so. libusbmuxd-2.0.so.7 \
          libssl.so.1.1 libcrypto.so.1.1; do
-    p=$(ldd /build/runtime/libqemu-arm.so /build/runtime/usbmuxd-qemu | awk -v l="$l" '$1 == l { print $3; exit }')
+    p=$(ldd /build/runtime/libqemu-arm.so /build/runtime/usbmuxd-qemu |
+        awk -v l="$l" '($1 == l || (l ~ /\.$/ && index($1, l) == 1)) && $3 ~ /^\// { print $3; exit }')
     [ -n "$p" ] || { echo "neither the engine nor the USB bridge loads $l" >&2; exit 1; }
     cp -L "$p" /build/runtime/lib/
 done

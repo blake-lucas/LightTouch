@@ -11119,6 +11119,6 @@
   "keys": {},
   "recipe": {"name": "n42", "version": 1, "storage": "16g", "system_mib": 3072, "data_size": "partition", "boot": "kboot", "options": {"ca_ogl": true}},
   "emulator": {"min_protocol": 1},
-  "estimates": {"prepared_bytes": 1503238554, "peak_bytes": 9000000000, "seconds": 600}
+  "estimates": {"prepared_bytes": 3390537728, "peak_bytes": 10039651982, "seconds": 750}
  }
 ]}

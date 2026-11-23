@@ -77,11 +77,15 @@ private val versionOrder = Comparator<CatalogFirmware> { a, b ->
 /**
  * What preparing a firmware costs on a recent phone (Poco F3). The iPod touch 2G only writes files (iOS 4 adds a
  * 12 s keybag boot); later systems also boot iOS twice (the data-protection keybag, then iOS's first-start setup):
- * iPod touch 4G 6.1.6 took 195 s.
+ * iPod touch 4G 6.1.6 took 195 s. The iPhone 5 (iOS 10) took 1221 s on the Poco and peaks at 8.0 GB plus its 2.0 GB IPSW.
  */
-private data class PreparationCost(val time: String, val space: String)
-private fun preparationCost(firmware: CatalogFirmware?) =
-    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("a few minutes", "5 GB")
+private data class PreparationCost(val time: String, val space: String, val note: String = "")
+private fun preparationCost(firmware: CatalogFirmware?) = when (firmware?.board) {
+    "n72ap" -> PreparationCost("about a minute", "1.5 GB")
+    "n42ap" -> PreparationCost("20 to 40 minutes", "10 GB",
+        " The iPhone 5 is far heavier than the other devices: keep the phone plugged in and LightTouch open.")
+    else -> PreparationCost("a few minutes", "5 GB")
+}
 
 /**
  * Builds a device on this phone from a stock IPSW: pick the device, then the iOS version, then get
@@ -301,7 +305,7 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
             enabled = jailbreakUnavailable == null) { if (!busy) state.jailbreak = it }
     }
     val cost = preparationCost(firmware)
-    Text("Preparing runs on this phone, takes ${cost.time} and needs about ${cost.space} free. LightTouch's guest tools are added for you.",
+    Text("Preparing runs on this phone, takes ${cost.time} and needs about ${cost.space} free.${cost.note} LightTouch's guest tools are added for you.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(20.dp))
     Button(onClick = onPrepare, enabled = !busy && state.ipswReady && state.romReady && state.ipswChecking.isEmpty(),
