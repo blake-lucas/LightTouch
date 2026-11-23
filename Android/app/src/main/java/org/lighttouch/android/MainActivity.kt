@@ -819,14 +819,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (prep.romFor == rom && prep.romPath.isNotEmpty() && File(prep.romPath).isFile) return
         prep.romPath = ""; prep.romFor = null; prep.romLabel = ""
         val candidates = records.filter { Bootrom.forBoard(it.getString("board") ?: "") == rom && it.getBoolean("bootromAvailable") }
-            .map { File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin") to "Reusing the one from ${it.getString("name")}" } +
-            listOf(File(filesDir, "bootrom.bin") to "Reusing the saved one")
+            .map { File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin") to "from ${it.getString("name")}" } +
+            listOf(File(filesDir, "bootrom.bin") to "saved earlier")
         Thread({
             val found = candidates.firstOrNull { (file, _) -> file.isFile && file.length() <= (1L shl 20) && rom.matches(file.readBytes()) }
             if (found != null) handler.post {
                 if (prep.firmware?.let { Bootrom.forBoard(it.board) } == rom && prep.romFor == null) {
                     prep.romPath = found.first.absolutePath; prep.romFor = rom
-                    prep.romLabel = "${found.second} (${rom.label}). It is the same for every iOS version."
+                    prep.romLabel = "${rom.label} · ${found.second}"
                 }
             }
         }, "find-bootrom").start()
@@ -1030,7 +1030,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val target = File(filesDir, "prepare-bootrom-${rom.name.lowercase()}.bin")
                 rom.fetch(target)
-                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "Downloaded · ${rom.label}"; prep.romChecking = false; continueAutoPrepare() }
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "${rom.label} · downloaded"; prep.romChecking = false; continueAutoPrepare() }
             } catch (e: Exception) { handler.post { prep.romError = "Could not download the boot file: ${e.message}"; prep.romChecking = false; continueAutoPrepare() } }
         }, "bootrom-download").start()
     }
@@ -1044,7 +1044,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 // The chip's mask ROM: every good dump is these bytes, and the device boots it.
                 require(rom.matches(target.readBytes())) { "That file is not the ${rom.label} boot ROM" }
                 val name = displayName(uri)
-                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "$name · ${rom.label}" }
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "${rom.label} · $name" }
             } catch (e: Exception) { handler.post { prep.romError = e.message ?: "Could not use that boot file" } }
         }, "prepare-bootrom").start()
     }

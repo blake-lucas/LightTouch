@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -244,12 +245,17 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIp
     val name = shortProductName(firmware.productType)
     Heading("$name, iOS ${firmware.label}", "Downloads what it needs, then sets it up on this phone.")
     // IPSW: Apple's servers when ipsw.me lists the build, else the Internet Archive.
+    val downloading = IpswDownload.running && IpswDownload.firmwareId == firmware.id
+    val ipswError = state.ipswError.ifEmpty { IpswDownload.status.takeIf { IpswDownload.firmwareId == firmware.id && !downloading } ?: "" }
     Card(icon = LtIcons.Layers, title = "iOS firmware", done = state.ipswReady,
-        detail = if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified" else "${firmware.bytes / 1_000_000} MB · downloaded for you") {
-        val downloading = IpswDownload.running && IpswDownload.firmwareId == firmware.id
+        detail = if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified"
+            else "${firmware.bytes / 1_000_000} MB · " + if (downloading) "downloading" else "downloaded for you",
+        onChoose = onChooseIpsw, chooseEnabled = !busy && !state.autoPrepare && !downloading && state.ipswChecking.isEmpty(),
+        chooseTag = "prepare_choose_ipsw") {
         when {
-            state.ipswReady -> TextButton(onClick = onChooseIpsw, enabled = !busy) { Text("Use a different file") }
+            state.ipswReady -> {}
             downloading -> {
+                Spacer(Modifier.height(8.dp))
                 Text(IpswDownload.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 if (IpswDownload.progress >= 0f) LinearProgressIndicator(progress = { IpswDownload.progress }, Modifier.fillMaxWidth())
@@ -257,28 +263,23 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIp
                 TextButton(onClick = { IpswDownload.cancel() }, modifier = Modifier.testTag("prepare_cancel_download")) { Text("Cancel download") }
             }
             state.ipswChecking.isNotEmpty() -> {
+                Spacer(Modifier.height(8.dp))
                 Text(state.ipswChecking, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            else -> {
-                val error = state.ipswError.ifEmpty { IpswDownload.status.takeIf { IpswDownload.firmwareId == firmware.id } ?: "" }
-                if (error.isNotEmpty()) Text(error, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = onChooseIpsw, enabled = !busy && !state.autoPrepare, modifier = Modifier.testTag("prepare_choose_ipsw")) { Text("Use my own file") }
-            }
+            ipswError.isNotEmpty() -> Text(ipswError, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
     // The chip's boot ROM (from rom.sources, matched byte for byte; the same for every iOS version), on the devices
     // that start from one; the others start from what preparation makes and show no card.
     val rom = state.bootrom
     if (rom != null) Card(icon = LtIcons.Chip, title = "Boot ROM", done = state.romReady,
-        detail = if (state.romReady) state.romLabel else "64 KB · downloaded for you") {
+        detail = if (state.romReady) state.romLabel else "64 KB · downloaded for you",
+        onChoose = onChooseRom, chooseEnabled = !busy && !state.autoPrepare && !state.romChecking, chooseTag = "prepare_choose_rom") {
         when {
-            state.romReady -> TextButton(onClick = onChooseRom, enabled = !busy) { Text("Use a different file") }
-            state.romChecking -> LinearProgressIndicator(Modifier.fillMaxWidth())
-            else -> {
-                if (state.romError.isNotEmpty()) Text(state.romError, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = onChooseRom, enabled = !busy && !state.autoPrepare, modifier = Modifier.testTag("prepare_choose_rom")) { Text("Use my own file") }
-            }
+            state.romReady -> {}
+            state.romChecking -> LinearProgressIndicator(Modifier.padding(top = 8.dp).fillMaxWidth())
+            state.romError.isNotEmpty() -> Text(state.romError, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
     Spacer(Modifier.height(12.dp))
@@ -301,9 +302,15 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIp
     }
 }
 
+/**
+ * A file preparation needs: its icon, name and state on one row, a check once it's there, and a folder button for a
+ * copy of the user's own. [content] (progress, an error) goes below the row only when it draws something.
+ */
 @Composable
-private fun Card(icon: ImageVector, title: String, done: Boolean, detail: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(16.dp)) {
+private fun Card(icon: ImageVector, title: String, done: Boolean, detail: String, onChoose: () -> Unit, chooseEnabled: Boolean,
+                 chooseTag: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
+        .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(24.dp), tint = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(16.dp))
@@ -312,10 +319,13 @@ private fun Card(icon: ImageVector, title: String, done: Boolean, detail: String
                 Text(detail, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (done) Icon(Icons.Filled.CheckCircle, "Ready", tint = MaterialTheme.colorScheme.primary)
+            if (done) Icon(Icons.Filled.CheckCircle, "Ready", Modifier.padding(start = 8.dp), tint = MaterialTheme.colorScheme.primary)
+            IconButton(onClick = onChoose, enabled = chooseEnabled, modifier = Modifier.testTag(chooseTag)) {
+                Icon(LtIcons.Folder, if (done) "Use a different file" else "Use my own file",
+                    tint = if (chooseEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        content()
+        Column(Modifier.padding(end = 8.dp).animateContentSize()) { content() }
     }
 }
 
