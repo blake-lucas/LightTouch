@@ -87,7 +87,7 @@ def run_as(script):
 
 def worker_pid():
     if a.host == "android":
-        out = bench.Android.adb("shell", "pidof", bench.PKG).split()
+        out = (bench.Android.adb("shell", "pidof", bench.PKG + ":engine") or bench.Android.adb("shell", "pidof", bench.PKG)).split()
         return int(out[0]) if out else None
     for d in Path("/proc").iterdir():
         try:

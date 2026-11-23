@@ -41,7 +41,7 @@ jobs:
           QEMU_IOS="$PWD/qemu-ios" LTB_CFLAGS='-DONLY="fs-write,fs-read,fs-read-16k,fs-write-big,fs-write-cached,fs-rand-4k,fs-fsync-4k,fs-fullfsync-4k,fs-create" -DROUNDS=3' \
             bash tools/guestbench/build.sh "$OUT/fs"
           # one test, many rounds, for profiling
-          for v in "fullfsync:fs-fullfsync-4k:40" "fsync:fs-fsync-4k:60" "create:fs-create:20" "big:fs-write-big:8"; do
+          for v in "fullfsync:fs-fullfsync-4k:40" "fsync:fs-fsync-4k:60" "create:fs-create:20" "big:fs-write-big:8" "check:fs-check:1"; do
             IFS=: read -r name test rounds <<< "$v"
             QEMU_IOS="$PWD/qemu-ios" LTB_CFLAGS="-DONLY=\"$test\" -DROUNDS=$rounds" bash tools/guestbench/build.sh "$OUT/$name"
           done
