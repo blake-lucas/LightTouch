@@ -243,7 +243,7 @@ fn summary(request: &ExportRequest, entries: &[(String, Vec<u8>)], missing: &[St
     let _ = writeln!(out, "  Controls: {}", if s.controller_preset.is_some() { "a set is in use" } else { "none" });
     let _ = writeln!(out, "  Detailed frame timing: {}", on_off(s.detailed_timing));
     let _ = writeln!(out, "  Rotation: {:?}", s.rotation);
-    let _ = writeln!(out, "  iPad at real size: {}", on_off(s.ipad_real_size));
+    let _ = writeln!(out, "  Screen scaling: {:?}, real size: {:?}", s.scaling, s.real_size);
 
     let _ = writeln!(out, "\nDevices ({}):", request.devices.len());
     for d in &request.devices {

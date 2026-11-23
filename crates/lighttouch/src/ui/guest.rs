@@ -5,11 +5,11 @@
 //! (held while the key is held). With a mouse-look binding in the controller preset, a click on the screen locks the
 //! mouse to the game instead: its movement and buttons go to the preset until Escape (or another window) lets go.
 use super::device_frame;
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui};
+use super::scaling::{self, Scaled};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui};
 use lighttouch_core::runtime::{BoardInfo, Contact};
 use lighttouch_model::Model;
 use lighttouch_model::gamepad::preset::{MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT};
-use lighttouch_model::settings::Scaling;
 use lighttouch_model::tilt::TiltKeys;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -37,10 +37,11 @@ impl Pair {
 
 #[derive(Default)]
 pub struct GuestView {
-    texture: Option<TextureHandle>,
+    texture: Scaled,
     rgba: Vec<u8>,
     size: [usize; 2],
-    scaling: Scaling,
+    /// The longer side of the screen as last drawn, in physical pixels: Crisp's prescale follows it.
+    shown_px: std::cell::Cell<f32>,
     record: Option<String>,
     /// Mouse buttons holding a contact: (contact id, last position).
     mouse: HashMap<u32, Pos2>,
@@ -135,36 +136,43 @@ impl GuestView {
         if self.record.as_deref() != Some(session.record_id.as_str()) {
             // A new session: drop the last device's picture.
             self.record = Some(session.record_id.clone());
-            self.texture = None;
+            self.texture.clear();
         }
-        let Some(meta) = session.read_frame(&mut self.rgba) else {
-            if scaling != self.scaling {
-                self.scaling = scaling;
-                if let Some(texture) = &mut self.texture {
-                    let image = egui::ColorImage::from_rgba_unmultiplied(self.size, &self.rgba);
-                    texture.set(image, options(scaling));
-                }
+        let fresh = match session.read_frame(&mut self.rgba) {
+            Some(meta) => {
+                self.size = [meta.width as usize, meta.height as usize];
+                true
             }
-            return false;
+            None => false,
         };
-        self.size = [meta.width as usize, meta.height as usize];
-        self.scaling = scaling;
-        let image = egui::ColorImage::from_rgba_unmultiplied(self.size, &self.rgba);
-        match &mut self.texture {
-            Some(texture) => texture.set(image, options(scaling)),
-            None => self.texture = Some(ctx.load_texture("guest", image, options(scaling))),
+        if !fresh && !self.texture.ready() {
+            return false;
         }
-        true
+        // A changed method or size uploads the last frame again, so it applies at once, even to a still screen.
+        let (size, rgba) = (self.size, &self.rgba);
+        self.texture.update(ctx, "guest", fresh, scaling, size, self.shown_px.get(), || {
+            egui::ColorImage::from_rgba_unmultiplied(size, rgba)
+        });
+        fresh
     }
 
     /// Forget the picture (the device stopped).
     pub fn clear(&mut self) {
-        self.texture = None;
+        self.texture.clear();
         self.record = None;
     }
 
     pub fn has_frame(&self) -> bool {
-        self.texture.is_some()
+        self.texture.ready()
+    }
+
+    /// The screen's size in pixels as it stands upright (the iPad's landscape scan turned), once a frame came.
+    pub fn shown_pixels(&self) -> Option<[u32; 2]> {
+        let [w, h] = self.size;
+        if w == 0 || h == 0 {
+            return None;
+        }
+        Some(if self.scan_turned() { [h as u32, w as u32] } else { [w as u32, h as u32] })
     }
 
     /// The guest laid its portrait UI a quarter clockwise into a landscape scan (the iPad's panel), so the scan
@@ -197,24 +205,8 @@ impl GuestView {
 
     /// Draw the newest frame into `rect`, turned to `rotation`. Returns false when there is none.
     pub fn paint(&self, painter: &egui::Painter, rect: Rect, rotation: lighttouch_model::rotation::Rotation) -> bool {
-        let Some(texture) = self.texture.as_ref() else { return false };
-        // Each corner shows the guest pixel the rotation puts there.
-        let turned = self.scan_turned();
-        let mut mesh = egui::Mesh::with_texture(texture.id());
-        for corner in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
-            let u = ((corner.x - rect.left()) / rect.width()) as f64;
-            let v = ((corner.y - rect.top()) / rect.height()) as f64;
-            let (x, y) = rotation.to_scan(u, v, turned);
-            mesh.vertices.push(egui::epaint::Vertex {
-                pos: corner,
-                uv: egui::pos2(x as f32, y as f32),
-                color: Color32::WHITE,
-            });
-        }
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(0, 2, 3);
-        painter.add(egui::Shape::mesh(mesh));
-        true
+        self.shown_px.set(scaling::shown_px(rect, painter.ctx().pixels_per_point()));
+        self.texture.paint(painter, rect, rotation, self.scan_turned())
     }
 
     /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
@@ -691,13 +683,6 @@ pub fn bubble(painter: &egui::Painter, at: Pos2, radius: f32, under: Color32, pr
     painter.circle_stroke(at, r, egui::Stroke::new(2.0, inverse));
     painter.circle_stroke(at, r - 1.5, egui::Stroke::new(1.0, Color32::from_white_alpha(110)));
     painter.circle_filled(at, 2.0, inverse);
-}
-
-fn options(scaling: Scaling) -> TextureOptions {
-    match scaling {
-        Scaling::Smooth => TextureOptions::LINEAR,
-        Scaling::Sharp => TextureOptions::NEAREST,
-    }
 }
 
 #[cfg(test)]

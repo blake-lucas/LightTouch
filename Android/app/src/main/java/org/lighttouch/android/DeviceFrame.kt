@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 
 /** Hardware button ids shared with the runtime (QEMU_IOS_BUTTON_*). */
@@ -78,11 +79,17 @@ internal data class DeviceSkin(
  */
 @Composable
 internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boolean) -> Unit, screen: @Composable (Modifier) -> Unit,
-                         modifier: Modifier = Modifier, haptics: Boolean = true) {
+                         modifier: Modifier = Modifier, haptics: Boolean = true, pixels: IntSize? = null, multiple: Int = 0) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         // Leave room around the body for the protruding side buttons.
         val margin = 3f
-        val scale = minOf(maxWidth.value / (skin.width + 2 * margin), maxHeight.value / (skin.height + 2 * margin))
+        val fit = minOf(maxWidth.value / (skin.width + 2 * margin), maxHeight.value / (skin.height + 2 * margin))
+        // Pixel perfect (pixels given): the largest whole multiple of the screen's pixels the device fits around, and
+        // the screen exactly that many physical pixels (the drawn millimetres are a hair off the panel's aspect).
+        val density = LocalDensity.current.density
+        val whole = pixels?.let { wholeMultiple(it, fit * density * skin.screenWidth, fit * density * skin.screenHeight, multiple) } ?: 0
+        val scale = if (whole > 0) whole * pixels!!.width / density / skin.screenWidth else fit
+        val screenSize = if (whole > 0) with(LocalDensity.current) { (whole * pixels!!.width).toDp() to (whole * pixels.height).toDp() } else null
         fun mm(value: Float): Dp = (value * scale).dp
         // Sleep/Wake on the top edge, right of centre; volume on the upper left side. Each is
         // (left, top, width, height) in mm of the outer box, drawn under the body's edge.
@@ -105,7 +112,8 @@ internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boole
                 .shadow(mm(4f), body, ambientColor = Color.Black, spotColor = Color.Black)
                 .background(Brush.linearGradient(skin.rim), body).padding(mm(skin.rimWidth))
                 .background(skin.face, RoundedCornerShape(mm(skin.corner - skin.rimWidth)))) {
-                screen(Modifier.offset(mm(skin.screenLeft - skin.rimWidth), mm(skin.screenTop - skin.rimWidth)).size(mm(skin.screenWidth), mm(skin.screenHeight)))
+                screen(Modifier.offset(mm(skin.screenLeft - skin.rimWidth), mm(skin.screenTop - skin.rimWidth))
+                    .size(screenSize?.first ?: mm(skin.screenWidth), screenSize?.second ?: mm(skin.screenHeight)))
                 HomeButton(Modifier.offset(mm(skin.width / 2 - skin.homeDiameter / 2 - skin.rimWidth), mm(skin.homeCenterY - skin.homeDiameter / 2 - skin.rimWidth))
                     .size(mm(skin.homeDiameter)), enabled, button, haptic)
             }

@@ -9,8 +9,17 @@ enum class ThemeMode(val label: String) { SYSTEM("System"), DARK("Dark"), LIGHT(
 enum class OverlayLevel(val label: String) { OFF("Off"), FPS("FPS"), COMPACT("Basic"), FULL("Full") }
 enum class OverlayCorner(val label: String, val glyph: String) { TOP_LEFT("Top left", "↖"), TOP_RIGHT("Top right", "↗"), BOTTOM_LEFT("Bottom left", "↙"), BOTTOM_RIGHT("Bottom right", "↘") }
 enum class OverlayGraph(val label: String) { FRAME_TIME("Frame time"), FPS("Frame rate") }
-/** Matches the presenter's PresentScale (lighttouch_jni.cpp). */
-enum class ScreenScaling(val label: String, val native: Int) { SMOOTH("Smooth", 0), SHARP("Sharp", 1) }
+/**
+ * Settings → Screen scaling. [native] is the presenter's PresentScale (lighttouch_jni.cpp): 0 posts a guest-sized
+ * buffer the display hardware scales, 1 a whole-number multiple it brings to size (Pixel perfect sizes the view to
+ * that multiple, so nothing is scaled), 2 draws nearest neighbour at the view's size on the CPU.
+ */
+enum class ScreenScaling(val label: String, val about: String, val native: Int) {
+    SMOOTH("Smooth", "Blends pixels: soft, with no jagged edges", 0),
+    SHARP("Sharp", "Hard-edged pixels, some a little wider than others", 2),
+    CRISP("Crisp", "Sharp pixels, evened out with a hint of blending", 1),
+    PIXEL_PERFECT("Pixel perfect", "Whole-number sizes only, with a border", 1),
+}
 
 /** User preferences, as Compose state backed by SharedPreferences. Read on the main thread. */
 class AppSettings(private val context: Context) {
@@ -51,8 +60,15 @@ class AppSettings(private val context: Context) {
     private val fewerAppPausesState = mutableStateOf(prefs.getBoolean("fewerAppPauses", false))
     var fewerAppPauses: Boolean get() = fewerAppPausesState.value; set(v) { fewerAppPausesState.value = v; prefs.edit().putBoolean("fewerAppPauses", v).apply() }
 
-    private val scalingState = enumPref("scaling", ScreenScaling.SMOOTH)
-    var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("scaling", v.name).apply() }
+    // "screenScaling" since 0.0.15. The old "scaling" key's Sharp was a whole-number multiple filtered to fit by the
+    // display hardware: Crisp now.
+    private val scalingState = mutableStateOf(prefs.getString("screenScaling", null)?.let { name -> ScreenScaling.entries.firstOrNull { it.name == name } }
+        ?: if (prefs.getString("scaling", null) == "SHARP") ScreenScaling.CRISP else ScreenScaling.SMOOTH)
+    var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("screenScaling", v.name).apply() }
+
+    /* Pixel perfect's multiple; 0 is the largest that fits. */
+    private val integerScaleState = mutableStateOf(prefs.getInt("integerScale", 0))
+    var integerScale: Int get() = integerScaleState.value; set(v) { integerScaleState.value = v; prefs.edit().putInt("integerScale", v).apply() }
 
     private val overlayState = enumPref("overlay", OverlayLevel.OFF)
     var overlay: OverlayLevel get() = overlayState.value; set(v) { overlayState.value = v; prefs.edit().putString("overlay", v.name).apply() }

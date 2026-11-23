@@ -58,7 +58,7 @@ pub fn start_page() -> Option<Page> {
         "licenses" => Some(Page::Licenses),
         "network" => Some(Page::Network),
         "carrier" => Some(Page::Carrier),
-        "ipad-size" => Some(Page::IpadSize),
+        "screen-scaling" | "ipad-size" => Some(Page::ScreenScaling),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,
