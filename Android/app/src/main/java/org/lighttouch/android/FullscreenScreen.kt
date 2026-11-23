@@ -51,17 +51,13 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
         // sits in the middle of the phone however it is held. The buttons dock in the lower border
         // when it can hold them; the guest shrinks a little to make room before they float instead.
         val bar = 88.dp
-        val fitHeight = maxWidth / aspect
-        val docked = (maxHeight - fitHeight) / 2 >= bar * 0.8f
-        var screenHeight = if (docked) min(fitHeight, maxHeight - bar * 2) else min(fitHeight, maxHeight)
-        var screenWidth = screenHeight * aspect
-        // Pixel perfect: the largest whole multiple of the screen's pixels in that room, exactly that many pixels.
-        if (host.settings.scaling == ScreenScaling.PIXEL_PERFECT) with(LocalDensity.current) {
-            val pixels = screenPixels(host.selected?.board)
-            val room = (if (docked) maxHeight - bar * 2 else maxHeight).toPx()
-            val whole = wholeMultiple(pixels, maxWidth.toPx(), room, host.settings.integerScale)
-            if (whole > 0) { screenWidth = (whole * pixels.width).toDp(); screenHeight = (whole * pixels.height).toDp() }
+        val fit = with(LocalDensity.current) {
+            fullscreenFit(aspect, screenPixels(host.selected?.board), maxWidth.toPx(), maxHeight.toPx(), bar.toPx(),
+                host.settings.scaling, host.settings.integerScale)
         }
+        val docked = fit.docked
+        val screenWidth = with(LocalDensity.current) { fit.width.toDp() }
+        val screenHeight = with(LocalDensity.current) { fit.height.toDp() }
         if (docked) {
             GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height((maxHeight - screenHeight) / 2), contentAlignment = Alignment.Center) {

@@ -116,6 +116,8 @@ pub struct ScreenScalingState {
     squares: bool,
     sample: Sample,
     pictures: HashMap<(Sample, Screen), (ColorImage, Scaled)>,
+    /// How far a picture larger than the preview has been dragged from centred, in points.
+    pan: egui::Vec2,
 }
 
 /// Open the page from Settings, starting from the saved measure.
@@ -622,7 +624,32 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -
     }
     let skin = screen.skin();
     let pixels = screen.pixels();
-    let placed = device_frame::place_for(&skin, space, Rotation::Portrait, false, &settings, &ctx, pixels);
+    let mut placed = device_frame::place_for(&skin, space, Rotation::Portrait, false, &settings, &ctx, pixels);
+    // A Pixel perfect multiple too large for the preview is still shown at that multiple, not shrunk to fit: the
+    // picture is cropped and pans with a drag.
+    if let (Scaling::PixelPerfect, k @ 1..) = (settings.scaling, settings.integer_scale) {
+        let size = vec2((k as u32 * pixels[0]) as f32, (k as u32 * pixels[1]) as f32) / ppp;
+        placed.screen = Rect::from_center_size(space.center(), size);
+    }
+    let spare = (placed.screen.size() - space.size()).max(egui::Vec2::ZERO) / 2.0;
+    let drag = ui.interact(space, ui.scope_id().with("preview-pan"), Sense::drag());
+    let pan = &mut app.screen_scaling.pan;
+    if spare == egui::Vec2::ZERO {
+        *pan = egui::Vec2::ZERO;
+    } else {
+        if drag.dragged() {
+            *pan += drag.drag_delta();
+        }
+        *pan = pan.clamp(-spare, spare);
+        placed.screen = placed.screen.translate(*pan);
+        drag.on_hover_cursor(egui::CursorIcon::Grab);
+    }
+    if settings.scaling == Scaling::PixelPerfect {
+        // On whole physical pixels, as the device's screen is.
+        let at = placed.screen.min;
+        let at = egui::pos2((at.x * ppp).round() / ppp, (at.y * ppp).round() / ppp);
+        placed.screen = Rect::from_min_size(at, placed.screen.size());
+    }
     let key = (app.screen_scaling.sample, screen);
     let (image, texture) = app.screen_scaling.pictures.entry(key).or_insert_with(|| {
         let decoded = image::load_from_memory(key.0.png(screen)).map(|i| i.to_rgba8());
@@ -636,9 +663,8 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -
     texture.update(&ctx, "scaling-preview", false, settings.scaling, image.size, shown, || image.clone());
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
     texture.paint(&painter, placed.screen, Rotation::Portrait, false);
-    let cropped = !space.expand(0.5).contains_rect(placed.screen);
-    if cropped {
-        crop_note(ui, space);
+    if !space.expand(0.5).contains_rect(placed.screen) {
+        crop_note(ui, space, "Drag to see the rest");
     }
     let times = placed.screen.width() * ppp / pixels[0] as f32;
     if (times - times.round()).abs() < 0.01 {
@@ -682,15 +708,14 @@ fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) 
     );
     let whole = placed.device.as_ref().map_or(screen_rect, |d| d.body);
     if !space.expand(0.5).contains_rect(whole) {
-        crop_note(ui, space);
+        crop_note(ui, space, "Cropped to fit here");
     }
     let size = format!("Screen {:.1} × {:.1} cm", skin.screen_width / 10.0, skin.screen_height / 10.0);
     format!("{size} at real size. {}", fullscreen_fit(&skin, monitor_pixels(&ctx), draft))
 }
 
-/// "Cropped to fit here" along the bottom of the preview.
-fn crop_note(ui: &Ui, space: Rect) {
-    let note = "Cropped to fit here";
+/// A note along the bottom of the preview: why part of the picture is missing.
+fn crop_note(ui: &Ui, space: Rect, note: &str) {
     let painter = ui.painter();
     let galley = painter.layout_no_wrap(note.into(), FontId::new(12.0, theme::medium()), Color32::WHITE);
     let chip =

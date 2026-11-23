@@ -33,6 +33,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.floor
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -52,6 +59,27 @@ internal fun screenPixels(board: String?): IntSize = when {
 internal fun wholeMultiple(pixels: IntSize, roomWidth: Float, roomHeight: Float, fixed: Int): Int {
     val largest = (12 downTo 1).firstOrNull { pixels.width * it <= roomWidth + 0.5f && pixels.height * it <= roomHeight + 0.5f } ?: 0
     return if (fixed in 1..largest) fixed else largest
+}
+
+/** Where full screen puts the guest: its size in physical pixels, and whether the button bar docks under it. */
+internal data class FullscreenFit(val width: Float, val height: Float, val docked: Boolean)
+
+/**
+ * The guest's size in full screen (FullscreenScreen, and the Screen scaling preview, which shows that size) in a
+ * window of [width] x [height] pixels: as wide as the panel at the screen's [aspect], with equal borders above and
+ * below; the [bar] docks in the lower one when it nearly fits, the guest shrinking a little to make room. Pixel
+ * perfect takes the largest whole multiple of [pixels] in that room (or [fixed] where it fits).
+ */
+internal fun fullscreenFit(aspect: Float, pixels: IntSize, width: Float, height: Float, bar: Float, method: ScreenScaling, fixed: Int): FullscreenFit {
+    val fitHeight = width / aspect
+    val docked = (height - fitHeight) / 2 >= bar * 0.8f
+    val room = if (docked) height - bar * 2 else height
+    if (method == ScreenScaling.PIXEL_PERFECT) {
+        val whole = wholeMultiple(pixels, width, room, fixed)
+        if (whole > 0) return FullscreenFit((whole * pixels.width).toFloat(), (whole * pixels.height).toFloat(), docked)
+    }
+    val h = min(fitHeight, room)
+    return FullscreenFit(h * aspect, h, docked)
 }
 
 /**
@@ -173,36 +201,52 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
                 FilterChip(sample == option, onClick = { sample = option }, label = { Text(option.label, maxLines = 1) })
         }
         Spacer(Modifier.height(4.dp))
-        var caption by remember { mutableStateOf("") }
+        // The picture at the size full screen gives it on this phone, 1:1: when it's larger than the box, drag to see
+        // the rest rather than have it shrunk back down.
+        val window = LocalWindowInfo.current.containerSize
+        val bar = with(LocalDensity.current) { 88.dp.toPx() }
+        val s = host.settings
+        val fit = fullscreenFit(screen.skin.screenWidth / screen.skin.screenHeight, screen.pixels, window.width.toFloat(),
+            window.height.toFloat(), bar, method, s.integerScale)
+        val scale = fit.width / source.width
         Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF0E0F12)).testTag("preview_picture")) {
-            ScaledPicture(source, method, host.settings.integerScale, Modifier.fillMaxSize().padding(8.dp)) { caption = it }
+            ScaledPicture(source, method, scale, Modifier.fillMaxSize())
         }
-        Text(if (squares) "Squares are 1 cm on the real device. $caption" else caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp, top = 6.dp))
+        val times = if (abs(scale - scale.roundToInt()) < 0.01f) "${scale.roundToInt()}×" else "%.2f×".format(scale)
+        val shown = "As in full screen: $times its pixels"
+        Text(if (squares) "Squares are 1 cm on the real device. $shown" else shown, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 6.dp))
     }
 }
 
+/**
+ * [source] drawn at [scale] by [method], on whole physical pixels, centred in the box when it fits; when it's larger, it
+ * starts centred and pans with a drag.
+ */
 @Composable
-private fun ScaledPicture(source: Bitmap, method: ScreenScaling, fixed: Int, modifier: Modifier, onCaption: (String) -> Unit) {
-    val pixels = IntSize(source.width, source.height)
+private fun ScaledPicture(source: Bitmap, method: ScreenScaling, scale: Float, modifier: Modifier) {
+    val k = if (method == ScreenScaling.CRISP) crispMultiple(scale) else 1
+    val image: ImageBitmap = remember(source, k) {
+        (if (k > 1) Bitmap.createScaledBitmap(source, source.width * k, source.height * k, false) else source).asImageBitmap()
+    }
+    val filter = if (method == ScreenScaling.SMOOTH || method == ScreenScaling.CRISP) FilterQuality.Low else FilterQuality.None
+    val size = IntSize((source.width * scale).roundToInt(), (source.height * scale).roundToInt())
     BoxWithConstraints(modifier) {
-        val room = with(androidx.compose.ui.platform.LocalDensity.current) { maxWidth.toPx() to maxHeight.toPx() }
-        val fit = min(room.first / pixels.width, room.second / pixels.height)
-        val whole = if (method == ScreenScaling.PIXEL_PERFECT) wholeMultiple(pixels, room.first, room.second, fixed) else 0
-        val scale = if (whole > 0) whole.toFloat() else fit
-        val k = if (method == ScreenScaling.CRISP) crispMultiple(scale) else 1
-        val image: ImageBitmap = remember(source, k) {
-            (if (k > 1) Bitmap.createScaledBitmap(source, source.width * k, source.height * k, false) else source).asImageBitmap()
-        }
-        val filter = if (method == ScreenScaling.SMOOTH || method == ScreenScaling.CRISP) FilterQuality.Low else FilterQuality.None
-        val size = IntSize((pixels.width * scale).roundToInt(), (pixels.height * scale).roundToInt())
-        LaunchedEffect(scale) {
-            onCaption(if (scale == floor(scale)) "Shown at ${scale.toInt()}× its pixels" else "Shown at ${"%.2f".format(scale)}× its pixels")
-        }
-        Canvas(Modifier.fillMaxSize()) {
-            val at = IntOffset(((this.size.width - size.width) / 2).roundToInt(), ((this.size.height - size.height) / 2).roundToInt())
+        val box = with(LocalDensity.current) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }
+        val spare = IntOffset(box.width - size.width, box.height - size.height)
+        var pan by remember(source, size, box) { mutableStateOf(Offset.Zero) }
+        fun clamp(o: Offset) = Offset(o.x.coerceIn(min(0, spare.x / 2).toFloat(), max(0, -spare.x / 2).toFloat()),
+            o.y.coerceIn(min(0, spare.y / 2).toFloat(), max(0, -spare.y / 2).toFloat()))
+        val draggable = spare.x < 0 || spare.y < 0
+        Canvas(Modifier.fillMaxSize().then(if (draggable) Modifier.pointerInput(source, size, box) {
+            detectDragGestures { change, drag -> change.consume(); pan = clamp(pan + drag) }
+        } else Modifier)) {
+            val at = IntOffset(spare.x / 2 + pan.x.roundToInt(), spare.y / 2 + pan.y.roundToInt())
             drawImage(image, IntOffset.Zero, IntSize(image.width, image.height), at, size, filterQuality = filter)
         }
+        if (draggable) Text("Drag to see the rest", style = MaterialTheme.typography.labelMedium, color = Color.White,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp)
+                .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
     }
 }
 
