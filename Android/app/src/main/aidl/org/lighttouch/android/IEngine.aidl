@@ -1,5 +1,6 @@
 package org.lighttouch.android;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.view.Surface;
 interface IEngine {
     Bundle start(String recordId);
@@ -12,6 +13,12 @@ interface IEngine {
     /** importPrepared for this app's own firmwarekit output: moved in as the base, not copied or hashed again. */
     String adoptPrepared(String source, String displayName, String rom);
     Bundle importProgress();
+    /** Write a stopped device to [destination] as a device file (a zip another LightTouch imports): the error or "".
+     *  Progress through importProgress(); cancelTransfer() stops it. */
+    String exportDevice(String recordId, in ParcelFileDescriptor destination, String app);
+    /** Add the device in the device file [input] as a new device: error ("" when it worked), id and name. */
+    Bundle importDevice(in ParcelFileDescriptor input);
+    void cancelTransfer();
     String setGuestPackage(String recordId, String path);
     Bundle status();
     Bundle profile(boolean recording);

@@ -442,7 +442,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                         }
                         Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(), onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null },
-                            onSaveLogs = ::exportLogs, savingLogs = logsBusy)
+                            onSaveLogs = ::exportLogs, savingLogs = logsBusy, onImport = ::importDevice)
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
                         Screen.CARRIER -> CarrierScreen(this@MainActivity) { overlay = null }
                         Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
@@ -456,6 +456,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 96.dp))
                 }
                 if (devicesOpen) DevicesSheet(this@MainActivity) { devicesOpen = false }
+                transfer?.let { TransferDialog(it, ::cancelTransfer) }
                 if (licensesOpen) LicenseDialog { licensesOpen = false }
             }
         }
@@ -519,6 +520,120 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     // A full page like Settings, so it sits inside the window's insets; Back returns to the devices list.
     override fun openDetails(device: DeviceSummary) { detailsDevice = device; devicesOpen = false; overlay = Screen.DETAILS }
     override fun addDevice() = openPreparation()
+
+    // Device transfer: export to a document the user names, import one they pick; both stream through the worker.
+    override var transfer by mutableStateOf<TransferState?>(null)
+        private set
+    /** The device whose export waits for its document (kept across an activity recreated behind the picker). */
+    private val transferPrefs get() = getSharedPreferences("device-transfer", MODE_PRIVATE)
+    private val exportDocument = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val id = transferPrefs.getString("export", null); transferPrefs.edit().remove("export").apply()
+        val device = devices.firstOrNull { it.id == id }
+        if (uri != null && device != null) exportDeviceTo(device, uri)
+        else if (uri != null) runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
+    }
+    private val importDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importDeviceFrom(uri) }
+    override fun exportDevice(device: DeviceSummary) {
+        if (transfer != null || busy) return
+        if (active && device.selected) { error = "Stop ${device.name} before exporting it"; return }
+        transferPrefs.edit().putString("export", device.id).apply()
+        exportDocument.launch(TransferState.fileName(device.name))
+    }
+    override fun importDevice() {
+        if (transfer != null || busy) return
+        // Providers label a .zip application/zip, or by its other names, or not at all.
+        importDocument.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/x-zip", "application/octet-stream"))
+    }
+    override fun cancelTransfer() {
+        val state = transfer ?: return
+        state.cancelling = true
+        val worker = engine
+        Thread({ try { worker?.cancelTransfer() } catch (_: RemoteException) { } }, "transfer-cancel").start()
+    }
+    /** Follows the worker's progress into [state] (and the notification) until the returned function runs. */
+    private fun watchTransfer(worker: IEngine, state: TransferState): () -> Unit {
+        val running = java.util.concurrent.atomic.AtomicBoolean(true)
+        Thread({
+            while (running.get()) {
+                val p = try { worker.importProgress() } catch (_: Exception) { null }
+                if (p != null && running.get()) {
+                    val phase = p.getString("phase") ?: ""; val done = p.getLong("done"); val total = p.getLong("total")
+                    handler.post {
+                        if (!running.get() || phase.isEmpty()) return@post
+                        state.phase = phase; state.done = done; state.total = total
+                        state.fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f
+                        DownloadService.update(applicationContext, state.title, state.fraction.takeIf { it >= 0f })
+                    }
+                }
+                Thread.sleep(250)
+            }
+        }, "transfer-progress").start()
+        return { running.set(false) }
+    }
+    private fun exportDeviceTo(device: DeviceSummary, uri: Uri) {
+        val worker = engine ?: run { error = "The device worker isn't running; try again"; runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }; return }
+        val state = TransferState("Exporting ${device.name}", exporting = true)
+        transfer = state
+        DownloadService.hold(applicationContext, state.title)
+        val started = SystemClock.elapsedRealtime()
+        Thread({
+            val stopWatching = watchTransfer(worker, state)
+            val result = try {
+                (contentResolver.openFileDescriptor(uri, "w") ?: error("the file couldn't be opened")).let { out ->
+                    worker.exportDevice(device.id, out, "LightTouch ${BuildConfig.VERSION_NAME} (Android)").also { runCatching { out.close() } }
+                }
+            } catch (e: Exception) { e.message ?: "the device worker stopped" } finally { stopWatching() }
+            val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
+            val bytes = if (result.isEmpty()) DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L else 0L
+            if (result.isEmpty()) AppLog.i("Exported \"${device.name}\" (${device.board} ${device.build}): $bytes bytes in ${"%.1f".format(seconds)} s")
+            else { AppLog.w("Export of \"${device.name}\" ended: $result"); runCatching { DocumentsContract.deleteDocument(contentResolver, uri) } }
+            handler.post {
+                DownloadService.release(applicationContext); transfer = null
+                when {
+                    result.isEmpty() -> notice = "Exported ${device.name} (${TransferState.size(bytes)})"
+                    result == "cancelled" -> notice = "Export cancelled"
+                    else -> error = "Couldn't export ${device.name}: $result"
+                }
+            }
+        }, "device-export").start()
+    }
+    private fun importDeviceFrom(uri: Uri) {
+        val worker = engine ?: run { error = "The device worker isn't running; try again"; return }
+        val state = TransferState("Importing ${displayName(uri).removeSuffix(".zip").removeSuffix(".lighttouch")}", exporting = false)
+        transfer = state
+        DownloadService.hold(applicationContext, state.title)
+        val started = SystemClock.elapsedRealtime()
+        Thread({
+            val stopWatching = watchTransfer(worker, state)
+            var name = ""; var selected = false
+            val result = try {
+                val outcome = (contentResolver.openFileDescriptor(uri, "r") ?: error("the file couldn't be opened")).let { input ->
+                    worker.importDevice(input).also { runCatching { input.close() } }
+                }
+                name = outcome.getString("name") ?: ""
+                val id = outcome.getString("id") ?: ""
+                (outcome.getString("error") ?: "").also { failure ->
+                    // A new device becomes the selected one unless another is running.
+                    if (failure.isEmpty()) selected = status !in listOf("running", "paused", "starting", "stopping") && worker.select(id).isEmpty()
+                }
+            } catch (e: Exception) { e.message ?: "the device worker stopped" } finally { stopWatching() }
+            val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
+            if (result.isEmpty()) AppLog.i("Imported \"$name\" in ${"%.1f".format(seconds)} s") else AppLog.w("Import ended: $result")
+            handler.post {
+                DownloadService.release(applicationContext); transfer = null
+                when {
+                    result.isEmpty() -> {
+                        if (overlay == Screen.SETUP) overlay = null
+                        notice = if (selected || status !in listOf("running", "paused", "starting", "stopping")) "$name is ready"
+                            else "Added $name; stop the running device to switch to it"
+                    }
+                    result == "cancelled" -> notice = "Import cancelled"
+                    else -> error = "Couldn't import the device: $result"
+                }
+                refreshDevices()
+            }
+        }, "device-import").start()
+    }
     override fun openLicenses() { licensesOpen = true }
     override fun openPreparation() {
         if (!preparationActive() && prep.preparation?.getString("state") != "complete")

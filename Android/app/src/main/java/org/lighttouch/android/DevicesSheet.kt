@@ -56,7 +56,9 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                     DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
                         needsRecovery = device.dirty && !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
-                        onDetails = { host.openDetails(device) }, onRename = { renaming = device }, onDelete = { deleting = device })
+                        onDetails = { host.openDetails(device) }, onRename = { renaming = device }, onDelete = { deleting = device },
+                        exportable = !(host.active && device.selected) && !host.busy && host.transfer == null,
+                        onExport = { onDismiss(); host.exportDevice(device) })
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
@@ -69,6 +71,20 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                 Column {
                     Text("Add device", style = MaterialTheme.typography.titleSmall)
                     Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            // A device exported by LightTouch on another phone or computer; allowed while one runs.
+            val canImport = !host.busy && host.transfer == null
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
+                .clickable(enabled = canImport) { onDismiss(); host.importDevice() }.padding(12.dp).testTag("import_device").alpha(if (canImport) 1f else 0.38f),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                    Icon(LtIcons.Download, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Import device", style = MaterialTheme.typography.titleSmall)
+                    Text("Exported from LightTouch on another phone or computer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -85,7 +101,8 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
+                      exportable: Boolean, onExport: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     val rowColor = if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
@@ -115,6 +132,8 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
                 DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(LtIcons.Info, null) }, onClick = { menu = false; onDetails() },
                     modifier = Modifier.testTag("device_details_item"))
                 DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { Text("Export") }, leadingIcon = { Icon(LtIcons.Upload, null) }, enabled = exportable,
+                    onClick = { menu = false; onExport() }, modifier = Modifier.testTag("device_export_item"))
                 DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, enabled = editable,
                     onClick = { menu = false; onDelete() })
             }

@@ -5,7 +5,8 @@
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
-//! saved, and closes once they are written.
+//! saved, and closes once they are written. `LIGHTTOUCH_UI_TRANSFER=export:ID:FILE` or `import:FILE` starts a device
+//! export or import (no file dialog).
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -95,6 +96,18 @@ pub fn start(app: &mut App) {
             if start_page() != Some(Page::Prepare) {
                 app.page = Page::Device;
             }
+        }
+    }
+    // LIGHTTOUCH_UI_TRANSFER=export:ID:FILE or import:FILE starts that export or import without a file dialog.
+    if let Ok(spec) = std::env::var("LIGHTTOUCH_UI_TRANSFER") {
+        match spec.split_once(':') {
+            Some(("export", rest)) => {
+                if let Some((id, file)) = rest.split_once(':') {
+                    app.model.export_device(id, PathBuf::from(file));
+                }
+            }
+            Some(("import", file)) => app.model.import_device(PathBuf::from(file)),
+            _ => eprintln!("LIGHTTOUCH_UI_TRANSFER is export:ID:FILE or import:FILE"),
         }
     }
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {

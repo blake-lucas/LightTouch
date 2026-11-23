@@ -69,6 +69,13 @@ interface GuestHost {
     fun renameDevice(id: String, name: String)
     fun deleteDevice(id: String)
     fun addDevice()
+    /** A device export or import running (with its progress), else null. */
+    val transfer: TransferState?
+    /** Ask where to save [device] as a device file, then export it there. */
+    fun exportDevice(device: DeviceSummary)
+    /** Ask for a device file (another LightTouch's export) and add it as a new device. */
+    fun importDevice()
+    fun cancelTransfer()
     fun toggleProfile()
     /** Collect the logs (docs/LOGS.md) into a zip and ask where to save it. */
     fun exportLogs()

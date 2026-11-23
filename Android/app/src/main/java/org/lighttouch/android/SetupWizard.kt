@@ -41,7 +41,8 @@ internal class SetupState {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () -> Unit,
-                         onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit, onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false) {
+                         onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit, onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false,
+                         onImport: () -> Unit = {}) {
     BackHandler {
         when {
             state.step == SetupStep.DONE -> onFinish(false)
@@ -56,7 +57,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () ->
             }
             AnimatedContent(state.step, Modifier.weight(1f), label = "setup-step") { step ->
                 when (step) {
-                    SetupStep.WELCOME -> Welcome(onPrepare)
+                    SetupStep.WELCOME -> Welcome(onPrepare, onImport)
                     SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish, onSaveLogs, savingLogs)
                 }
             }
@@ -65,7 +66,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPrepare: () ->
 }
 
 @Composable
-private fun Welcome(onPrepare: () -> Unit) {
+private fun Welcome(onPrepare: () -> Unit, onImport: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center) {
         Box(Modifier.size(72.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
             Icon(LtIcons.Phone, null, Modifier.size(38.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -84,6 +85,10 @@ private fun Welcome(onPrepare: () -> Unit) {
         Spacer(Modifier.height(40.dp))
         Button(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
+        }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onImport, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("setup_import")) {
+            Text("Import a device from another phone or computer")
         }
     }
 }

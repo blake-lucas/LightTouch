@@ -638,8 +638,11 @@ void present() {
 static std::mutex import_progress_guard;
 static std::string import_phase;
 static uint64_t import_done=0,import_total=0;
-static int import_observed(void *,const char *phase,uint64_t done,uint64_t total) {
-    std::lock_guard<std::mutex> lock(import_progress_guard);import_phase=phase?phase:"";import_done=done;import_total=total;return 0;
+// Set by cancelTransfer: the running export or import stops at its next progress report.
+static std::atomic<bool> transfer_cancelled{false};
+static int import_observed(void *transfer,const char *phase,uint64_t done,uint64_t total) {
+    std::lock_guard<std::mutex> lock(import_progress_guard);import_phase=phase?phase:"";import_done=done;import_total=total;
+    return transfer && transfer_cancelled.load()?1:0;
 }
 JNI(importProgress) jobjectArray JNICALL Java_org_lighttouch_android_Native_importProgress(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(import_progress_guard);
@@ -685,6 +688,44 @@ JNI(adoptPrepared) jstring JNICALL Java_org_lighttouch_android_Native_adoptPrepa
     import_observed(nullptr,"",0,0);
     return string(env,result(status,error));
 }
+// Device transfer (Transfer.cpp) on descriptors the app opened through the Storage Access Framework. Each opens its
+// own library handle and leaves library_guard alone: an export or import takes minutes, and records() or Start must
+// not wait for it (the core's own locks keep them apart).
+static lt_status transfer_library(const char *root,lt_library **out,lt_error *error) {
+    lt_library_config config=LT_INIT(lt_library_config);config.root_path=root;
+    return lt_library_open(&config,out,error);
+}
+JNI(exportDevice) jstring JNICALL Java_org_lighttouch_android_Native_exportDevice(JNIEnv *env,jobject,jstring root,jstring id,jint fd,jstring app) {
+    Utf path(env,root),record_id(env,id),name(env,app);
+    lt_error error=LT_INIT(lt_error);lt_library *own=nullptr;auto status=transfer_library(path.value,&own,&error);
+    if(status!=LT_OK)return string(env,result(status,error));
+    lt_export_config config=LT_INIT(lt_export_config);
+    config.record_id=record_id.value;config.path=nullptr;config.fd=fd;config.app=name.value;
+    transfer_cancelled=false;import_observed(nullptr,"",0,0);
+    char marker=1;
+    status=lt_library_export(own,&config,import_observed,&marker,&error);
+    import_observed(nullptr,"",0,0);lt_library_close(own);
+    return string(env,result(status,error));
+}
+/* [error, id, name]: the new device, or why not. */
+JNI(importDevice) jobjectArray JNICALL Java_org_lighttouch_android_Native_importDevice(JNIEnv *env,jobject,jstring root,jint fd) {
+    Utf path(env,root);
+    auto out=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
+    lt_error error=LT_INIT(lt_error);lt_library *own=nullptr;auto status=transfer_library(path.value,&own,&error);
+    lt_record_info record=LT_INIT(lt_record_info);
+    if(status==LT_OK) {
+        lt_transfer_import_config config=LT_INIT(lt_transfer_import_config);config.path=nullptr;config.fd=fd;
+        transfer_cancelled=false;import_observed(nullptr,"",0,0);
+        char marker=1;
+        status=lt_library_import_device(own,&config,import_observed,&marker,&record,&error);
+        import_observed(nullptr,"",0,0);lt_library_close(own);
+    }
+    env->SetObjectArrayElement(out,0,string(env,result(status,error)));
+    env->SetObjectArrayElement(out,1,string(env,status==LT_OK?record.id:""));
+    env->SetObjectArrayElement(out,2,string(env,status==LT_OK?record.display_name:""));
+    return out;
+}
+JNI(cancelTransfer) void JNICALL Java_org_lighttouch_android_Native_cancelTransfer(JNIEnv *,jobject) { transfer_cancelled=true; }
 JNI(setGuestPackage) jstring JNICALL Java_org_lighttouch_android_Native_setGuestPackage(JNIEnv *env,jobject,jstring root,jstring id,jstring guest) {
     std::lock_guard<std::mutex> lock(library_guard);
     Utf path(env,root),record_id(env,id),package(env,guest);

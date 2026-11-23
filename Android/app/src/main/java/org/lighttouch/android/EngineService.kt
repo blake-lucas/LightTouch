@@ -167,6 +167,13 @@ class EngineService : Service() {
             val result = Native.debugQmpSnapshot()
             return Bundle().apply { putString("error", result[0]); putString("path", result[1]) }
         }
+        override fun exportDevice(recordId: String, destination: android.os.ParcelFileDescriptor, app: String): String =
+            destination.use { Native.exportDevice(File(filesDir, "library").absolutePath, recordId, it.fd, app) }
+        override fun importDevice(input: android.os.ParcelFileDescriptor): Bundle =
+            input.use { Native.importDevice(File(filesDir, "library").absolutePath, it.fd) }.let { r ->
+                Bundle().apply { putString("error", r[0]); putString("id", r[1]); putString("name", r[2]) }
+            }
+        override fun cancelTransfer() = Native.cancelTransfer()
         override fun importPrepared(source: String, displayName: String, rom: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, "")
         override fun adoptPrepared(source: String, displayName: String, rom: String): String = Native.adoptPrepared(source, File(filesDir, "library").absolutePath, displayName, rom)
         override fun setGuestPackage(recordId: String, path: String): String = Native.setGuestPackage(File(filesDir, "library").absolutePath, recordId, path)

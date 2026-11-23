@@ -10,6 +10,12 @@ internal object Native {
     external fun adoptPrepared(source: String, libraryRoot: String, displayName: String, rom: String): String
     /** The running import's phase, bytes done and bytes total; an empty phase when none runs. */
     external fun importProgress(): Array<String>
+    /** Write a stopped device to [fd] as a device file (Transfer.cpp); the error or "". Progress through importProgress. */
+    external fun exportDevice(libraryRoot: String, id: String, fd: Int, app: String): String
+    /** Add the device in the device file on [fd]: [error, id, name]. */
+    external fun importDevice(libraryRoot: String, fd: Int): Array<String>
+    /** Stop the running export or import (it cleans up after itself). */
+    external fun cancelTransfer()
     external fun setGuestPackage(libraryRoot: String, id: String, path: String): String
     external fun records(libraryRoot: String): Array<Array<String>>
     external fun select(libraryRoot: String, id: String): String
