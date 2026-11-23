@@ -49,6 +49,8 @@ extern int open(const char *, int, ...);
 extern int fcntl(int, int, ...);
 extern int fsync(int);
 extern long pread(int, void *, size_t, long long);
+extern long pwrite(int, const void *, size_t, long long);
+extern int unlink(const char *);
 extern char *getenv(const char *);
 
 /* Integer division: ARMv6 has no divide instruction, and the helpers clang calls for it
@@ -725,8 +727,9 @@ static u64 b_fork(u32 n)   /* 0: not allowed (an app's sandbox denies fork) */
 #define O_CREAT 0x200
 #define O_TRUNC 0x400
 #define F_NOCACHE 48
-static char io_path[256], *io_buffer;
-static int io_ready;
+static char io_path[256], io_path_w[256], *io_buffer;
+static int io_ready, io_w_ready;
+static int io_open_at(const char *path, int flags);
 static int io_open(int flags)
 {
     if (!io_path[0]) {
@@ -739,7 +742,11 @@ static int io_open(int flags)
         io_path[n] = 0;
     }
     if (!io_buffer && !(io_buffer = malloc(IO_CHUNK))) return -1;
-    int fd = open(io_path, flags, 0644);
+    return io_open_at(io_path, flags);
+}
+static int io_open_at(const char *path, int flags)
+{
+    int fd = open(path, flags, 0644);
     if (fd >= 0) fcntl(fd, F_NOCACHE, 1);
     return fd;
 }
@@ -795,6 +802,113 @@ static u64 b_fs_read16k(u32 n)
     return elapsed;
 }
 
+/* Write patterns beyond fs-write. fs-write-big: 16 MiB uncached in 256 KiB writes, then fsync (a sustained
+ * stream, past any write buffer). fs-write-cached: 8 MiB through the buffer cache in 64 KiB writes, then fsync
+ * (how an app saves). fs-rand-4k: 4 KiB uncached pwrite at a scattered 4 KiB slot of the 8 MiB file, one fsync at
+ * the end. fs-fsync-4k / fs-fullfsync-4k: 4 KiB pwrite then fsync / F_FULLFSYNC each time (a database commit; the
+ * full one also asks the flash to flush). fs-create: create, write 16 KiB, close a new file (an unpack's small
+ * files); the files are removed afterwards, untimed. */
+#define IO_BIG_KIB 16384
+#define IO_BIG_CHUNK (256 * 1024)
+#define F_FULLFSYNC 51
+static char *io_big;
+/* The write tests' own file (Documents/ltb-w.dat), so fs-check's file keeps what fs-write wrote. */
+static int io_open_w(int flags)
+{
+    if (!io_path_w[0]) {
+        int fd = io_open(O_RDONLY | O_CREAT);   /* fills io_path and io_buffer */
+        u32 n = 0;
+        if (fd < 0) return -1;
+        close(fd);
+        while (io_path[n]) io_path_w[n] = io_path[n], n++;
+        io_path_w[n - 6] = 'w'; io_path_w[n - 5] = '.'; io_path_w[n - 4] = 'd'; io_path_w[n - 3] = 'a';
+        io_path_w[n - 2] = 't'; io_path_w[n - 1] = 0;   /* ltb-io.dat -> ltb-w.dat */
+    }
+    return io_open_at(io_path_w, flags);
+}
+static u64 io_write_file(u32 n, u32 chunk, int nocache)
+{
+    if (!io_big && !(io_big = malloc(IO_BIG_CHUNK))) return 0;
+    u64 t = now_ns();
+    int fd = io_open_w(O_RDWR | O_CREAT | O_TRUNC);
+    if (fd < 0) return 0;
+    if (!nocache) fcntl(fd, F_NOCACHE, 0);
+    for (u32 done = 0; done < n; done += chunk / 1024) {
+        for (u32 i = 0; i < chunk; i += 4096) io_big[i] = (char)(done + i);
+        if (write(fd, io_big, chunk) != (long)chunk) { close(fd); return 0; }
+    }
+    if (fsync(fd) != 0) { close(fd); return 0; }
+    close(fd);
+    io_w_ready = n >= IO_FILE_KIB;
+    return now_ns() - t;
+}
+static int io_w_prepare(void) { return io_w_ready || io_write_file(IO_FILE_KIB, IO_CHUNK, 1) != 0; }
+static u64 b_fs_write_big(u32 n) { return io_write_file(n, IO_BIG_CHUNK, 1); }
+static u64 b_fs_write_cached(u32 n) { return io_write_file(n, IO_CHUNK, 0); }
+static u64 b_fs_rand4k(u32 n)
+{
+    if (!io_w_prepare()) return 0;
+    int fd = io_open_w(O_RDWR);
+    if (fd < 0) return 0;
+    u32 seed = 1357;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        seed = seed * 1103515245u + 12345u;
+        u32 slot = (seed >> 8) % (IO_FILE_KIB / 4);
+        for (u32 k = 0; k < 4096; k += 512) io_buffer[k] = (char)(slot * 4096 + k);
+        if (pwrite(fd, io_buffer, 4096, (long long)slot * 4096) != 4096) { close(fd); return 0; }
+    }
+    if (fsync(fd) != 0) { close(fd); return 0; }
+    u64 elapsed = now_ns() - t;
+    close(fd);
+    return elapsed;
+}
+static u64 io_sync4k(u32 n, int full)
+{
+    if (!io_w_prepare()) return 0;
+    int fd = io_open_w(O_RDWR);
+    if (fd < 0) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        io_buffer[0] = (char)i;
+        if (pwrite(fd, io_buffer, 4096, (long long)(i % 64) * 4096) != 4096) { close(fd); return 0; }
+        if ((full ? fcntl(fd, F_FULLFSYNC, 0) : fsync(fd)) != 0) { close(fd); return 0; }
+    }
+    u64 elapsed = now_ns() - t;
+    close(fd);
+    return elapsed;
+}
+static u64 b_fs_fsync4k(u32 n) { return io_sync4k(n, 0); }
+static u64 b_fs_fullfsync4k(u32 n) { return io_sync4k(n, 1); }
+static u64 b_fs_create(u32 n)
+{
+    char path[300];
+    u32 len = 0;
+    int probe = io_open_w(O_RDONLY | O_CREAT);   /* fills io_path_w and io_buffer */
+    if (probe < 0) return 0;
+    close(probe);
+    while (io_path_w[len] && len < 250) path[len] = io_path_w[len], len++;
+    if (!len || !io_buffer) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        u32 m = len;
+        path[m++] = '.'; path[m++] = (char)('a' + i / 676 % 26); path[m++] = (char)('a' + i / 26 % 26);
+        path[m++] = (char)('a' + i % 26); path[m] = 0;
+        int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) return 0;
+        for (u32 k = 0; k < 4; k++) if (write(fd, io_buffer, 4096) != 4096) { close(fd); return 0; }
+        close(fd);
+    }
+    u64 elapsed = now_ns() - t;
+    for (u32 i = 0; i < n; i++) {
+        u32 m = len;
+        path[m++] = '.'; path[m++] = (char)('a' + i / 676 % 26); path[m++] = (char)('a' + i / 26 % 26);
+        path[m++] = (char)('a' + i % 26); path[m] = 0;
+        unlink(path);
+    }
+    return elapsed;
+}
+
 /* usleep(1000): the timer interrupt and wakeup path. Reported as the actual sleep. */
 static u64 b_sleep(u32 n)
 {
@@ -830,6 +944,12 @@ static const Test tests[] = {
     {"fs-read", "KiB read uncached (64 KiB reads in order)", b_fs_read, IO_FILE_KIB},
     {"fs-check", "KiB of a previous launch's fs-write file, read and checked", b_fs_check, IO_FILE_KIB},
     {"fs-read-16k", "uncached 16 KiB pread at a scattered offset", b_fs_read16k, 256},
+    {"fs-write-big", "KiB written uncached (256 KiB writes, 16 MiB, then fsync)", b_fs_write_big, IO_BIG_KIB},
+    {"fs-write-cached", "KiB written through the cache (64 KiB writes, then fsync)", b_fs_write_cached, IO_FILE_KIB},
+    {"fs-rand-4k", "uncached 4 KiB pwrite at a scattered slot, one fsync at the end", b_fs_rand4k, 512},
+    {"fs-fsync-4k", "4 KiB pwrite + fsync", b_fs_fsync4k, 64},
+    {"fs-fullfsync-4k", "4 KiB pwrite + F_FULLFSYNC", b_fs_fullfsync4k, 64},
+    {"fs-create", "create, write 16 KiB, close a new file", b_fs_create, 200},
     {"gl-get", "glGetError()", b_gl_get, 2000},
     {"gl-state", "glEnable/glDisable", b_gl_state, 20000},
     {"gl-draw", "glDrawArrays, same 32x32 textured quad", b_gl_draw, 5000},
