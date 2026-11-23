@@ -1,9 +1,9 @@
 //! Drawing a guest-sized picture at the size it's shown, by the Screen scaling setting: the live screen and the
 //! settings page's preview go through the same texture upload and mesh, so the preview shows what the device will.
 //! Smooth and Crisp sample bilinearly, Sharp and Pixel perfect take the nearest pixel. Crisp (sharp-bilinear) first
-//! repeats each pixel the whole number of times that reaches the size shown, then bilinear brings it down to that
-//! size, so only about one screen pixel at each edge is blended, at any size (rounding the multiple down instead
-//! would leave it as soft as Smooth below 2x).
+//! repeats each pixel a whole number of times, the largest that fits but at least 2 once the picture is shown larger
+//! than it is (1 would be as soft as Smooth), then bilinear brings it to the size shown, so only about a screen pixel
+//! at each edge is blended. The Android presenter uses the same rule.
 use eframe::egui::{self, Color32, ColorImage, Rect, TextureHandle, TextureOptions};
 use lighttouch_model::rotation::Rotation;
 use lighttouch_model::settings::Scaling;
@@ -18,14 +18,23 @@ pub fn texture_options(scaling: Scaling) -> TextureOptions {
     }
 }
 
-/// Crisp's prescale: the least whole number of times a `size` picture reaches `shown_px` (its longer side shown, in
-/// physical pixels). Other methods upload the picture as it is.
+/// Crisp's prescale for a `size` picture whose longer side shows `shown_px` physical pixels: the largest whole
+/// multiple that fits, but 2 between 1x and 2x. Other methods upload the picture as it is.
 pub fn prescale_factor(scaling: Scaling, size: [usize; 2], shown_px: f32) -> usize {
     let long = size[0].max(size[1]);
     if scaling != Scaling::Crisp || long == 0 {
         return 1;
     }
-    ((shown_px / long as f32 - 0.01).ceil().max(1.0) as usize).clamp(1, (MAX_SIDE / long).max(1))
+    let scale = shown_px / long as f32;
+    let whole = (scale + 0.01).floor() as usize;
+    let k = if whole >= 2 {
+        whole
+    } else if scale > 1.01 {
+        2
+    } else {
+        1
+    };
+    k.clamp(1, (MAX_SIDE / long).max(1))
 }
 
 /// `image` with each pixel repeated `k` times across and down.
@@ -123,11 +132,12 @@ mod tests {
 
     #[test]
     fn crisp_prescales_by_whole_numbers() {
-        assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 1439.0), 3);
+        assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 1400.0), 2);
         assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 1440.0), 3);
-        assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 1460.0), 4);
+        assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 1900.0), 3);
         assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 300.0), 1);
         assert_eq!(prescale_factor(Scaling::Crisp, [640, 960], 1300.0), 2);
+        assert_eq!(prescale_factor(Scaling::Crisp, [640, 960], 961.0), 1);
         assert_eq!(prescale_factor(Scaling::Smooth, [320, 480], 2000.0), 1);
         assert_eq!(prescale_factor(Scaling::Crisp, [320, 480], 100_000.0), 8);
         let image = ColorImage::new([2, 1], vec![Color32::RED, Color32::BLUE]);

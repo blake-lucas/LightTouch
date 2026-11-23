@@ -546,6 +546,8 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
     let ui = &mut ui;
     let state = &mut app.screen_scaling;
     let mut screen = state.screen.unwrap_or(selected);
+    // The screen menu sizes to its label; the view toggle and the samples wrap onto as many rows as the column
+    // needs, so nothing is drawn over anything at any width.
     ui.horizontal(|ui| {
         ui.label(RichText::new("Preview").font(theme::label()).color(p.primary));
         ui.add_space(8.0);
@@ -557,26 +559,34 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
                 }
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            widgets::segmented(ui, &p, &mut state.squares, &[(false, "Samples"), (true, "1 cm squares")]);
-        });
     });
     if Some(screen) != state.screen && (state.screen.is_some() || screen != selected) {
         state.screen = Some(screen);
     }
     ui.add_space(6.0);
-    if !state.squares {
-        ui.horizontal(|ui| {
-            for (sample, label) in
-                [(Sample::PixelArt, "Pixel art"), (Sample::Game, "3D game"), (Sample::Home, "Home screen")]
-            {
-                if widgets::chip(ui, &p, state.sample == sample, label).clicked() {
-                    state.sample = sample;
-                }
+    // The toggle and the samples on one row when there's room (about 530 points), else the samples under it.
+    let one_row = ui.available_width() >= 540.0;
+    let chips = |ui: &mut Ui, state: &mut ScreenScalingState| {
+        for (sample, label) in
+            [(Sample::PixelArt, "Pixel art"), (Sample::Game, "3D game"), (Sample::Home, "Home screen")]
+        {
+            if widgets::chip(ui, &p, state.sample == sample, label).clicked() {
+                state.sample = sample;
             }
-        });
+        }
+    };
+    ui.horizontal(|ui| {
+        widgets::segmented(ui, &p, &mut state.squares, &[(false, "Samples"), (true, "1 cm squares")]);
+        if one_row && !state.squares {
+            ui.add_space(12.0);
+            chips(ui, state);
+        }
+    });
+    if !one_row && !state.squares {
         ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| chips(ui, state));
     }
+    ui.add_space(6.0);
     let caption_at = ui.cursor().min;
     let area = Rect::from_min_max(caption_at + vec2(0.0, 24.0), rect.max);
     if area.height() < 120.0 {
@@ -590,13 +600,15 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32) {
     } else {
         sample(app, ui, space, screen, draft)
     };
-    ui.painter().text(
-        caption_at + vec2(2.0, 10.0),
-        Align2::LEFT_CENTER,
+    // One line, cut short with an ellipsis where the column is narrow.
+    let mut job = egui::text::LayoutJob::simple_singleline(
         caption,
         FontId::new(12.5, egui::FontFamily::Proportional),
         p.on_surface_variant,
     );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 4.0);
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(caption_at + vec2(2.0, 10.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
 }
 
 /// A sample picture drawn as the settings draw a device's screen (the draft measure for real size). Returns the

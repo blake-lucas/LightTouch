@@ -121,9 +121,10 @@ void timeline_presented(uint64_t sequence,uint64_t now,uint64_t work) {
     slot.work.store(work,std::memory_order_relaxed);slot.presented.store(now,std::memory_order_release);
 }
 // How the guest frame reaches the panel (Settings > Screen scaling). The compositor modes hand
-// SurfaceFlinger a guest-sized buffer (Smooth), or for Crisp the least whole multiple that reaches
-// the view's size, which the display hardware brings down to it, so only about one panel pixel
-// at each edge is blended (Pixel perfect sizes the view to an exact multiple: nothing scales).
+// SurfaceFlinger a guest-sized buffer (Smooth), or for Crisp a whole multiple the display hardware
+// brings to the view's size: the largest that fits, but 2 below twice the guest's size, where 1
+// would be Smooth (Pixel perfect sizes the view to an exact multiple: nothing scales). The multiple
+// is drawn on this thread: on the Poco, 960x1440 costs ~3 ms a frame (1280x1920 was 4.7).
 // The CPU mode is Sharp, nearest neighbour at the view's own size, which writes every pixel of
 // it (~7 MB a frame for a 1080x1620 view). LT_PRESENT_SCALE=cpu|sharp picks one for A/B.
 enum PresentScale : int { ScaleSmooth=0, ScaleSharp=1, ScaleCpu=2 };
@@ -494,10 +495,11 @@ void present() {
                 geometry_height=ANativeWindow_getHeight(target_window);
                 geometry_format=ANativeWindow_getFormat(target_window);
                 if(!geometry_code && scale!=ScaleCpu && shown.width && shown.height) {
-                    // The least multiple reaching the view (within a hundredth), at most 8 and 4096 pixels a side.
+                    // Crisp's multiple (ScreenScaling.kt crispMultiple), at most 8 and 4096 pixels a side.
                     const double reach=std::min(double(geometry_width)/shown.width,double(geometry_height)/shown.height);
                     const int most=std::max(1,std::min(8,4096/int(std::max(shown.width,shown.height))));
-                    const int factor=scale==ScaleSharp?std::clamp(int(std::ceil(reach-0.01)),1,most):1;
+                    const int whole=int(std::floor(reach+0.01));
+                    const int factor=scale==ScaleSharp?std::clamp(whole>=2?whole:reach>1.01?2:1,1,most):1;
                     geometry_code=ANativeWindow_setBuffersGeometry(target_window,int(shown.width)*factor,int(shown.height)*factor,WINDOW_FORMAT_RGBA_8888);
                 }
                 request_guest_frame_rate(target_window);

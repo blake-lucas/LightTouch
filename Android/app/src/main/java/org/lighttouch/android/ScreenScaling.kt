@@ -28,10 +28,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -54,8 +54,11 @@ internal fun wholeMultiple(pixels: IntSize, roomWidth: Float, roomHeight: Float,
     return if (fixed in 1..largest) fixed else largest
 }
 
-/** Crisp's prescale, as the presenter makes it: the least whole multiple that reaches the size shown. */
-internal fun crispMultiple(scale: Float): Int = ceil(scale - 0.01f).toInt().coerceIn(1, 8)
+/**
+ * Crisp's prescale, as the presenter makes it: the largest whole multiple that fits, but 2 below twice the screen's
+ * size, where 1 would leave it as soft as Smooth.
+ */
+internal fun crispMultiple(scale: Float): Int = floor(scale + 0.01f).toInt().let { if (it >= 2) it else if (scale > 1.01f) 2 else 1 }.coerceAtMost(8)
 
 /** The screens the preview can show. */
 private enum class PreviewScreen(val label: String, val pixels: IntSize, val skin: DeviceSkin) {
@@ -82,7 +85,8 @@ internal fun ScreenScalingScreen(host: GuestHost, onBack: () -> Unit) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.testTag("scaling_back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                Text("Screen scaling", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text("Screen scaling", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { previewing = !previewing }, modifier = Modifier.testTag("scaling_preview")) {
                     Text(if (previewing) "Hide preview" else "Preview")
                 }
@@ -132,7 +136,7 @@ private fun Methods(host: GuestHost, compact: Boolean = false) {
  * A sample picture or squares in a screen's own pixels, drawn the way the presenter will: bilinear (Smooth), nearest
  * (Sharp), Crisp's whole-number prescale then bilinear, or Pixel perfect's whole multiple with a border.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     val context = LocalContext.current
@@ -163,7 +167,8 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
                     icon = {}, label = { Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium) })
             }
         }
-        if (!squares) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Wraps on a narrow phone rather than running off the edge.
+        if (!squares) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (option in PreviewSample.entries)
                 FilterChip(sample == option, onClick = { sample = option }, label = { Text(option.label, maxLines = 1) })
         }
