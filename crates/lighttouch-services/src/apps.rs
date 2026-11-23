@@ -47,6 +47,9 @@ const INSTALL_ABSOLUTE: Duration = Duration::from_secs(600);
 const UNPACK_FLOOR_BPS: u64 = 256 << 10;
 const SPACE_POLL: Duration = Duration::from_secs(2);
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// An AFC service's replies: the iPhone 5's afcd, launched on demand, can take longer than `TIMEOUT` to answer its
+/// first request on a busy host (seen: no answer in 20 s while the emulated A6 started it).
+const AFC_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstallProgress {
@@ -156,7 +159,7 @@ impl Guest {
 
     /// The newest crash report: its file name and text (the readable report inside a .plist when it is one).
     pub fn last_crash(&mut self) -> Result<Option<(String, String)>> {
-        let mut afc = Afc::new(self.service(CRASH_REPORTS, TIMEOUT)?);
+        let mut afc = Afc::new(self.service(CRASH_REPORTS, AFC_TIMEOUT)?);
         let newest = afc
             .read_dir("/")?
             .into_iter()
@@ -224,6 +227,25 @@ impl Guest {
         Ok(chosen.join("\n"))
     }
 
+    /// The guest's raw system log into `out` until `cancelled` (developer runs: `lighttouch run --syslog FILE`).
+    pub fn stream_system_log(&mut self, out: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> Result<()> {
+        let mut conn = self.service(SYSLOG, Duration::from_secs(1))?;
+        let mut chunk = [0u8; 16 << 10];
+        while !cancelled() {
+            match conn.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let text: Vec<u8> = chunk[..n].iter().map(|&b| if b == 0 { b'\n' } else { b }).collect();
+                    out.write_all(&text)?;
+                    out.flush()?;
+                }
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(e) => return Err(Error(format!("the system log: {e}"))),
+            }
+        }
+        Ok(())
+    }
+
     /// Install `ipa` (checked by `lighttouch_catalog::ipa::prepare`, which also gives its `unpacked` size) and
     /// confirm `bundle_id` is then listed. `progress` returns false to cancel, which only works until the package
     /// is submitted.
@@ -234,7 +256,7 @@ impl Guest {
         unpacked: Option<u64>,
         progress: &mut dyn FnMut(InstallProgress) -> bool,
     ) -> Result<InstalledApp> {
-        let mut afc = Afc::new(self.service(AFC, TIMEOUT)?);
+        let mut afc = Afc::new(self.service(AFC, AFC_TIMEOUT)?);
         let total = std::fs::metadata(ipa)?.len();
         let available = afc.free_bytes()?;
         let needed = total * 2 + (16 << 20);

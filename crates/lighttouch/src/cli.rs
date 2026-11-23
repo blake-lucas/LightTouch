@@ -16,6 +16,9 @@
 //! first app matching the query (and the bundle ID, if given) that runs on the firmware, as DIR/<bundle id>.ipa, and
 //! prints `<bundle id>\t<version>\t<name>\t<path>`.
 //!
+//! With `--install`/`--store`/`--services`, LIGHTTOUCH_SYSLOG=FILE also streams the guest's system log there, and
+//! LIGHTTOUCH_SERVICES_AFTER=SECONDS holds the services off until then (the iPhone 5 boots slowly).
+//!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
 //! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
 //! or, live, `60 {"cmd":"network","config":{"mode":"archive","archive_date":"20090909","local_network":false}}`.
@@ -399,7 +402,23 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
         std::thread::sleep(Duration::from_millis(500));
     }
     say("attached".into());
-    let mut guest = match Guest::connect(&socket, Duration::from_secs(60)) {
+    // LIGHTTOUCH_SERVICES_AFTER=SECONDS: leave the guest alone until then (a slow guest's services time out early).
+    if let Some(after) = std::env::var("LIGHTTOUCH_SERVICES_AFTER").ok().and_then(|s| s.parse::<f64>().ok()) {
+        while at() < after {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    // LIGHTTOUCH_SYSLOG=FILE: the guest's whole system log, as it comes, for the rest of the run.
+    if let Some(path) = std::env::var_os("LIGHTTOUCH_SYSLOG") {
+        let socket = socket.clone();
+        std::thread::spawn(move || {
+            let Ok(mut file) = std::fs::File::create(&path) else { return };
+            if let Ok(mut log) = Guest::connect(&socket, Duration::from_secs(600)) {
+                let _ = log.stream_system_log(&mut file, &|| false);
+            }
+        });
+    }
+    let mut guest = match Guest::connect(&socket, Duration::from_secs(600)) {
         Ok(guest) => guest,
         Err(e) => return say(e.to_string()),
     };
