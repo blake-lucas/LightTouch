@@ -144,7 +144,9 @@ pub fn with_weak_library(input: &[u8], dylib: &str) -> Result<Vec<u8>> {
     }
     let mut out = input.to_vec();
     let mut command = Vec::with_capacity(size);
-    for word in [macho::LC_LOAD_WEAK_DYLIB, size as u32, 24, 2, 0x1_0000, 0x1_0000] {
+    // Versions 0: dyld refuses a library whose compatibility version is below the one asked for (libappsync's is 0),
+    // and a weak load fails silently.
+    for word in [macho::LC_LOAD_WEAK_DYLIB, size as u32, 24, 2, 0, 0] {
         command.extend_from_slice(&word.to_le_bytes());
     }
     command.extend_from_slice(dylib.as_bytes());
@@ -431,6 +433,14 @@ mod tests {
             assert_ne!(after, before);
             codesign::verified_code_directories(&after).unwrap();
             assert_eq!(with_weak_library(&after, "/usr/lib/libappsync.dylib").unwrap(), after);
+            // the new command asks for no library version (libappsync's LC_ID_DYLIB says 0.0.0)
+            let ncmds = u32::from_le_bytes(after[16..20].try_into().unwrap()) as usize;
+            let mut at = 28;
+            for _ in 0..ncmds - 1 {
+                at += u32::from_le_bytes(after[at + 4..at + 8].try_into().unwrap()) as usize;
+            }
+            assert_eq!(&after[at..at + 4], &macho::LC_LOAD_WEAK_DYLIB.to_le_bytes());
+            assert_eq!(&after[at + 16..at + 24], &[0u8; 8]);
             let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
             // the header (load commands and padding, before the first section) and the signature only
             let sig = codesign::code_signature(&before).unwrap().0;
