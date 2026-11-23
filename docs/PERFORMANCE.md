@@ -559,6 +559,19 @@ guest `F_FULLFSYNC` survives a killed engine (the data is in the host's page cac
 loss until iOS stops. The old 2G page files are synced page by page, but their renames are not, so a host crash can
 lose recent pages there too (it cannot tear one).
 
+Killing the engine (`SIGKILL`, as Android does to a background app) on the desktop's iPod touch 4G 6.1.6 container,
+then starting it with Recover and running LT Bench's `fs-check` on the 8 MiB file `fs-write` had written:
+
+| Kill test | `fs-check` after the restart | iOS's log on the next boot |
+| --- | --- | --- |
+| `fs-write` ending in `F_FULLFSYNC`, killed 0.4 s later in the middle of the next writes | intact | yaFTL "CXT is not valid … full NAND R/O restore" (its power-loss path; absent after a clean stop), `fsck_hfs` "FILESYSTEM CLEAN" |
+| `fs-write` ending in a plain `fsync`, killed 2 s later mid-write | not intact | the same |
+| plain `fsync`, killed 35 s later (the guest idle) | intact | the same |
+| clean stop, then LT Bench reinstalled | intact | no restore |
+
+A plain `fsync` on iOS's HFS+ does not make a new file's metadata durable at once; only `F_FULLFSYNC` (or iOS's own
+periodic sync) does, as on a real device that loses power. No sync request reaches the engine either way.
+
 | Old 2G page files: tried, not done | Measured (host, 4160-byte pages) | Why not |
 | --- | --- | --- |
 | Drop the per-page `fsync` | desktop 62–95 µs/page vs 470–560 with it | after a host crash a renamed page can be empty, and a short page file reads back as zeros: silent corruption inside a file |

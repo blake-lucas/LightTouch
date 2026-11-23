@@ -29,6 +29,7 @@ p.add_argument("--tag", default="ltbio")
 p.add_argument("--timeout", type=float, default=900, help="seconds for one pass")
 p.add_argument("--launch", help="instead of LT Bench: launch this bundle id and watch for --watch seconds")
 p.add_argument("--watch", type=float, default=60)
+p.add_argument("--linger", type=float, default=0, help="seconds to stay up after the passes (kill tests)")
 a = p.parse_args()
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
 for kv in a.env:
@@ -193,6 +194,9 @@ try:
                 print(f"{a.tag} pass{n} {m[1]} {m[2]} {m[3]}", flush=True)
             elif "[ltbench]" in line and "unavailable" in line:
                 print(f"{a.tag} pass{n} {line.split('[ltbench] ')[1]}", flush=True)
+    end = time.monotonic() + a.linger
+    while time.monotonic() < end and s.running():
+        time.sleep(1)
 finally:
     clean = s.stop()
     print(f"stopped clean={clean} after {time.monotonic() - t0:.0f} s", flush=True)
