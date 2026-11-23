@@ -393,6 +393,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: macos-logs
-          path: ~/mac-build/LightTouch-Release-${{ env.VER }}/*.log
+          path: |
+            ~/mac-build/LightTouch-Release-${{ env.VER }}/*.log
+            ~/mac-build/LightTouch-Release-${{ env.VER }}/engine/step-*.log
+            ~/mac-build/LightTouch-Release-${{ env.VER }}/engine/native-engine-receipt.json
           if-no-files-found: ignore
           retention-days: 7
