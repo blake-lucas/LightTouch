@@ -119,15 +119,15 @@ impl StepPlan {
         let seal = "seal.log";
         match (name, major) {
             // The iPhone 5's 10.x first start (N42), which prints none of the 7.x lines: most of it is iOS setting
-            // itself up with little on the console. 14G61 on a Ryzen 7 3700X, 2026-11-22: backboardd 24 s, the
-            // cameras 222 s, USB 308 s, SpringBoard 595 s, the agent's shutdown 626 s, done 644 s.
-            (SEAL_STEP, 10..) => StepPlan::new(644.0, "First start: loading iOS", vec![
-                m(seal, "FTL_Open", 4.0, "First start: opening the flash"),
-                m(seal, "Process backboardd (", 24.0, "First start: setting up iOS"),
-                m(seal, "ISP_LoadFirmware", 222.0, "First start: setting up iOS"),
-                m(seal, "AppleSynopsysOTGDevice - Configuration", 308.0, "First start: setting up iOS"),
-                m(seal, "Process SpringBoard (", 595.0, "First start: starting the Home screen"),
-                m(seal, "System shutdown initiated", 626.0, "First start: shutting down"),
+            // itself up with little on the console. 14G61 on a Ryzen 7 3700X, 2026-11-22 (GL dirty checks batched):
+            // backboardd 20 s, the cameras 240 s, USB 273 s, SpringBoard 500 s, the agent's shutdown 532 s, done 552 s.
+            (SEAL_STEP, 10..) => StepPlan::new(552.0, "First start: loading iOS", vec![
+                m(seal, "FTL_Open", 3.0, "First start: opening the flash"),
+                m(seal, "Process backboardd (", 20.0, "First start: setting up iOS"),
+                m(seal, "ISP_LoadFirmware", 240.0, "First start: setting up iOS"),
+                m(seal, "AppleSynopsysOTGDevice - Configuration", 273.0, "First start: setting up iOS"),
+                m(seal, "Process SpringBoard (", 500.0, "First start: starting the Home screen"),
+                m(seal, "System shutdown initiated", 532.0, "First start: shutting down"),
             ]),
             (SEAL_STEP, 7..) => StepPlan::new(331.0, "First start: loading iOS", vec![
                 m(seal, "FTL_Open", 4.0, "First start: opening the flash"),
@@ -426,13 +426,13 @@ AppleSynopsysOTGDevice - Configuration: PTP
 Security: Process SpringBoard (49) creating global IOSurfaces accessible to any other process
 launchd[1] (com.apple.xpc.launchd.domain.system) <Notice>: System shutdown initiated by: it_agent.54<-launchd.1";
         let p = StepPlan::plan(SEAL_STEP, 10);
-        assert_eq!(p.seconds, 644.0);
+        assert_eq!(p.seconds, 552.0);
         for m in &p.milestones {
             assert!(log.contains(m.marker), "{} not in a 14G61 first start", m.marker);
         }
         // In the quiet stretch before SpringBoard the bar still moves, well short of the end.
-        let seen = [Some(4.0), Some(24.0), Some(222.0), Some(308.0), None, None];
-        let (a, b) = (p.fraction(400.0, &seen), p.fraction(450.0, &seen));
+        let seen = [Some(3.0), Some(20.0), Some(240.0), Some(273.0), None, None];
+        let (a, b) = (p.fraction(350.0, &seen), p.fraction(400.0, &seen));
         assert!(a < b && b < 0.8, "{a} {b}");
     }
 }
