@@ -73,7 +73,10 @@ desktop, before the upload change (2026-11-23): upload ~28 s at ~10 MB/s, unpack
   `Android/native-services/lt_appservice.c`). A packet longer than the transfer iOS armed fills it and continues in
   the next, as on a real link (qemu-ios `docs/tcp-usb-protocol.md`); every install verifies the zip's CRCs. With
   sessions writing ahead of the file's end, iOS 3's HFS+ appears to zero-fill the gap: the 2G programs ~58 MB more NAND per
-  Asphalt 5 upload (344 vs 286 MB); the A4 boards don't (~294 MB either way).
+  Asphalt 5 upload (344 vs 286 MB); the A4 boards don't (~294 MB either way). Checked: the app installed this way
+  launches and keeps running (2G 3.1.3, 4G 6.1.6, 3GS 5.1.1); the new bridge also works with v0.0.13's engine (it
+  takes the engine's advertised maximum); preparation boots run on chip files, not the container, so they are
+  unaffected.
 
 ## Durability
 
@@ -169,3 +172,18 @@ and 3GS were not measured on the Poco.
 | NAND pages through `pread`/`pwrite` instead of the block layer's thread pool (`LT_NAND_DIRECT`, `b4db28d554`) | reads 31–42 → 3–4.5 µs, programs 41–45 → 7–17 µs; Infinity Blade II unpack 170 → 101–108 s | kept |
 | A4: CDMA moves FIFO runs in one call (`LT_CDMA_BULK`, `bec13dcdbf`); PL192 ignores unchanged levels (`56505fbfdb`) | IOP MMIO 1.5 M → 0.25 M/s; 4G `fs-read` ~15% faster | kept |
 | A4: the IOP's cache-control registers without the BQL; a spinning IOP; NAND I/O without the BQL | no measurable change (2026-10-22/25) | rejected |
+
+Unpacked app over N AFC sessions (row above), upload phase, desktop: AFC requests (12 674 for the 3904 files and
+602 folders) a second and CPU (AP / IOP / USB bridge):
+
+| Board, link | N = 1 | N = 4 | N = 8 |
+| --- | --- | --- | --- |
+| 2G, old link | 153/s; 42% / – / 4% | 193/s; 57% / – / 4% | 195/s; 55% / – / 4% |
+| 4G, old link | – | 186/s; 56% / 12% / 5% | – |
+| 3GS, old link | 130/s; 59% / 8% / 4% | 170/s; 71% / 11% / 4% | 182/s; 78% / 13% / 5% |
+| 2G, fast link | – | 195/s; 65% / – / 5% | 177/s; 78% / – / 6% |
+| 4G, fast link | – | 172/s; 63% / 13% / 4% | 197/s; 67% / 16% / 5% |
+| 3GS, fast link | – | 152/s; 79% / 11% / 4% | 202/s; 84% / 14% / 4% |
+
+AFC requests top out near 200 a second with the guest's CPU taking over as sessions are added: afcd's per-file work
+in iOS, not the link.
