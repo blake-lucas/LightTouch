@@ -771,22 +771,30 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
         }
         (on_show, Shown { title: "Pixel perfect".into(), detail, factor: times(k) })
     } else {
-        let scale = if fits(view_scale) { view_scale } else { fit };
-        let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], view_scale);
-        let mut detail = rendered(view_scale);
-        if device_frame::real_scale(&skin, &settings, &ctx).is_some() {
-            detail += " · real size";
+        // At real size the preview shows the screen at exactly that size on this display (the draft measure), never
+        // shrunk to fit: the panel crops it instead. Otherwise it's the device view's size, fitted when that's larger.
+        let real = device_frame::real_scale(&skin, &settings, &ctx)
+            .map(|ppm| skin.screen_width * ppm * ppp / pixels[0] as f32);
+        let wanted = real.unwrap_or(view_scale);
+        let scale = if real.is_some() || fits(wanted) { wanted } else { fit };
+        let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], wanted);
+        let mut detail = rendered(wanted);
+        if real.is_some() {
+            // Why the factor isn't 1x: the device's own pixel density against this display's.
+            let device_ppi = pixels[0] as f32 / (skin.screen_width / 25.4);
+            detail += &format!(" · real size ({device_ppi:.0} → {:.0} ppi)", draft * 25.4);
         }
         match settings.scaling {
-            Scaling::Sharp if (view_scale - view_scale.round()).abs() >= 0.01 => detail += " · uneven pixels",
-            Scaling::Crisp if (view_scale - k as f32).abs() >= 0.01 => detail += &format!(" · {k}× then smoothed"),
+            Scaling::Sharp if (wanted - wanted.round()).abs() >= 0.01 => detail += " · uneven pixels",
+            Scaling::Crisp if (wanted - k as f32).abs() >= 0.01 => detail += &format!(" · {k}× then smoothed"),
             _ => {}
         }
-        if !fits(view_scale) {
+        // Real size too large for the panel is cropped, which the picture says itself (see below).
+        if real.is_none() && !fits(wanted) {
             detail += " · smaller here";
         }
         let title = format!("{} scaling", settings.scaling.label());
-        (scale, Shown { title, detail, factor: times(view_scale) })
+        (scale, Shown { title, detail, factor: times(wanted) })
     };
     // Centred on whole physical pixels.
     let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
@@ -806,6 +814,9 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     });
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
     texture.paint(&painter, rect, Rotation::Portrait, false);
+    if !space.expand(0.5).contains_rect(rect) {
+        crop_note(ui, space, "Cropped to fit here");
+    }
     shown
 }
 
