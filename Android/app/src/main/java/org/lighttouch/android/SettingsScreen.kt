@@ -76,8 +76,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     } else {
                         val reason = when {
                             device == null -> "Select an iPhone to change its carrier, calls and texts."
-                            device.board == "n42ap" -> "The iPhone 5's modem isn't supported yet. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
-                            else -> "${device.model} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
+                            else -> "${device.model} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS, iPhone 4 and iPhone 5."
                         }
                         ActionRow(LtIcons.Signal, "Carrier", reason, enabled = false, tag = "open_carrier") {}
                     }
