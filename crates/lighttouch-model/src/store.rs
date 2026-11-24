@@ -9,6 +9,7 @@ use lighttouch_catalog::store::{
     self, AppInfo, Chart, Collection, Genre, Known, Page, Shot, StoreApp, StoreCopy, StoreError,
 };
 use lighttouch_catalog::{Catalog, Target, ipa};
+use lighttouch_core::app_log;
 use lighttouch_services::apps::{Guest, InstallProgress};
 use lighttouch_services::instproxy::InstalledApp;
 use std::collections::HashMap;
@@ -1202,6 +1203,47 @@ impl Store {
 }
 
 /// The queue's two steps against the running guest.
+/// An upload's progress over time, summarised in one app.log line (Installer::install).
+#[derive(Default)]
+struct UploadLog {
+    started: Option<Instant>,
+    advanced: Option<Instant>,
+    sent: u64,
+    total: u64,
+    longest: Duration,
+    pauses: u32,
+}
+
+impl UploadLog {
+    fn saw(&mut self, sent: u64, total: u64) {
+        let now = Instant::now();
+        self.started.get_or_insert(now);
+        self.total = total;
+        if sent > self.sent || self.advanced.is_none() {
+            if let Some(last) = self.advanced {
+                let gap = now - last;
+                self.longest = self.longest.max(gap);
+                self.pauses += (gap >= Duration::from_secs(1)) as u32;
+            }
+            self.advanced = Some(now);
+            self.sent = sent;
+        }
+    }
+
+    fn log(&self, name: &str) {
+        let (Some(started), Some(advanced)) = (self.started, self.advanced) else { return };
+        let seconds = (advanced - started).as_secs_f64();
+        app_log!(
+            "upload of {name}: {:.1} of {:.1} MB in {seconds:.1} s ({:.1} MB/s), longest pause {:.1} s, {} pauses of 1 s or more",
+            self.sent as f64 / 1e6,
+            self.total as f64 / 1e6,
+            self.sent as f64 / 1e6 / seconds.max(0.001),
+            self.longest.as_secs_f64(),
+            self.pauses
+        );
+    }
+}
+
 struct Installer {
     socket: Arc<Mutex<Option<PathBuf>>>,
     /// Installs talking to the guest now (`Store::uploading_or_installing`).
@@ -1299,9 +1341,13 @@ impl queue::Work<InstallRequest> for Installer {
         self.busy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let _busy = Busy(&self.busy);
         (self.waker)();
+        // How the upload went, for app.log: when it started, the last time it advanced, its longest pause, and how
+        // many pauses passed a second (bursts in the progress bar are these).
+        let mut upload = UploadLog::default();
         let result = guest.install(&prepared, &info.bundle_id, Some(info.unpacked), &mut |progress| {
             match progress {
                 InstallProgress::Uploading { sent, total } => {
+                    upload.saw(sent, total);
                     let fraction = sent as f32 / total.max(1) as f32;
                     report.update("Copying to the device", Some(fraction));
                     report.overall(queue::stages::copy(fraction));
@@ -1331,6 +1377,7 @@ impl queue::Work<InstallRequest> for Installer {
             true
         });
         let _ = std::fs::remove_file(&prepared);
+        upload.log(&info.name);
         result.map_err(service_error)?;
         if let Ok(apps) = guest.installed() {
             let _ = self.tx.send(Message::AfterInstall(apps));
