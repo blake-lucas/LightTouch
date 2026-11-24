@@ -537,7 +537,26 @@ they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of
 | `fs-fullfsync-4k` (4 KiB + `F_FULLFSYNC`) | 531 µs | 1.7–2.0 ms | 4.2–4.8 ms (~1 MB/s) | 2.8 ms (~1.4 MB/s) |
 | `fs-create` (new 16 KiB file) | 787 µs | 3.2–5.6 ms | 3.2–4.0 ms (~4–5 MB/s) | 3.2 ms (~5 MB/s) |
 
-- **Container devices are not limited to 1–2 MB/s.** Long writes run at 26–150 MB/s in the guest. What lands near
+**In-guest results, Poco F3** (same tests, one pass each, phone at ~29–31 °C on the charger):
+
+| Test | iPod touch 2G 3.1.3, container | iPod touch 2G 3.1.3, page files | iPod touch 4G 6.1.6, container | iPhone 3GS 5.1.1, container |
+| --- | --- | --- | --- | --- |
+| `fs-write` | 23 µs/KiB (44 MB/s) | 146 µs/KiB (7 MB/s) | 63 µs/KiB (16 MB/s) | 56 µs/KiB (18 MB/s) |
+| `fs-write-big` | 11 µs/KiB (93 MB/s) | 112 µs/KiB (9 MB/s) | 30 µs/KiB (34 MB/s) | 33 µs/KiB (31 MB/s) |
+| `fs-write-cached` | 14 µs/KiB | 129 µs/KiB | 23 µs/KiB | 24 µs/KiB |
+| `fs-rand-4k` | 250 µs (16 MB/s) | 732 µs (6 MB/s) | 568 µs (7 MB/s) | 615 µs (7 MB/s) |
+| `fs-fsync-4k` | 656 µs | 2.1 ms | 740 µs | 802 µs |
+| `fs-fullfsync-4k` | 774 µs | 2.1 ms | 5.4 ms (0.8 MB/s) | 4.9 ms (0.8 MB/s) |
+| `fs-create` | 1.3 ms | 4.1 ms | 4.7 ms (3.5 MB/s) | 4.4 ms (3.7 MB/s) |
+
+**Where 1–2 MB/s comes from on container devices: an app install, Poco, iPod touch 4G, Asphalt 5 (281 MB IPA, 410 MB
+unpacked), host counters (`LT_NAND_PROF`) and thread CPU every 5 s.** The upload wrote ~10 MB/s of pages with the AP
+~65% busy and the USB bridge's thread ~24%. The unpack took 92 s (4.5 MB/s on average): its large files went at
+8–14 MB/s, and its stretches of small files at 1.1–2.7 MB/s, with the AP 75–90% busy and the IOP 15–30%. So the
+overlay reads 1–2 MB/s while iOS unzips and creates small files, and that pace is set by the guest CPU (unzip,
+HFS+ and the flash driver per request), not by the host's storage, which is busy a few percent of the time.
+
+- **Container devices are not limited to 1–2 MB/s.** Long writes run at 26–150 MB/s in the guest on the desktop, 31–93 on the Poco. What lands near
   1–5 MB/s are small synchronous writes (a database commit, a new small file), whose cost is a fixed latency per
   NAND request, not bandwidth.
 - **A4 boards (4G, 3GS): each NAND request is a round trip between the main CPU (AP) and the storage processor
