@@ -743,15 +743,25 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     let frame = settings.device_frame;
     let in_view = device_frame::place_for(&skin, view, Rotation::Portrait, frame, &settings, &ctx, pixels).screen;
     let view_scale = in_view.width() * ppp / pixels[0] as f32;
-    let fits = |k: f32| {
-        pixels[0] as f32 * k <= space.width() * ppp + 0.5 && pixels[1] as f32 * k <= space.height() * ppp + 0.5
+    // With the device drawn, what has to fit is the whole device: the screen's size times the body's share. (At real
+    // size nothing is shrunk: the panel crops instead.)
+    let (bx, by) = if frame { (skin.width / skin.screen_width, skin.height / skin.screen_height) } else { (1.0, 1.0) };
+    let fits_in = |k: f32, bx: f32, by: f32| {
+        pixels[0] as f32 * k * bx <= space.width() * ppp + 0.5
+            && pixels[1] as f32 * k * by <= space.height() * ppp + 0.5
     };
-    let fit = (space.width() * ppp / pixels[0] as f32).min(space.height() * ppp / pixels[1] as f32);
+    let fits = |k: f32| fits_in(k, bx, by);
+    let fit = (space.width() * ppp / (pixels[0] as f32 * bx)).min(space.height() * ppp / (pixels[1] as f32 * by));
     // The size the device view draws the screen at, in physical pixels.
     let rendered = |k: f32| format!("{} × {} rendered", (pixels[0] as f32 * k).round(), (pixels[1] as f32 * k).round());
     let (scale, shown) = if settings.scaling == Scaling::PixelPerfect {
         let k = view_scale.round().max(1.0);
-        let here = (1..=12).rev().map(|k| k as f32).find(|&k| fits(k));
+        // The largest multiple the device fits around here, else the largest the screen alone fits.
+        let here = (1..=12)
+            .rev()
+            .map(|k| k as f32)
+            .find(|&k| fits(k))
+            .or_else(|| (1..=12).rev().map(|k| k as f32).find(|&k| fits_in(k, 1.0, 1.0)));
         let cropped = here.is_none();
         let here = here.unwrap_or(1.0);
         let on_show = k.min(here);
@@ -796,9 +806,10 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
         let title = format!("{} scaling", settings.scaling.label());
         (scale, Shown { title, detail, factor: times(wanted) })
     };
-    // Centred on whole physical pixels.
+    // The device (when it's shown) placed around the screen at this size, the screen on whole physical pixels.
     let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
-    let corner = space.center() - size / 2.0;
+    let placed = device_frame::place(&skin, space, Rotation::Portrait, frame, Some(size.x / skin.screen_width));
+    let corner = placed.screen.min;
     let rect = Rect::from_min_size(egui::pos2((corner.x * ppp).round() / ppp, (corner.y * ppp).round() / ppp), size);
     let key = (app.screen_scaling.sample, screen);
     let (image, texture) = app.screen_scaling.pictures.entry(key).or_insert_with(|| {
@@ -813,7 +824,11 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
         image.clone()
     });
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
+    if let Some(layout) = &placed.device {
+        device_frame::paint(&painter, &skin, layout, |_| false);
+    }
     texture.paint(&painter, rect, Rotation::Portrait, false);
+    // Only a cropped screen is worth a note: the device around it is often cut off by design.
     if !space.expand(0.5).contains_rect(rect) {
         crop_note(ui, space, "Cropped to fit here");
     }
