@@ -29,6 +29,9 @@
       "src/utils.h": "4ac4e6b8f6d26226c5055ee63164b7e29645829ef229fe869d4d03a26b78eacb"
     },
     "patch": "windows-host.patch",
+    "shared_patches_sha256": {
+      "build-support/patches/usbmuxd-qemu-large-transactions.patch": "b41c37208b1e9c8bb6a652a4bd7d721890da723e5879b70e1a71e61b2dec36c2"
+    },
     "translation_units": [
       "client.c",
       "device.c",

@@ -1,0 +1,86 @@
+diff --git a/src/usb-qemu.c b/src/usb-qemu.c
+index ee1ead3..b5687d6 100644
+--- a/src/usb-qemu.c
++++ b/src/usb-qemu.c
+@@ -97,8 +97,12 @@ struct tcp_usb_hello {
+ #define RET_IO      (-1000)
+ 
+ /* The header length field is an int16_t, so a single transaction cannot carry
+- * more than this. USB_MRU (16384) fits comfortably. */
+-#define QEMU_MAX_XFER 16384
++ * more than this. */
++#define QEMU_MAX_XFER 32767
++/* The MTU the handshake picks unless USBMUXD_QEMU_MTU says otherwise (usb.h). */
++#define DEFAULT_MTU 32760
++
++int usb_mtu = 16384;   /* until the handshake */
+ 
+ #define DEFAULT_PORT 1235
+ #define DEFAULT_POLL_MS 3
+@@ -590,13 +594,17 @@ static int handshake(int fd, uint8_t *ret_addr)
+ 		            hello.version, TU_PROTOCOL_VERSION);
+ 		return -1;
+ 	}
+-	if (USB_MTU > hello.max_transaction) {
+-		usbmuxd_log(LL_ERROR,
+-		            "USB_MTU is %d but the device accepts at most %u bytes in one "
+-		            "transaction. Splitting a packet corrupts the stream silently, "
+-		            "so refusing to attach. Lower USB_MTU in src/usb.h.",
+-		            USB_MTU, hello.max_transaction);
+-		return -1;
++	{
++		const char *spec = getenv("USBMUXD_QEMU_MTU");
++		int want = spec && atoi(spec) >= 512 ? atoi(spec) : DEFAULT_MTU;
++		uint32_t most = hello.max_transaction < QEMU_MAX_XFER ? hello.max_transaction : QEMU_MAX_XFER;
++		if (most < 512) {
++			usbmuxd_log(LL_ERROR, "The device accepts at most %u bytes in one transaction; "
++			            "refusing to attach.", hello.max_transaction);
++			return -1;
++		}
++		/* An older device may accept less: never send a transaction it would cut short. */
++		usb_mtu = (uint32_t)want > most ? (int)most : want;
+ 	}
+ 
+ 	usbmuxd_log(LL_NOTICE, "Handshake ok: protocol v%u, max transaction %u bytes, MTU %d",
+@@ -1006,8 +1014,8 @@ int usb_send(struct usb_device *dev, const unsigned char *buf, int length)
+ 	while (sent < length || zlp) {
+ 		int chunk = length - sent;
+ 		int r;
+-		if (chunk > QEMU_MAX_XFER)
+-			chunk = QEMU_MAX_XFER;
++		if (chunk > usb_mtu)
++			chunk = usb_mtu;
+ 
+ 		r = qemu_xfer(dev->fd, dev->ep_out, 0, chunk, buf + sent, NULL, NULL);
+ 		txn++;
+diff --git a/src/usb.h b/src/usb.h
+index c13c8e5..fb7faab 100644
+--- a/src/usb.h
++++ b/src/usb.h
+@@ -36,15 +36,17 @@
+ // max transmission packet size
+ //
+ // Upstream uses 3 * 16384 to suit libusb's fragmentation. The QEMU transport
+-// cannot express a transaction larger than 16384 (the wire header's length is
+-// an int16_t), so anything above this has to be sent as several transactions -
+-// and the device model treats each one as a completed transfer, raising
+-// XferCompl and disabling the endpoint even when the guest's armed transfer is
+-// only partly filled. The guest's mux driver then reassembles from truncated
+-// transfers and the stream desynchronizes. Capping the MTU keeps every mux
+-// packet inside a single transaction; device.c derives conn->max_payload from
+-// this, so it bounds the whole TX path.
+-#define USB_MTU 16384
++// cannot express a transaction larger than 32767 bytes (the wire header's
++// length is an int16_t), and the device advertises its own limit in the
++// handshake, so the QEMU backend sets this there: every mux packet then fits
++// one transaction. A packet larger than the transfer the guest armed fills that
++// transfer and continues in the next one, as on a real USB link. 32760 bytes
++// (not a multiple of the 512-byte max packet, so a full packet needs no ZLP)
++// halved the time an IPA upload spent in usb_send against 16384 (22.5 s to
++// 11.9 s on an iPod touch 4G); USBMUXD_QEMU_MTU sets another size. device.c
++// derives conn->max_payload from this.
++extern int usb_mtu;
++#define USB_MTU usb_mtu
+ 
+ #define USB_PACKET_SIZE 512
+ 

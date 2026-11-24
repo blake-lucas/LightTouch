@@ -19,6 +19,7 @@ const OP_FILE_OPEN: u64 = 0x0D;
 const OP_FILE_OPEN_RES: u64 = 0x0E;
 const OP_FILE_READ: u64 = 0x0F;
 const OP_FILE_WRITE: u64 = 0x10;
+const OP_FILE_SEEK: u64 = 0x11;
 const OP_FILE_CLOSE: u64 = 0x14;
 
 /// `FileRefOpen` modes.
@@ -26,6 +27,8 @@ const OP_FILE_CLOSE: u64 = 0x14;
 #[repr(u64)]
 pub enum Mode {
     ReadOnly = 1,
+    /// Read and write an existing file, from its start.
+    ReadWrite = 2,
     /// Create or truncate, write only.
     WriteOnly = 3,
 }
@@ -168,6 +171,14 @@ impl Afc {
             return Ok(Vec::new());
         }
         Ok(if reply.payload.is_empty() { reply.args } else { reply.payload })
+    }
+
+    /// Move `handle`'s position to `offset` from the file's start.
+    pub fn seek(&mut self, handle: u64, offset: u64) -> Result<()> {
+        let mut args = handle.to_le_bytes().to_vec();
+        args.extend_from_slice(&0u64.to_le_bytes()); // SEEK_SET
+        args.extend_from_slice(&offset.to_le_bytes());
+        self.call(OP_FILE_SEEK, &args, &[]).map(|_| ())
     }
 
     pub fn close(&mut self, handle: u64) -> Result<()> {

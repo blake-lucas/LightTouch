@@ -55,10 +55,19 @@ pub fn browse_user_apps(conn: &mut Conn) -> Result<Vec<InstalledApp>> {
 
 /// Ask for `package` (a path under the AFC root) to be installed. Follow with `install_status` until complete.
 pub fn submit_install(conn: &mut Conn, package: &str) -> Result<()> {
+    submit_install_as(conn, package, None)
+}
+
+/// The same with a `PackageType` ("Developer": `package` is an app directory, as Xcode installs one).
+pub fn submit_install_as(conn: &mut Conn, package: &str, package_type: Option<&str>) -> Result<()> {
+    let mut options = Dictionary::new();
+    if let Some(kind) = package_type {
+        options.insert("PackageType".into(), Value::from(kind));
+    }
     conn.send(Dictionary::from_iter([
         ("Command", Value::from("Install")),
         ("PackagePath", Value::from(package)),
-        ("ClientOptions", Value::Dictionary(Dictionary::new())),
+        ("ClientOptions", Value::Dictionary(options)),
     ]))
 }
 
