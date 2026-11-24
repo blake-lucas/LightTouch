@@ -53,6 +53,7 @@ pub mod hfs;
 pub mod identity;
 pub mod img3;
 pub mod ipsw;
+pub mod ipsw_check;
 pub mod k48_recipe;
 pub mod k48iboot;
 pub mod k48nand;

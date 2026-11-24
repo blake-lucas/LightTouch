@@ -377,7 +377,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
         val imports = getSharedPreferences("preparation-imports", MODE_PRIVATE)
-        imports.getString("ipsw", "")?.takeIf { File(it).isFile }?.let { prep.ipswPath = it; prep.ipswFor = imports.getString("ipswFor", "") ?: "" }
+        imports.getString("ipsw", "")?.takeIf { File(it).isFile }?.let {
+            prep.ipswPath = it; prep.ipswFor = imports.getString("ipswFor", "") ?: ""; prep.ipswUnchecked = imports.getBoolean("ipswUnchecked", false)
+        }
         prep.firmwareId = imports.getString("firmwareId", "") ?: ""
         preparedImported = imports.getString("preparedImported", "") ?: ""
         retainedPreparedOutput = imports.getString("pendingPrepared", "") ?: ""
@@ -840,6 +842,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         LaunchedEffect(board, records) { board?.let { findBootrom(it) } }
         PrepareScreen(prep, busy, preparationActive(),
             onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
+            onUseIpswAnyway = ::useIpswAnyway, onSwitchIpsw = ::switchToIpswFirmware, onCancelIpswCheck = ::discardPendingIpsw,
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onPrepare = ::prepareDevice,
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
             onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation,
@@ -890,7 +893,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 // firmwarekit bakes the APK's own guest helpers and packages into the system.
                 val tools = GuestTools.firmwareTools(this)
                 val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom,
-                    prep.jailbreak && chosen.jailbreakUnavailable == null)
+                    prep.jailbreak && chosen.jailbreakUnavailable == null, prep.ipswUnchecked)
                 handler.post { prep.preparation = state }
             } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
         }, "prepare-start").start()
@@ -986,45 +989,122 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }, "prepared-device-import").start()
     }
-    private fun rememberIpsw(path: String, firmwareId: String) {
-        prep.ipswPath = path; prep.ipswFor = firmwareId; prep.ipswError = ""
-        getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("ipsw", path).putString("ipswFor", firmwareId).putString("firmwareId", firmwareId).apply()
+    private fun rememberIpsw(path: String, firmwareId: String, unchecked: Boolean = false) {
+        // A copy used anyway is only good for this choice; one replacing it goes.
+        if (prep.ipswUnchecked && prep.ipswPath != path && prep.ipswPath.startsWith(filesDir.absolutePath)) File(prep.ipswPath).delete()
+        prep.ipswPath = path; prep.ipswFor = firmwareId; prep.ipswUnchecked = unchecked; prep.ipswError = ""
+        getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("ipsw", path).putString("ipswFor", firmwareId)
+            .putBoolean("ipswUnchecked", unchecked).putString("firmwareId", firmwareId).apply()
     }
     private fun downloadIpsw() {
         val chosen = prep.firmware ?: return
         prep.ipswError = ""
         IpswDownload.start(this, chosen) { file, _ -> handler.post { if (file != null) rememberIpsw(file.absolutePath, chosen.id); continueAutoPrepare() } }
     }
-    /** Copies a chosen IPSW in, checking its SHA-1 against the chosen version's on the way. */
+    /**
+     * Copies a chosen IPSW in, hashing it on the way. Apple's file for the chosen version is ready at once; anything
+     * else is asked about (firmwarekit identify, the desktop's check too) and waits beside it as `.copy` while the
+     * card says what it is: used anyway, switched to the version it is, or refused.
+     */
     private fun importStockIpsw(uri: Uri) {
         val chosen = prep.firmware ?: return
         if (preparationActive() || busy) return
+        discardPendingIpsw()
         busy = true; prep.ipswError = ""; prep.ipswChecking = "Copying ${displayName(uri)}"
         DownloadService.hold(applicationContext, "Copying iOS ${chosen.label}")
         Thread({
-            val target = File(IpswDownload.directory(this).apply { mkdirs() }, chosen.fileName)
-            val partial = File(target.path + ".copy")
+            val partial = File(IpswDownload.directory(this).apply { mkdirs() }, chosen.fileName + ".copy")
             try {
                 val digest = java.security.MessageDigest.getInstance("SHA-1")
-                val total = DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L
-                require(chosen.bytes <= 0 || total <= 0 || total == chosen.bytes) { "That file is not the iOS ${chosen.label} IPSW for the ${shortProductName(chosen.productType)}" }
-                contentResolver.openInputStream(uri)?.use { input -> partial.outputStream().use { output ->
-                    val buffer = ByteArray(1 shl 20); var done = 0L
-                    while (true) {
-                        val n = input.read(buffer); if (n < 0) break
-                        output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
-                        if (total > 0) handler.post { prep.ipswChecking = "Copying and checking… ${done * 100 / total}%" }
+                val total = runCatching { DocumentFile.fromSingleUri(this, uri)?.length() }.getOrNull() ?: 0L
+                contentResolver.openInputStream(uri)?.use { input ->
+                    // A zip starts with "PK\3\4": anything else isn't an IPSW, so it isn't copied.
+                    val head = ByteArray(4); var got = 0
+                    while (got < 4) { val n = input.read(head, got, 4 - got); if (n < 0) break; got += n }
+                    if (got == 0) throw IpswRefused("That file is empty.")
+                    if (got < 4 || head[0] != 0x50.toByte() || head[1] != 0x4b.toByte() || head[2] != 3.toByte() || head[3] != 4.toByte())
+                        throw IpswRefused("That file isn't an IPSW.")
+                    partial.outputStream().use { output ->
+                        output.write(head); digest.update(head); var done = 4L
+                        val buffer = ByteArray(1 shl 20)
+                        while (true) {
+                            val n = input.read(buffer); if (n < 0) break
+                            output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
+                            if (total > 0) handler.post { prep.ipswChecking = "Copying and checking… ${done * 100 / total}%" }
+                        }
                     }
-                } } ?: error("Cannot read the IPSW")
+                } ?: throw IpswRefused("LightTouch can't read that file.")
                 val sha1 = digest.digest().joinToString("") { "%02x".format(it) }
-                require(chosen.sha1.isEmpty() || sha1 == chosen.sha1) { "That file is not the iOS ${chosen.label} IPSW for the ${shortProductName(chosen.productType)}" }
-                check(partial.renameTo(target)) { "Could not save the IPSW" }
-                handler.post { rememberIpsw(target.absolutePath, chosen.id); prep.ipswChecking = ""; busy = false }
+                if (chosen.sha1.isNotEmpty() && sha1 == chosen.sha1) {
+                    val target = File(partial.parentFile, chosen.fileName)
+                    check(partial.renameTo(target)) { "Could not save the IPSW" }
+                    handler.post { rememberIpsw(target.absolutePath, chosen.id); prep.ipswChecking = ""; busy = false }
+                } else {
+                    handler.post { prep.ipswChecking = "Checking what it is…" }
+                    val check = identifyIpsw(partial, chosen, sha1)
+                    handler.post { settleIpswCheck(check); prep.ipswChecking = ""; busy = false }
+                }
             } catch (e: Exception) {
                 partial.delete()
                 handler.post { prep.ipswError = e.message ?: "Could not use that IPSW"; prep.ipswChecking = ""; busy = false }
             } finally { DownloadService.release(applicationContext) }
         }, "stock-ipsw-import").start()
+    }
+    private class IpswRefused(message: String) : Exception(message)
+    /** firmwarekit identify's verdict on [file] against [chosen] (ipsw_check.rs); a refusal when it can't answer. */
+    private fun identifyIpsw(file: File, chosen: CatalogFirmware, sha1: String): IpswCheck {
+        val refused = IpswCheck("not_ipsw", false, "That file is not the iOS ${chosen.label} IPSW for the ${shortProductName(chosen.productType)}",
+            "", "", file.absolutePath, sha1, chosen.id)
+        return try {
+            val tool = File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so")
+            val child = ProcessBuilder(tool.path, "identify", "--id", chosen.id, "--sha1", sha1, "--ipsw", file.path)
+                .redirectErrorStream(true).start()
+            val lines = child.inputStream.bufferedReader().readLines()
+            if (!child.waitFor(60, TimeUnit.SECONDS)) { child.destroy(); return refused }
+            val json = lines.lastOrNull { it.startsWith("{") }?.let { org.json.JSONObject(it) } ?: return refused
+            IpswCheck(json.optString("verdict"), json.optBoolean("bypass"), json.optString("message").ifEmpty { refused.message },
+                json.optString("firmware"), json.optString("switch_label"), file.absolutePath, sha1, chosen.id)
+        } catch (e: Exception) { AppLog.w("IPSW check failed: ${e.message}"); refused }
+    }
+    /** Apple's file is ready; a decision waits on the card; anything else is refused (and its copy goes). */
+    private fun settleIpswCheck(check: IpswCheck) {
+        val file = File(check.path)
+        when {
+            check.verdict == "match" -> {
+                val firmware = prep.catalog.firstOrNull { it.id == check.firmwareId } ?: return
+                val target = File(file.parentFile, firmware.fileName)
+                if (file.renameTo(target)) rememberIpsw(target.absolutePath, firmware.id) else { file.delete(); prep.ipswError = "Could not save the IPSW" }
+            }
+            check.bypass || check.switchTo.isNotEmpty() -> prep.ipswCheck = check
+            else -> { file.delete(); prep.ipswError = check.message }
+        }
+    }
+    /** "Use anyway": the copy is this version's IPSW, unchecked; firmwarekit is told so (--unchecked-ipsw). */
+    private fun useIpswAnyway() {
+        val check = prep.ipswCheck ?: return
+        val firmware = prep.catalog.firstOrNull { it.id == check.firmwareId } ?: return
+        val target = File(File(check.path).parentFile, firmware.fileName.removeSuffix(".ipsw") + "-unchecked.ipsw")
+        prep.ipswCheck = null
+        if (File(check.path).renameTo(target)) rememberIpsw(target.absolutePath, firmware.id, unchecked = true)
+        else { File(check.path).delete(); prep.ipswError = "Could not save the IPSW" }
+    }
+    /** The file is another version the catalog lists: choose that one, then check the file against it. */
+    private fun switchToIpswFirmware() {
+        val check = prep.ipswCheck ?: return
+        val other = prep.catalog.firstOrNull { it.id == check.switchTo } ?: return
+        prep.ipswCheck = null
+        prep.productType = other.productType; prep.firmwareId = other.id
+        if (other.sha1.isNotEmpty() && other.sha1 == check.sha1) { settleIpswCheck(check.copy(verdict = "match", firmwareId = other.id)); return }
+        busy = true; prep.ipswChecking = "Checking what it is…"
+        Thread({
+            val again = identifyIpsw(File(check.path), other, check.sha1)
+            handler.post { settleIpswCheck(again); prep.ipswChecking = ""; busy = false }
+        }, "stock-ipsw-recheck").start()
+    }
+    /** Cancel (or a new choice): the copy waiting for an answer goes. */
+    private fun discardPendingIpsw() {
+        prep.ipswCheck?.let { File(it.path).delete() }
+        prep.ipswCheck = null
     }
     private fun downloadBootrom() {
         val rom = prep.bootrom ?: return
