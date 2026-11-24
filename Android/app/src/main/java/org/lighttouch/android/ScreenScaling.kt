@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -43,6 +45,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.min
@@ -311,6 +315,11 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     val s = host.settings
     var screen by rememberSaveable { mutableStateOf(PreviewScreen.forBoard(host.selected?.board)) }
     var picture by rememberSaveable { mutableStateOf(PreviewPicture.PIXEL_ART) }
+    // Turned by its rotate button: 0 portrait, 1 Home on the right, 2 Home on the left (the device page's order).
+    var turned by rememberSaveable { mutableStateOf(0) }
+    var full by remember { mutableStateOf(false) }
+    val landscape = turned != 0
+    val degrees = when (turned) { 1 -> -90f; 2 -> 90f; else -> 0f }
     val squares = picture == PreviewPicture.SQUARES
     val method = s.scaling
     val source = remember(screen, picture) {
@@ -329,7 +338,10 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
         s.realSize == RealSize.IPADS && !screen.ipad -> null
         else -> s.pxPerMm
     }
-    val view = deviceViewFit(screen.skin, screen.pixels, room.width / density, room.height / density, density, method, s.integerScale, realPx)
+    // Turned, the device view's room turns with it: its width is the screen's height.
+    val (roomW, roomH) = if (landscape) room.height to room.width else room.width to room.height
+    val view = deviceViewFit(screen.skin, screen.pixels, roomW / density, roomH / density, density, method, s.integerScale, realPx)
+    val shownPixels = if (landscape) IntSize(screen.pixels.height, screen.pixels.width) else screen.pixels
     // How many physical pixels the device view gives each of the screen's pixels.
     val viewScale = if (view.whole > 0) view.whole.toFloat() else view.scale * density * screen.skin.screenWidth / screen.pixels.width
     Column(modifier) {
@@ -343,22 +355,56 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
             val (scale, caption) = if (squares) {
                 s.pxPerMm * screen.skin.screenWidth / screen.pixels.width to
                     "1 cm squares · %.0f pixels per inch, %s".format(s.pxPerMm * 25.4f, if (s.displayPxPerMm > 0f) "measured" else "as the system reports")
-            } else previewScale(method, screen.pixels, viewScale, view, s.integerScale, box)
+            } else previewScale(method, shownPixels, viewScale, view, s.integerScale, box)
             Column {
                 Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp).height(22.dp).testTag("preview_caption"))
                 Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Color(0xFF0E0F12)).testTag("preview_picture")) {
-                    if (squares) Squares(screen, s.pxPerMm, Modifier.fillMaxSize())
-                    else ScaledPicture(source, method, scale, Modifier.fillMaxSize())
+                    if (squares) Squares(screen, s.pxPerMm, landscape, Modifier.fillMaxSize())
+                    else ScaledPicture(source, method, scale, degrees, Modifier.fillMaxSize())
+                    // Full screen (the sample as full screen draws it) and Rotate, over the picture's top-right corner.
+                    Row(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!squares) FilledTonalIconButton(onClick = { full = true }, modifier = Modifier.size(40.dp).testTag("preview_fullscreen")) {
+                            Icon(LtIcons.Fullscreen, "Preview full screen", Modifier.size(20.dp))
+                        }
+                        FilledTonalIconButton(onClick = { turned = (turned + 1) % 3 }, modifier = Modifier.size(40.dp).testTag("preview_rotate")) {
+                            Icon(LtIcons.Rotate, "Rotate", Modifier.size(20.dp))
+                        }
+                    }
                 }
             }
+        }
+    }
+    if (full) FullPreview(source, method, screen, shownPixels, degrees, s.integerScale, realPx) { full = false }
+}
+
+/**
+ * The sample over the whole screen, black around it, at the size full screen draws the guest: Pixel perfect's whole
+ * multiple, the real size where it fits, else fitted. A tap or Back leaves.
+ */
+@Composable
+private fun FullPreview(source: Bitmap, method: ScreenScaling, screen: PreviewScreen, shown: IntSize, degrees: Float, fixed: Int,
+                        realPx: Float?, onClose: () -> Unit) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black).clickable(onClick = onClose).testTag("preview_full")) {
+            val w = constraints.maxWidth.toFloat(); val h = constraints.maxHeight.toFloat()
+            val fit = min(w / shown.width, h / shown.height)
+            val real = realPx?.let { it * screen.skin.screenWidth / screen.pixels.width }
+            val scale = when {
+                method == ScreenScaling.PIXEL_PERFECT -> wholeMultiple(shown, w, h, fixed).toFloat()
+                real != null && shown.width * real <= w + 0.5f && shown.height * real <= h + 0.5f -> real
+                else -> fit
+            }
+            ScaledPicture(source, method, scale, degrees, Modifier.fillMaxSize())
+            Text("Tap to leave", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
         }
     }
 }
 
 /**
  * The scale the preview draws a sample at in a [box] of physical pixels, and its one-line caption: what the device
- * view does ("Device view · Real size · Smoothed 2.59× · soft edges").
+ * view does ("Real size · Smoothed 2.59× · soft edges").
  */
 private fun previewScale(method: ScreenScaling, pixels: IntSize, viewScale: Float, view: DeviceViewFit, fixed: Int, box: IntSize): Pair<Float, String> {
     fun times(x: Float) = if (abs(x - x.roundToInt()) < 0.01f) "${x.roundToInt()}×" else "%.2f×".format(x)
@@ -371,7 +417,7 @@ private fun previewScale(method: ScreenScaling, pixels: IntSize, viewScale: Floa
             else -> "Pixel perfect $k×"
         }
         val detail = if (shown < k) "showing $shown× here" else "each pixel $k×$k"
-        return shown.toFloat() to "Device view · $what · $detail"
+        return shown.toFloat() to "$what · $detail"
     }
     val fits = pixels.width * viewScale <= box.width + 0.5f && pixels.height * viewScale <= box.height + 0.5f
     val scale = if (fits) viewScale else min(box.width.toFloat() / pixels.width, box.height.toFloat() / pixels.height)
@@ -384,12 +430,12 @@ private fun previewScale(method: ScreenScaling, pixels: IntSize, viewScale: Floa
         else -> "Smoothed ${times(viewScale)} · soft edges"
     }
     val shrunk = if (fits) "" else " · smaller here"
-    return scale to "Device view · $real$what$shrunk"
+    return scale to "$real$what$shrunk"
 }
 
-/** [source] drawn at [scale] by [method], centred in the box on whole physical pixels. */
+/** [source] drawn at [scale] by [method], turned [degrees] (0 or a quarter), centred in the box on whole physical pixels. */
 @Composable
-private fun ScaledPicture(source: Bitmap, method: ScreenScaling, scale: Float, modifier: Modifier) {
+private fun ScaledPicture(source: Bitmap, method: ScreenScaling, scale: Float, degrees: Float, modifier: Modifier) {
     val k = if (method == ScreenScaling.CRISP) crispMultiple(scale) else 1
     val image: ImageBitmap = remember(source, k) {
         (if (k > 1) Bitmap.createScaledBitmap(source, source.width * k, source.height * k, false) else source).asImageBitmap()
@@ -398,15 +444,16 @@ private fun ScaledPicture(source: Bitmap, method: ScreenScaling, scale: Float, m
     val size = IntSize((source.width * scale).roundToInt(), (source.height * scale).roundToInt())
     Canvas(modifier.clipToBounds()) {
         val at = IntOffset(((this.size.width - size.width) / 2).roundToInt(), ((this.size.height - size.height) / 2).roundToInt())
-        drawImage(image, IntOffset.Zero, IntSize(image.width, image.height), at, size, filterQuality = filter)
+        rotate(degrees) { drawImage(image, IntOffset.Zero, IntSize(image.width, image.height), at, size, filterQuality = filter) }
     }
 }
 
 /** The screen at real size ([pxPerMm]) over 1 cm squares, centred, cut off at the box's edges when larger. */
 @Composable
-private fun Squares(screen: PreviewScreen, pxPerMm: Float, modifier: Modifier) {
+private fun Squares(screen: PreviewScreen, pxPerMm: Float, landscape: Boolean, modifier: Modifier) {
     Canvas(modifier.clipToBounds()) {
-        val w = screen.skin.screenWidth * pxPerMm; val h = screen.skin.screenHeight * pxPerMm
+        val across = screen.skin.screenWidth * pxPerMm; val down = screen.skin.screenHeight * pxPerMm
+        val w = if (landscape) down else across; val h = if (landscape) across else down
         val left = ((size.width - w) / 2).roundToInt().toFloat(); val top = ((size.height - h) / 2).roundToInt().toFloat()
         drawRect(Color(0xFF14161A), Offset(left, top), Size(w, h))
         val cm = 10 * pxPerMm
