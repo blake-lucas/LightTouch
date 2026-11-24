@@ -25,8 +25,8 @@ android {
         applicationId = "org.lighttouch.android" + providers.gradleProperty("appIdSuffix").orElse("").get()
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.0.14"
+        versionCode = 15
+        versionName = "0.0.15"
         buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

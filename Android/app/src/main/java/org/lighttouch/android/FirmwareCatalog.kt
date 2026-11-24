@@ -28,6 +28,12 @@ internal data class CatalogFirmware(
         status == "available" || status == "experimental" -> Support.EXPERIMENTAL
         else -> Support.UNTESTED
     }
+    /** The prepare screen's line under the support label; the desktop's Firmware::support_detail says the same. */
+    val supportDetail get() = when {
+        // The iPhone 5 runs everything it was tried with, at a fraction of the other boards' speed.
+        support == Support.EXPERIMENTAL && board == "n42ap" -> "Works on LightTouch, but runs much slower than the other devices for now."
+        else -> support.detail
+    }
     /**
      * Why the prepare screen shows the Jailbreak switch turned off and locked for this firmware, or null where it can
      * be turned on. firmwarekit refuses the same firmwares; the desktop's Firmware::jailbreak_unavailable says the same.

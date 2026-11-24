@@ -167,6 +167,18 @@ impl Firmware {
         }
     }
 
+    /// What the prepare screens say under this firmware's support label: the label's own text, except for boards
+    /// whose experimental status means something more specific.
+    pub fn support_detail(&self) -> &'static str {
+        match self.support() {
+            // The iPhone 5 runs everything it was tried with, at a fraction of the other boards' speed.
+            Support::Experimental if self.board == "n42ap" => {
+                "Works on LightTouch, but runs much slower than the other devices for now."
+            }
+            support => support.detail(),
+        }
+    }
+
     pub fn device_name(&self) -> &'static str {
         short_product_name(&self.product_type)
     }

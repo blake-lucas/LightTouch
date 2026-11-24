@@ -208,7 +208,7 @@ fn version_step(app: &mut App, ui: &mut Ui) {
     for (support, mut list) in sections {
         list.sort_by_key(|f| f.id != RECOMMENDED);
         widgets::section(ui, &p, support.label());
-        ui.label(widgets::muted(&p, support.detail()).size(12.5));
+        ui.label(widgets::muted(&p, list[0].support_detail()).size(12.5));
         ui.add_space(4.0);
         widgets::card(ui, &p, |ui| {
             for firmware in list {
@@ -270,7 +270,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
             Support::DoesntStart => p.error,
             _ => theme::warning(&p),
         };
-        ui.label(RichText::new(format!("{}: {}", support.label(), support.detail())).size(12.5).color(color));
+        ui.label(RichText::new(format!("{}: {}", support.label(), firmware.support_detail())).size(12.5).color(color));
         ui.add_space(8.0);
     }
     let busy = app.model.busy().is_some();

@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: LightTouch version
-      description: From Settings › About, or the release you downloaded (for example "v0.0.14").
+      description: From Settings › About, or the release you downloaded (for example "v0.0.15").
     validations:
       required: true
   - type: dropdown

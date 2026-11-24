@@ -235,7 +235,7 @@ private fun VersionStep(state: PrepareState) {
         val group = shown.filter { it.support == support }
         if (group.isEmpty()) continue
         SectionLabel(support.label)
-        Text(support.detail, Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(group.first().supportDetail, Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (firmware in group.sortedBy { it.id != recommendedFirmware }) {
             val detail = (if (firmware.id == recommendedFirmware) "Recommended · " else "") + released(firmware)
             ChoiceRow(null, "iOS ${firmware.label}", detail, true, "prepare_version_${firmware.id}") {
