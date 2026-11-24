@@ -4,8 +4,9 @@ use super::{App, Page, icons, setup, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, RichText, Sense, Ui, vec2};
 use lighttouch_catalog::Bootrom;
 use lighttouch_catalog::catalog::{Catalog, DeviceGroup, Firmware, RECOMMENDED, Support};
-use lighttouch_model::prepare::{self, IpswSource, PrepareRequest};
+use lighttouch_model::prepare::{self, IpswCheck, IpswSource, PrepareRequest};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,6 +25,14 @@ pub struct PrepareState {
     pub firmware: Option<String>,
     pub show_betas: bool,
     pub ipsw_file: Option<PathBuf>,
+    /// [Self::ipsw_file] isn't the version's own IPSW; the user chose "Use anyway".
+    pub ipsw_unchecked: bool,
+    /// A chosen IPSW being hashed and identified.
+    pub checking: Option<Checking>,
+    /// A chosen IPSW that isn't the version's own: what it is, waiting for the user (or refused).
+    pub pending: Option<Pending>,
+    /// LIGHTTOUCH_UI_PICK (devshot.rs): a file chosen as if from the file dialog.
+    pub dev_pick: Option<PathBuf>,
     pub bootrom: Option<PathBuf>,
     pub name: String,
     pub jailbreak: bool,
@@ -32,7 +41,29 @@ pub struct PrepareState {
     pub started: Option<Instant>,
 }
 
+/// A chosen IPSW being checked on a thread: its hashing progress, then its SHA-1 and verdict.
+pub struct Checking {
+    pub file: PathBuf,
+    firmware_id: String,
+    progress: Arc<Mutex<(u64, u64)>>,
+    result: Arc<Mutex<Option<(String, IpswCheck)>>>,
+}
+
+pub struct Pending {
+    pub file: PathBuf,
+    sha1: String,
+    pub check: IpswCheck,
+}
+
 impl PrepareState {
+    /// Forget a chosen IPSW and anything said about it (another version was chosen).
+    pub fn clear_ipsw(&mut self) {
+        self.ipsw_file = None;
+        self.ipsw_unchecked = false;
+        self.checking = None;
+        self.pending = None;
+    }
+
     /// Set up to run `request` again (one LightTouch closed during): its choices, at the IPSW step, saying why.
     pub fn resume(&mut self, request: PrepareRequest) -> bool {
         let Some(firmware) = Catalog::get().find(&request.firmware_id) else { return false };
@@ -42,6 +73,7 @@ impl PrepareState {
             IpswSource::File(path) if path.is_file() => Some(path),
             _ => None,
         };
+        self.ipsw_unchecked = self.ipsw_file.is_some() && request.unchecked_ipsw;
         self.bootrom = request.bootrom.filter(|p| p.is_file());
         self.name = request.name.unwrap_or_default();
         self.jailbreak = request.jailbreak;
@@ -55,7 +87,7 @@ impl PrepareState {
 fn support_color(p: &theme::Palette, support: Support) -> Color32 {
     match support {
         Support::Tested => p.primary,
-        Support::Experimental => theme::WARNING,
+        Support::Experimental => theme::warning(p),
         Support::Untested => p.on_surface_variant,
         Support::DoesntStart => p.error,
     }
@@ -113,7 +145,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
 fn device_step(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
-    header(app, ui, "Prepare from an IPSW", "Choose the device to emulate", |app| {
+    header(app, ui, "Choose a device", "Pick the device to emulate. You'll choose its iOS version next.", |app| {
         app.page = if app.model.devices.is_empty() { Page::Setup(setup::Step::Welcome) } else { Page::Device };
     });
     // The sidebar's ⋮ has this too; here for whoever came to add a device they already have elsewhere.
@@ -131,6 +163,10 @@ fn device_step(app: &mut App, ui: &mut Ui) {
             continue;
         }
         widgets::section(ui, &p, title);
+        if title.starts_with("Not tested") {
+            ui.label(widgets::muted(&p, "These may not start, or may not work fully. Try them and see.").size(12.5));
+            ui.add_space(4.0);
+        }
         widgets::card(ui, &p, |ui| {
             for group in list {
                 let best = group.firmwares.iter().map(|f| f.support()).min().unwrap_or(Support::Untested);
@@ -152,7 +188,13 @@ fn version_step(app: &mut App, ui: &mut Ui) {
     let groups = Catalog::get().devices();
     let Some(group) = groups.iter().find(|g| g.product_type == product) else { return };
     let name = group.name();
-    header(app, ui, name, "Choose the iOS version", |app| app.prepare.step = Step::Device);
+    header(
+        app,
+        ui,
+        &format!("Choose iOS for {name}"),
+        "Tested versions are checked on LightTouch; the others are yours to try.",
+        |app| app.prepare.step = Step::Device,
+    );
     let betas = group.firmwares.iter().filter(|f| f.is_beta()).count();
     let mut sections: Vec<(Support, Vec<&Firmware>)> = Vec::new();
     for firmware in group.firmwares.iter().copied().filter(|f| app.prepare.show_betas || !f.is_beta()) {
@@ -178,7 +220,7 @@ fn version_step(app: &mut App, ui: &mut Ui) {
                 let subtitle = format!("Released {} · build {}", firmware.released_label(), firmware.build);
                 if choice_row(ui, &p, icons::PACKAGE, &title, &subtitle, None).clicked() {
                     app.prepare.firmware = Some(firmware.id.clone());
-                    app.prepare.ipsw_file = None;
+                    app.prepare.clear_ipsw();
                     app.prepare.error = None;
                     app.prepare.step = Step::Files;
                 }
@@ -212,15 +254,12 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         app,
         ui,
         &format!("{name}, iOS {}", firmware.label()),
-        &format!(
-            "LightTouch needs Apple's stock IPSW for this version{}",
-            if rom.is_some() { ", and the device's boot file." } else { "." }
-        ),
+        "Downloads what it needs, then sets it up on this computer.",
         |app| app.prepare.step = Step::Version,
     );
     if let Err(reason) = prepare::availability(&app.model.resources) {
         widgets::card(ui, &p, |ui| {
-            ui.label(RichText::new(reason).color(theme::WARNING));
+            ui.label(RichText::new(reason).color(theme::warning(&p)));
         });
         return;
     }
@@ -229,108 +268,89 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         let color = match support {
             Support::Untested => p.on_surface_variant,
             Support::DoesntStart => p.error,
-            _ => theme::WARNING,
+            _ => theme::warning(&p),
         };
         ui.label(RichText::new(format!("{}: {}", support.label(), support.detail())).size(12.5).color(color));
         ui.add_space(8.0);
     }
     let busy = app.model.busy().is_some();
 
-    // The IPSW: downloaded as preparing starts, or a file chosen here.
+    // The IPSW: downloaded as preparing starts, or a file chosen here (checked as it is chosen).
+    poll_check(app);
     let ipsw = app.prepare.ipsw_file.clone();
+    let checking = app.prepare.checking.is_some();
     let detail = match &ipsw {
-        Some(file) => format!(
-            "{} · checked against the catalog before it is used",
+        Some(file) if app.prepare.ipsw_unchecked => format!(
+            "{} · not Apple's file for this version; it may not work",
             file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
         ),
-        None => format!(
-            "{} · {:.0} MB. Downloaded when preparing starts, from Apple's servers when ipsw.me lists it, otherwise \
-             from the Internet Archive.",
-            firmware.file_name(),
-            firmware.ipsw_bytes() as f64 / 1e6
-        ),
+        Some(file) => {
+            format!("{} · verified", file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+        }
+        None => format!("{:.0} MB · downloaded for you", firmware.ipsw_bytes() as f64 / 1e6),
     };
+    let status = ipsw_status(app);
+    let mut action = IpswAction::None;
     prep_card(
         ui,
         &p,
         icons::PACKAGE,
-        "iOS firmware (IPSW)",
+        "iOS firmware",
         &detail,
         ipsw.is_some(),
         Some(&mut |ui: &mut Ui| {
             // Right to left: the file button sits at the edge.
             let label = if ipsw.is_some() { "Change" } else { "Choose a file" };
-            if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
+            if widgets::tonal_enabled(ui, &p, label, !busy && !checking).clicked() {
                 if let Some(file) =
                     rfd::FileDialog::new().set_title("Choose the IPSW").add_filter("IPSW", &["ipsw"]).pick_file()
                 {
-                    app.prepare.ipsw_file = Some(file);
+                    choose_ipsw(app, file, ui.ctx());
                 }
             }
             if ipsw.is_some() && widgets::text_button(ui, &p, "Download instead").clicked() {
-                app.prepare.ipsw_file = None;
+                app.prepare.clear_ipsw();
             }
         }),
+        status.as_ref().map(|status| {
+            Box::new(|ui: &mut Ui| action = show_ipsw_status(ui, &p, status)) as Box<dyn FnOnce(&mut Ui) + '_>
+        }),
     );
+    apply_ipsw_action(app, action);
+    if let Some(file) = app.prepare.dev_pick.take() {
+        choose_ipsw(app, file, ui.ctx());
+    }
 
-    // The boot file: which one the device starts from, always shown.
-    match rom {
-        None => prep_card(
+    // The chip's boot ROM, on the devices that start from one (the same for every iOS version).
+    if let Some(rom) = rom {
+        let known = prepare::known_bootrom(&app.model.dirs, &app.model.devices, rom);
+        let (ready, detail) = match (&app.prepare.bootrom, &known) {
+            (Some(_), _) => (true, format!("{} · your file", rom.label())),
+            (None, Some(_)) => (true, format!("{} · reused", rom.label())),
+            (None, None) => (false, "64 KB · downloaded for you".to_string()),
+        };
+        prep_card(
             ui,
             &p,
             icons::CPU,
-            "Boot file",
-            &format!("None needed. The {name} starts from the files preparation makes."),
-            true,
-            None,
-        ),
-        Some(rom) => {
-            let known = prepare::known_bootrom(&app.model.dirs, &app.model.devices, rom);
-            let (ready, detail) = match (&app.prepare.bootrom, &known) {
-                (Some(file), _) => (
-                    true,
-                    format!(
-                        "{} ({}). It is the same for every iOS version.",
-                        file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                        rom.label()
-                    ),
-                ),
-                (None, Some(path)) => {
-                    let from = app.model.devices.iter().find(|d| d.record.bootrom_path.as_ref() == Some(path));
-                    let whose = from.map(|d| format!("the one from {}", d.name)).unwrap_or("the saved one".into());
-                    (true, format!("Reusing {whose} ({}). It is the same for every iOS version.", rom.label()))
-                }
-                (None, None) => (
-                    false,
-                    format!(
-                        "64 KB, part of the chip rather than the IPSW. Downloaded from {} when preparing starts.",
-                        rom.sources()
-                    ),
-                ),
-            };
-            let title = format!("Boot file · {} boot ROM", rom.label());
-            prep_card(
-                ui,
-                &p,
-                icons::CPU,
-                &title,
-                &detail,
-                ready,
-                Some(&mut |ui: &mut Ui| {
-                    let label = if ready { "Change" } else { "Choose a file" };
-                    if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
-                        if let Some(file) = rfd::FileDialog::new().set_title("Choose the boot ROM").pick_file() {
-                            if rom.matches_file(&file) {
-                                app.prepare.bootrom = Some(file);
-                                app.prepare.error = None;
-                            } else {
-                                app.prepare.error = Some(format!("That file isn't the {} boot ROM.", rom.label()));
-                            }
+            "Boot ROM",
+            &detail,
+            ready,
+            Some(&mut |ui: &mut Ui| {
+                let label = if ready { "Change" } else { "Choose a file" };
+                if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
+                    if let Some(file) = rfd::FileDialog::new().set_title("Choose the boot ROM").pick_file() {
+                        if rom.matches_file(&file) {
+                            app.prepare.bootrom = Some(file);
+                            app.prepare.error = None;
+                        } else {
+                            app.prepare.error = Some(format!("That file isn't the {} boot ROM.", rom.label()));
                         }
                     }
-                }),
-            );
-        }
+                }
+            }),
+            None,
+        );
     }
 
     prep_card(
@@ -352,6 +372,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
                     .margin(vec2(10.0, 8.0)),
             );
         }),
+        None,
     );
 
     ui.add_space(8.0);
@@ -362,16 +383,9 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         app.prepare.jailbreak = false;
     }
     widgets::card(ui, &p, |ui| {
-        widgets::setting_row(
-            ui,
-            &p,
-            icons::BAG,
-            "Jailbreak",
-            unavailable.unwrap_or("Cydia and afc2, installed during preparation"),
-            |ui| {
-                ui.add_enabled_ui(unavailable.is_none(), |ui| widgets::switch(ui, &p, &mut app.prepare.jailbreak));
-            },
-        );
+        widgets::setting_row(ui, &p, icons::BAG, "Jailbreak", unavailable.unwrap_or("Adds Cydia and afc2"), |ui| {
+            ui.add_enabled_ui(unavailable.is_none(), |ui| widgets::switch(ui, &p, &mut app.prepare.jailbreak));
+        });
     });
 
     if let Some(error) = &app.prepare.error {
@@ -383,17 +397,17 @@ fn files_step(app: &mut App, ui: &mut Ui) {
     ui.label(
         widgets::muted(
             &p,
-            format!(
-                "Preparing runs on this computer, takes {time} and needs about {space} free. It shows in the device \
-                 list while it runs. LightTouch's guest tools are added for you."
-            ),
+            format!("Takes {time} and needs about {space} free. You can use the rest of LightTouch while it works."),
         )
         .size(12.5),
     );
     ui.add_space(20.0);
     let mut start = false;
     ui.vertical_centered(|ui| {
-        start = widgets::primary_enabled(ui, &p, "Prepare device", !busy).clicked();
+        // Not while a chosen file is being checked or waits for an answer: it would download instead.
+        let deciding =
+            checking || app.prepare.pending.as_ref().is_some_and(|d| d.check.bypass || d.check.firmware.is_some());
+        start = widgets::primary_enabled(ui, &p, "Prepare device", !busy && !deciding).clicked();
     });
     if start {
         app.prepare.error = None;
@@ -405,15 +419,164 @@ fn files_step(app: &mut App, ui: &mut Ui) {
             jailbreak: app.prepare.jailbreak,
             ipas: Vec::new(),
             no_game_center: false,
+            unchecked_ipsw: app.prepare.ipsw_file.is_some() && app.prepare.ipsw_unchecked,
         });
         app.prepare.started = Some(Instant::now());
         app.prepare.step = Step::Progress;
     }
 }
 
+/// A file chosen for the IPSW: hashed and identified on a thread (a few seconds for a large IPSW), the card showing
+/// progress meanwhile. The dev hook LIGHTTOUCH_UI_PICK comes in here too.
+pub fn choose_ipsw(app: &mut App, file: PathBuf, ctx: &egui::Context) {
+    let Some(firmware_id) = app.prepare.firmware.clone() else { return };
+    app.prepare.clear_ipsw();
+    let progress = Arc::new(Mutex::new((0u64, 0u64)));
+    let result = Arc::new(Mutex::new(None));
+    let (resources, path, id) = (app.model.resources.clone(), file.clone(), firmware_id.clone());
+    let (shared_progress, shared_result, ctx) = (progress.clone(), result.clone(), ctx.clone());
+    std::thread::spawn(move || {
+        let mut report = |_: &str, done: u64, total: u64| {
+            if let Ok(mut p) = shared_progress.lock() {
+                *p = (done, total);
+            }
+            ctx.request_repaint();
+            true
+        };
+        let unreadable = || IpswCheck {
+            verdict: "not_ipsw".into(),
+            bypass: false,
+            message: "LightTouch can't read that file.".into(),
+            firmware: None,
+            switch_label: None,
+        };
+        // Always an answer, even if hashing panics: the card must not stay at "Checking" forever.
+        let answer =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match prepare::ipsw_sha1(&path, &mut report) {
+                Ok(sha1) => {
+                    let check = prepare::check_ipsw(&resources, &id, &path, &sha1);
+                    (sha1, check)
+                }
+                Err(_) => (String::new(), unreadable()),
+            }))
+            .unwrap_or_else(|_| (String::new(), unreadable()));
+        if let Ok(mut r) = shared_result.lock() {
+            *r = Some(answer);
+        }
+        ctx.request_repaint();
+    });
+    app.prepare.checking = Some(Checking { file, firmware_id, progress, result });
+}
+
+/// Take a finished check: Apple's file is used, anything else waits for the user (or is refused).
+fn poll_check(app: &mut App) {
+    let Some(checking) = &app.prepare.checking else { return };
+    let Some((sha1, check)) = checking.result.lock().ok().and_then(|mut r| r.take()) else { return };
+    let checking = app.prepare.checking.take().unwrap();
+    if app.prepare.firmware.as_deref() != Some(checking.firmware_id.as_str()) {
+        return; // another version was chosen meanwhile
+    }
+    settle(app, checking.file, sha1, check);
+}
+
+fn settle(app: &mut App, file: PathBuf, sha1: String, check: IpswCheck) {
+    if check.matches() {
+        app.prepare.ipsw_file = Some(file);
+        app.prepare.ipsw_unchecked = false;
+        app.prepare.pending = None;
+    } else {
+        app.prepare.pending = Some(Pending { file, sha1, check });
+    }
+}
+
+/// What the IPSW card shows under its row: a chosen file being checked, or what it turned out to be.
+enum IpswStatus {
+    Checking { name: String, fraction: Option<f32> },
+    Verdict(IpswCheck),
+}
+
+/// The answer to a chosen file that isn't the version's own.
+enum IpswAction {
+    None,
+    UseAnyway,
+    Switch(String),
+    Cancel,
+}
+
+fn ipsw_status(app: &App) -> Option<IpswStatus> {
+    if let Some(checking) = &app.prepare.checking {
+        let (done, total) = checking.progress.lock().map(|g| *g).unwrap_or((0, 0));
+        let name = checking.file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        return Some(IpswStatus::Checking { name, fraction: (total > 0).then(|| done as f32 / total as f32) });
+    }
+    app.prepare.pending.as_ref().map(|pending| IpswStatus::Verdict(pending.check.clone()))
+}
+
+/// Inside the IPSW card, under its row: the check's progress, or what the chosen file is and what can be done.
+fn show_ipsw_status(ui: &mut Ui, p: &theme::Palette, status: &IpswStatus) -> IpswAction {
+    let mut action = IpswAction::None;
+    ui.add_space(6.0);
+    match status {
+        IpswStatus::Checking { name, fraction } => {
+            ui.label(widgets::muted(p, format!("Checking {name}…")).size(12.5));
+            ui.add_space(4.0);
+            widgets::progress(ui, p, *fraction, ui.available_width());
+        }
+        IpswStatus::Verdict(check) => {
+            let decision = check.bypass || check.firmware.is_some();
+            let warning = theme::warning(p);
+            ui.label(RichText::new(&check.message).size(13.0).color(if decision { warning } else { p.error }));
+            if decision {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    match (&check.firmware, &check.switch_label) {
+                        // Another version the catalog lists: switch to it, and check the file against that one.
+                        (Some(id), Some(label)) => {
+                            if widgets::tonal(ui, p, label).clicked() {
+                                action = IpswAction::Switch(id.clone());
+                            }
+                        }
+                        _ => {
+                            if widgets::tonal(ui, p, "Use anyway").clicked() {
+                                action = IpswAction::UseAnyway;
+                            }
+                        }
+                    }
+                    if widgets::text_button(ui, p, "Cancel").clicked() {
+                        action = IpswAction::Cancel;
+                    }
+                });
+            }
+        }
+    }
+    action
+}
+
+fn apply_ipsw_action(app: &mut App, action: IpswAction) {
+    let Some(pending) = &app.prepare.pending else { return };
+    let (file, sha1) = (pending.file.clone(), pending.sha1.clone());
+    match action {
+        IpswAction::None => {}
+        IpswAction::UseAnyway => {
+            app.prepare.ipsw_file = Some(file);
+            app.prepare.ipsw_unchecked = true;
+            app.prepare.pending = None;
+        }
+        IpswAction::Switch(id) => {
+            if let Some(other) = Catalog::get().find(&id) {
+                app.prepare.product = Some(other.product_type.clone());
+                app.prepare.firmware = Some(other.id.clone());
+                let again = prepare::check_ipsw(&app.model.resources, &other.id, &file, &sha1);
+                settle(app, file, sha1, again);
+            }
+        }
+        IpswAction::Cancel => app.prepare.pending = None,
+    }
+}
+
 /// One thing the preparation needs, as a card row: its icon (coloured once it's settled), the title and what it means
-/// on the left, its control on the right (a check when it needs none).
-fn prep_card(
+/// on the left, its control on the right (a check when it needs none), and anything `below` under the row.
+fn prep_card<'a>(
     ui: &mut Ui,
     p: &theme::Palette,
     icon: &str,
@@ -421,6 +584,7 @@ fn prep_card(
     detail: &str,
     done: bool,
     trailing: Option<&mut dyn FnMut(&mut Ui)>,
+    below: Option<Box<dyn FnOnce(&mut Ui) + 'a>>,
 ) {
     ui.add_space(6.0);
     widgets::card(ui, p, |ui| {
@@ -450,6 +614,10 @@ fn prep_card(
                 ui.ctx().request_discard("a preparation card's control changed width");
             }
         });
+        if let Some(below) = below {
+            // Under the text, level with the title.
+            egui::Frame::new().inner_margin(egui::Margin { left: 38, right: 0, top: 0, bottom: 2 }).show(ui, below);
+        }
     });
 }
 
@@ -482,9 +650,13 @@ fn progress_step(app: &mut App, ui: &mut Ui) {
             ui.add_space(8.0);
             widgets::progress(ui, &p, progress.fraction(), ui.available_width());
             ui.add_space(14.0);
+            // As on Android, how long it takes; unlike Android, the app has to stay open for it.
+            let time = firmware.as_ref().map_or("a few minutes", |f| f.cost_hint().0);
             ui.label(widgets::muted(
                 &p,
-                "You can use the rest of LightTouch while this runs. Keep it open until it finishes.",
+                format!(
+                    "This takes {time}. You can use the rest of LightTouch meanwhile; keep it open until it finishes."
+                ),
             ));
             ui.add_space(12.0);
             if widgets::text_button(ui, &p, "Cancel").clicked() {
@@ -498,7 +670,7 @@ fn progress_step(app: &mut App, ui: &mut Ui) {
                 return;
             };
             {
-                ui.label(widgets::icon_text(icons::WARNING, 30.0).color(theme::WARNING));
+                ui.label(widgets::icon_text(icons::WARNING, 30.0).color(theme::warning(&p)));
                 ui.add_space(6.0);
                 ui.add(egui::Label::new(RichText::new(error).size(14.0)).wrap());
                 ui.add_space(16.0);

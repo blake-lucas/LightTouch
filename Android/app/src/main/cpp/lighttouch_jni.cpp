@@ -120,10 +120,14 @@ void timeline_presented(uint64_t sequence,uint64_t now,uint64_t work) {
     if(slot.sequence.load(std::memory_order_acquire)!=sequence)return;
     slot.work.store(work,std::memory_order_relaxed);slot.presented.store(now,std::memory_order_release);
 }
-// How the guest frame reaches the panel. The compositor modes hand SurfaceFlinger a
-// guest-sized buffer (or an integer multiple, for sharp pixels) and let it scale on the
-// display hardware; the CPU mode is the old full-resolution nearest-neighbour upscale,
-// which wrote every panel pixel (~10 MB a frame at 1080x2400). LT_PRESENT_SCALE=cpu for A/B.
+// How the guest frame reaches the panel (Settings > Screen scaling). The compositor modes hand
+// SurfaceFlinger a guest-sized buffer (Smooth), or for Crisp the largest whole multiple that fits,
+// which the display hardware brings to the view's size (Pixel perfect sizes the view to an exact
+// multiple: nothing scales). Below twice the guest's size that is 1, as Smooth: rounding up there
+// would mean a 1280x1920 buffer for a Retina guest. The multiple is drawn on this thread: on the
+// Poco, 960x1440 costs ~3 ms a frame (1280x1920 was 4.7).
+// The CPU mode is Sharp, nearest neighbour at the view's own size, which writes every pixel of
+// it (~7 MB a frame for a 1080x1620 view). LT_PRESENT_SCALE=cpu|sharp picks one for A/B.
 enum PresentScale : int { ScaleSmooth=0, ScaleSharp=1, ScaleCpu=2 };
 // False while a full page (Settings, the Store, setup) covers the guest surface. The guest keeps
 // running; the presenter stops posting frames nobody can see and withdraws its 60 Hz request,
@@ -492,7 +496,11 @@ void present() {
                 geometry_height=ANativeWindow_getHeight(target_window);
                 geometry_format=ANativeWindow_getFormat(target_window);
                 if(!geometry_code && scale!=ScaleCpu && shown.width && shown.height) {
-                    const int factor=scale==ScaleSharp?std::max(1,std::min(geometry_width/int(shown.width),geometry_height/int(shown.height))):1;
+                    // Crisp's multiple (ScreenScaling.kt crispMultiple), at most 8 and 4096 pixels a side.
+                    const double reach=std::min(double(geometry_width)/shown.width,double(geometry_height)/shown.height);
+                    const int most=std::max(1,std::min(8,4096/int(std::max(shown.width,shown.height))));
+                    const int whole=int(std::floor(reach+0.01));
+                    const int factor=scale==ScaleSharp?std::clamp(whole,1,most):1;
                     geometry_code=ANativeWindow_setBuffersGeometry(target_window,int(shown.width)*factor,int(shown.height)*factor,WINDOW_FORMAT_RGBA_8888);
                 }
                 request_guest_frame_rate(target_window);
@@ -1570,7 +1578,11 @@ JNI(setPresentVisible) void JNICALL Java_org_lighttouch_android_Native_setPresen
     frame_wake.notify_one();
 }
 JNI(setPresentScale) void JNICALL Java_org_lighttouch_android_Native_setPresentScale(JNIEnv *,jobject,jint mode) {
-    if(mode>=ScaleSmooth && mode<=ScaleCpu)present_scale.store(mode,std::memory_order_relaxed);
+    if(mode<ScaleSmooth || mode>ScaleCpu || present_scale.exchange(mode,std::memory_order_relaxed)==mode)return;
+    // A still or paused screen shows the change too: present the cached frame again.
+    {std::lock_guard<std::mutex> lock(guard);sequence=0;}
+    {std::lock_guard<std::mutex> lock(frame_wake_mutex);++frame_wake_sequence;}
+    frame_wake.notify_one();
 }
 JNI(debugArmVcpuAccounting) jstring JNICALL Java_org_lighttouch_android_Native_debugArmVcpuAccounting(JNIEnv *env,jobject) {
 #ifdef LT_ANDROID_DEBUG

@@ -28,10 +28,10 @@ struct Settings {
     std::string last_caller = "+15555550100", last_sender = "+15555550100";
 };
 
-// Boards with a modem: the iPhone 3GS (n88) and iPhone 4 (n90) boot it with baseband=on; the original iPhone's
-// machine (m68) has it built in.
+// Boards with a modem: the iPhone 3GS (n88), iPhone 4 (n90) and iPhone 5 (n42, its QMI modem on HSIC) boot it
+// with baseband=on; the original iPhone's machine (m68) has it built in.
 inline bool board_has_modem(const std::string &board) {
-    return board == "n88ap" || board == "n90ap" || board == "m68ap";
+    return board == "n88ap" || board == "n90ap" || board == "n42ap" || board == "m68ap";
 }
 
 inline bool utf8_ok(const std::string &s) {

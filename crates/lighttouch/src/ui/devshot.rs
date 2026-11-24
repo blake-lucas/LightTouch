@@ -4,9 +4,11 @@
 //! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
-//! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
+//! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
+//! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
 //! saved, and closes once they are written. `LIGHTTOUCH_UI_TRANSFER=export:ID:FILE` or `import:FILE` starts a device
-//! export or import (no file dialog).
+//! export or import (no file dialog). `LIGHTTOUCH_UI_LOG_SCREEN=1` logs the guest screen's size and place in physical
+//! pixels each time it changes (Screen scaling checks).
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -45,6 +47,12 @@ impl DevShot {
     }
 }
 
+/// Whether to log where the guest screen is drawn (`LIGHTTOUCH_UI_LOG_SCREEN`).
+pub fn log_screen() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIGHTTOUCH_UI_LOG_SCREEN").is_some())
+}
+
 pub fn window_size() -> Option<[f32; 2]> {
     let text = std::env::var("LIGHTTOUCH_UI_SIZE").ok()?;
     let (w, h) = text.split_once('x')?;
@@ -58,7 +66,7 @@ pub fn start_page() -> Option<Page> {
         "licenses" => Some(Page::Licenses),
         "network" => Some(Page::Network),
         "carrier" => Some(Page::Carrier),
-        "ipad-size" => Some(Page::IpadSize),
+        "screen-scaling" | "ipad-size" => Some(Page::ScreenScaling),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,
@@ -78,6 +86,8 @@ pub fn start(app: &mut App) {
         app.prepare.firmware = Some(firmware.id.clone());
         app.prepare.step = super::prepare::Step::Files;
         app.page = Page::Prepare;
+        // LIGHTTOUCH_UI_PICK=file chooses it as the file dialog would (its check, then what it is).
+        app.prepare.dev_pick = std::env::var_os("LIGHTTOUCH_UI_PICK").map(PathBuf::from);
         // LIGHTTOUCH_UI_IPSW=file also starts preparing from it, and shows the device page meanwhile.
         if let Some(ipsw) = std::env::var_os("LIGHTTOUCH_UI_IPSW").map(PathBuf::from) {
             app.prepare.ipsw_file = Some(ipsw.clone());
@@ -89,6 +99,7 @@ pub fn start(app: &mut App) {
                 jailbreak: false,
                 ipas: Vec::new(),
                 no_game_center: false,
+                unchecked_ipsw: false,
             });
             app.prepare.started = Some(Instant::now());
             app.prepare.step = super::prepare::Step::Progress;

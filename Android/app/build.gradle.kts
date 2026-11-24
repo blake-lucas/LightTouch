@@ -69,6 +69,8 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 }
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
+// Settings → Screen scaling's sample pictures (scaling/*.png), shared with the desktop app.
+android.sourceSets["main"].assets.srcDir(file("../../art/preview"))
 
 // The shared network backend links the same pinned OpenSSL producer prefix as
 // the engine dependencies; include its own notice even when the engine uses gcrypt.

@@ -9,11 +9,12 @@ mod guest;
 mod home;
 pub mod icons;
 mod inspector;
-mod ipad_size;
 mod licenses;
 mod network;
 mod overlay;
 mod prepare;
+mod scaling;
+mod screen_scaling;
 mod settings;
 mod setup;
 mod sidebar;
@@ -39,8 +40,8 @@ pub enum Page {
     Network,
     /// Settings → Carrier, or the dock's Carrier menu (devices with a modem; `App::carrier` holds its fields).
     Carrier,
-    /// Settings → iPad size (its unsaved measure is `App::ipad_size`).
-    IpadSize,
+    /// Settings → Screen scaling (its unsaved measure and preview choices are `App::screen_scaling`).
+    ScreenScaling,
     /// The frame inspector (the guest is paused; its state is `App::inspector`).
     Inspector,
     Setup(setup::Step),
@@ -98,7 +99,10 @@ pub struct App {
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
     pub carrier: carrier::CarrierUi,
-    pub ipad_size: ipad_size::IpadSizeState,
+    pub screen_scaling: screen_scaling::ScreenScalingState,
+    /// Where the device page last put the device's room within the page: left, top, right and bottom insets in
+    /// points. The Screen scaling preview predicts the device view from it.
+    pub device_view_insets: Option<[f32; 4]>,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -401,7 +405,8 @@ impl App {
             inspector: None,
             controller: controller::ControllerUi::default(),
             carrier: carrier::CarrierUi::default(),
-            ipad_size: Default::default(),
+            screen_scaling: Default::default(),
+            device_view_insets: None,
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
@@ -972,7 +977,7 @@ impl eframe::App for App {
                     Page::Licenses => licenses::show(self, ui),
                     Page::Network => network::show(self, ui),
                     Page::Carrier => carrier::show(self, ui),
-                    Page::IpadSize => ipad_size::show(self, ui),
+                    Page::ScreenScaling => screen_scaling::show(self, ui),
                     Page::Inspector => inspector::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),

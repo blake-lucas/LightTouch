@@ -1766,6 +1766,7 @@ dependencies = [
  "hmac",
  "libc",
  "libloading",
+ "lighttouch-catalog",
  "memchr",
  "openssl",
  "plist",

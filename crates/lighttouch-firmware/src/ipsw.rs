@@ -146,9 +146,10 @@ impl RestoreInfo {
             Some(v) => integer(v),
             None => None,
         };
-        let board_prefix = &board_config[..board_config.len().saturating_sub(2)];
+        // "n72ap" -> "n72"; by chars, so a strange BoardConfig can't split a character
+        let board_prefix: String = board_config.chars().take(board_config.chars().count().saturating_sub(2)).collect();
         let system_padding_mib = dict(p, "SystemPartitionPadding")
-            .and_then(|d| dict(d, board_prefix))
+            .and_then(|d| dict(d, &board_prefix))
             .map(|d| d.iter().filter_map(|(k, v)| integer(v).map(|n| (k.clone(), n))).collect())
             .unwrap_or_default();
         Ok(RestoreInfo {
@@ -169,7 +170,7 @@ impl RestoreInfo {
 
     /// The system partition a restore gives a `storage` ("16g") unit, in MiB: minimum plus padding.
     pub fn system_partition_mib(&self, storage: &str) -> Option<i64> {
-        let gb = &storage[..storage.len().saturating_sub(1)];
+        let gb = storage.strip_suffix(['g', 'G']).unwrap_or(storage);
         self.minimum_system_mib.map(|m| m + self.system_padding_mib.get(gb).copied().unwrap_or(0))
     }
 

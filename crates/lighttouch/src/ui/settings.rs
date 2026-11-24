@@ -2,7 +2,7 @@
 use super::{App, Dialog, Page, icons, overlay, theme, widgets};
 use eframe::egui::{self, RichText, Ui};
 use lighttouch_model::session::Phase;
-use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Scaling, Theme};
+use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Theme};
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
@@ -24,8 +24,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let mut toggle_recording = false;
             let exporting = app.model.exporting_logs();
             let mut export_logs = false;
-            let mut open_ipad_size = false;
-            let ipad_summary = super::ipad_size::summary(app);
+            let mut open_scaling = false;
+            let scaling_summary = super::screen_scaling::summary(app);
             let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Display");
@@ -38,21 +38,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         &[(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")],
                     );
                 });
-                widgets::setting_row(
-                    ui,
-                    &p,
-                    icons::MONITOR,
-                    "Screen scaling",
-                    "Smooth blends pixels; Sharp keeps them crisp",
-                    |ui| {
-                        widgets::segmented(
-                            ui,
-                            &p,
-                            &mut settings.scaling,
-                            &[(Scaling::Smooth, "Smooth"), (Scaling::Sharp, "Sharp")],
-                        );
-                    },
-                );
+                widgets::setting_row(ui, &p, icons::MONITOR, "Screen scaling", &scaling_summary, |ui| {
+                    if widgets::tonal(ui, &p, "Open").clicked() {
+                        open_scaling = true;
+                    }
+                });
                 widgets::setting_row(
                     ui,
                     &p,
@@ -73,11 +63,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.fullscreen_controls);
                     },
                 );
-                widgets::setting_row(ui, &p, super::ipad_size::TABLET, "iPad size", ipad_summary, |ui| {
-                    if widgets::tonal(ui, &p, "Open").clicked() {
-                        open_ipad_size = true;
-                    }
-                });
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::CAMERA,
+                    "Screenshot button",
+                    "Adds Screenshot to the controls under the device. Full screen's More menu always has it",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.screenshot_button);
+                    },
+                );
                 widgets::setting_row(
                     ui,
                     &p,
@@ -371,8 +366,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             });
             ui.add_space(28.0);
 
-            if open_ipad_size {
-                super::ipad_size::open(app);
+            if open_scaling {
+                super::screen_scaling::open(app);
             }
             if export_logs {
                 super::save_logs(app);

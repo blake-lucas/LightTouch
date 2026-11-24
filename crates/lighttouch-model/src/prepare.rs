@@ -39,6 +39,74 @@ pub struct PrepareRequest {
     /// Game Center's daemon disabled (benchmark devices: `lighttouch prepare --no-game-center`).
     #[serde(default)]
     pub no_game_center: bool,
+    /// The chosen file isn't the version's own IPSW and the user chose "Use anyway" ([check_ipsw]): it isn't checked
+    /// against the catalog, and firmwarekit tries it (`--unchecked-ipsw`).
+    #[serde(default)]
+    pub unchecked_ipsw: bool,
+}
+
+/// What a chosen IPSW is against the chosen version: firmwarekit's `identify` verdict (ipsw_check.rs), so the
+/// desktop and Android decide and say the same.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct IpswCheck {
+    /// match, other, modified, unknown_version, other_device, unsupported, not_ipsw, damaged.
+    pub verdict: String,
+    /// It may be prepared anyway ("Use anyway").
+    #[serde(default)]
+    pub bypass: bool,
+    #[serde(default)]
+    pub message: String,
+    /// "other": the catalog version this file is, and the button that switches to it.
+    #[serde(default)]
+    pub firmware: Option<String>,
+    #[serde(default)]
+    pub switch_label: Option<String>,
+}
+
+impl IpswCheck {
+    pub fn matches(&self) -> bool {
+        self.verdict == "match"
+    }
+
+    fn refused(message: String) -> Self {
+        Self { verdict: "not_ipsw".into(), bypass: false, message, firmware: None, switch_label: None }
+    }
+}
+
+/// The SHA-1 of a chosen IPSW, with progress ("Checking", done, total); Err when it can't be read or was cancelled.
+pub fn ipsw_sha1(path: &Path, progress: &mut download::Progress<'_>) -> Result<String, String> {
+    download::sha1_file(path, progress).map_err(describe)
+}
+
+/// Check a chosen IPSW (already hashed: `sha1`) against `firmware_id`. Apple's file is known from its hash alone;
+/// anything else asks firmwarekit what it is. Never fails: an unreadable answer refuses the file.
+pub fn check_ipsw(resources: &Resources, firmware_id: &str, path: &Path, sha1: &str) -> IpswCheck {
+    let Some(firmware) = Catalog::get().find(firmware_id) else {
+        return IpswCheck::refused("That iOS version isn't in the catalog.".into());
+    };
+    if firmware.source.as_ref().is_some_and(|s| s.sha1.eq_ignore_ascii_case(sha1)) {
+        return IpswCheck {
+            verdict: "match".into(),
+            bypass: false,
+            message: String::new(),
+            firmware: None,
+            switch_label: None,
+        };
+    }
+    let mut command = Command::new(resources.firmwarekit());
+    command.arg("identify").arg("--id").arg(firmware_id).arg("--sha1").arg(sha1).arg("--ipsw").arg(path);
+    command.stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let answer = command.output().ok().and_then(|out| {
+        String::from_utf8_lossy(&out.stdout).lines().find_map(|l| serde_json::from_str::<IpswCheck>(l).ok())
+    });
+    answer.unwrap_or_else(|| {
+        IpswCheck::refused(format!("That isn't the {} IPSW for iOS {}.", firmware.device_name(), firmware.label()))
+    })
 }
 
 /// Whether this build can prepare devices, and why not.
@@ -268,6 +336,8 @@ fn prepare_device(
         reporter.report(&text, done, total)
     };
     let (ipsw, downloaded) = match &request.ipsw {
+        // Used anyway: firmwarekit is told not to hold it to the catalog's file either.
+        IpswSource::File(path) if request.unchecked_ipsw => (path.clone(), false),
         IpswSource::File(path) => {
             download::verify_ipsw(&firmware, path, &mut cancel_check).map_err(describe)?;
             (path.clone(), false)
@@ -349,6 +419,7 @@ fn prepare_device(
         request.jailbreak,
         &request.ipas,
         request.no_game_center,
+        request.unchecked_ipsw,
         log,
     );
     let _ = std::fs::remove_dir_all(&cache);
@@ -421,6 +492,7 @@ fn run_firmwarekit(
     jailbreak: bool,
     ipas: &[PathBuf],
     no_game_center: bool,
+    unchecked_ipsw: bool,
     log: &SharedLog,
 ) -> Result<(), String> {
     let engine = ctx.resources.engine();
@@ -453,6 +525,9 @@ fn run_firmwarekit(
     }
     if no_game_center {
         command.arg("--no-game-center");
+    }
+    if unchecked_ipsw {
+        command.arg("--unchecked-ipsw");
     }
     if let Some(sibling) = sibling {
         command.arg("--sibling-ipsw").arg(sibling);
@@ -563,7 +638,13 @@ fn run_firmwarekit(
                     t.lines().rev().find(|l| !l.trim().is_empty() && !l.starts_with("----- [")).map(str::to_string)
                 })
                 .unwrap_or_default();
-            format!("Preparation failed ({status}). {tail}")
+            let failed = format!("Preparation failed ({status}). {tail}");
+            // firmwarekit says this itself when it fails in words; here it stopped without any.
+            if unchecked_ipsw {
+                format!("LightTouch couldn't prepare this IPSW, so it may not support it. ({failed})")
+            } else {
+                failed
+            }
         }))
     }
 }

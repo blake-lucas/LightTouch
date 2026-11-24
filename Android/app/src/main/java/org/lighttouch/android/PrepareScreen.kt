@@ -31,6 +31,13 @@ import androidx.compose.ui.unit.dp
 
 internal enum class PrepareStep { DEVICE, VERSION, FILES }
 
+/**
+ * What a chosen IPSW that isn't the version's own is (firmwarekit identify; ipsw_check.rs words it for both apps), while
+ * its copy at [path] waits for the user: [bypass] offers "Use anyway", [switchTo] the catalog version it is.
+ */
+internal data class IpswCheck(val verdict: String, val bypass: Boolean, val message: String, val switchTo: String,
+                              val switchLabel: String, val path: String, val sha1: String, val firmwareId: String)
+
 /** The prepare-from-IPSW flow's choices; the activity owns it so pickers, the download and the firmware worker can update it. */
 internal class PrepareState {
     var catalog by mutableStateOf<List<CatalogFirmware>>(emptyList())
@@ -41,6 +48,10 @@ internal class PrepareState {
     /** A stock IPSW on this phone whose SHA-1 matched [ipswFor]'s catalog entry. */
     var ipswPath by mutableStateOf("")
     var ipswFor by mutableStateOf("")
+    /** [ipswPath] isn't the version's own IPSW; the user chose "Use anyway". */
+    var ipswUnchecked by mutableStateOf(false)
+    /** A chosen file waiting for the user's answer (Use anyway, switch version, Cancel). */
+    var ipswCheck by mutableStateOf<IpswCheck?>(null)
     /** Copying and checking an IPSW the user chose; empty when idle. */
     var ipswChecking by mutableStateOf("")
     var ipswError by mutableStateOf("")
@@ -98,6 +109,7 @@ private fun preparationCost(firmware: CatalogFirmware?) = when (firmware?.board)
 @Composable
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onChooseIpsw: () -> Unit,
                            onChooseRom: () -> Unit, onPrepare: () -> Unit,
+                           onUseIpswAnyway: () -> Unit = {}, onSwitchIpsw: () -> Unit = {}, onCancelIpswCheck: () -> Unit = {},
                            onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit,
                            onSaveLogs: () -> Unit = {}, savingLogs: Boolean = false, onImport: () -> Unit = {}) {
     val run = state.preparation?.getString("state")
@@ -127,7 +139,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose, onSaveLogs, savingLogs)
                     state.step == PrepareStep.DEVICE -> DeviceStep(state, onImport)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
-                    else -> FilesStep(state, busy, onChooseIpsw, onChooseRom, onPrepare)
+                    else -> FilesStep(state, busy, onChooseIpsw, onChooseRom, onPrepare, onUseIpswAnyway, onSwitchIpsw, onCancelIpswCheck)
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -246,19 +258,32 @@ private fun released(firmware: CatalogFirmware): String {
 
 @Composable
 private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIpsw: () -> Unit, onChooseRom: () -> Unit,
-                                  onPrepare: () -> Unit) {
+                                  onPrepare: () -> Unit, onUseIpswAnyway: () -> Unit, onSwitchIpsw: () -> Unit,
+                                  onCancelIpswCheck: () -> Unit) {
     val firmware = state.firmware ?: return
     val name = shortProductName(firmware.productType)
     Heading("$name, iOS ${firmware.label}", "Downloads what it needs, then sets it up on this phone.")
     // IPSW: Apple's servers when ipsw.me lists the build, else the Internet Archive.
     val downloading = IpswDownload.running && IpswDownload.firmwareId == firmware.id
     val ipswError = state.ipswError.ifEmpty { IpswDownload.status.takeIf { IpswDownload.firmwareId == firmware.id && !downloading } ?: "" }
+    // A chosen file that isn't this version's own, waiting for an answer (another version's check doesn't show here).
+    val pending = state.ipswCheck?.takeIf { it.firmwareId == firmware.id }
     Card(icon = LtIcons.Layers, title = "iOS firmware", done = state.ipswReady,
-        detail = if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified"
+        detail = if (state.ipswReady && state.ipswUnchecked) "Not Apple's file for this version; it may not work"
+            else if (state.ipswReady) "${java.io.File(state.ipswPath).name} · verified"
             else "${firmware.bytes / 1_000_000} MB · " + if (downloading) "downloading" else "downloaded for you",
         onChoose = onChooseIpsw, chooseEnabled = !busy && !state.autoPrepare && !downloading && state.ipswChecking.isEmpty(),
         chooseTag = "prepare_choose_ipsw") {
         when {
+            pending != null -> {
+                val warning = if (androidx.compose.foundation.isSystemInDarkTheme()) LtColors.Warning else Color(0xFF8A5300)
+                Text(pending.message, Modifier.padding(top = 8.dp).testTag("prepare_ipsw_check"), style = MaterialTheme.typography.bodySmall, color = warning)
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (pending.switchTo.isNotEmpty()) FilledTonalButton(onClick = onSwitchIpsw, enabled = !busy, modifier = Modifier.testTag("prepare_ipsw_switch")) { Text(pending.switchLabel) }
+                    else FilledTonalButton(onClick = onUseIpswAnyway, enabled = !busy, modifier = Modifier.testTag("prepare_ipsw_use_anyway")) { Text("Use anyway") }
+                    TextButton(onClick = onCancelIpswCheck, enabled = !busy, modifier = Modifier.testTag("prepare_ipsw_cancel")) { Text("Cancel") }
+                }
+            }
             state.ipswReady -> {}
             downloading -> {
                 Spacer(Modifier.height(8.dp))
@@ -302,7 +327,7 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onChooseIp
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(20.dp))
     val fetching = state.autoPrepare || IpswDownload.running || state.romChecking
-    Button(onClick = onPrepare, enabled = !busy && !fetching && state.ipswChecking.isEmpty(),
+    Button(onClick = onPrepare, enabled = !busy && !fetching && state.ipswChecking.isEmpty() && pending == null,
         modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("start_preparation"), contentPadding = PaddingValues(horizontal = 32.dp)) {
         Text(if (state.autoPrepare) "Downloading, then preparing…" else "Prepare device", style = MaterialTheme.typography.titleMedium)
     }

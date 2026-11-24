@@ -35,6 +35,7 @@ unicode-normalization = "0.1"
 ureq = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 libloading = "0.8"
+lighttouch-catalog = { path = "../lighttouch-catalog" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

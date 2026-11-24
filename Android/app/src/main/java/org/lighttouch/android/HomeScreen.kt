@@ -11,7 +11,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -21,6 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -46,15 +54,28 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
             listOf(MaterialTheme.colorScheme.primary.copy(alpha = if (dark) 0.07f else 0.10f), Color.Transparent))))
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             TopBar(host)
-            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            // The device fits this room, but its drawing runs on under the dock and off the screen's sides and
+            // bottom; only the top stays clear, cut where the top bar ends.
+            Box(Modifier.weight(1f).fillMaxWidth().drawWithContent {
+                val big = 10_000f
+                clipRect(left = -big, top = -8.dp.toPx(), right = size.width + big, bottom = size.height + big) { this@drawWithContent.drawContent() }
+            }.padding(horizontal = 20.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 DeviceFrame(DeviceSkin.forBoard(host.selected?.board), enabled = host.running, button = host::button,
                     screen = { modifier -> GuestScreen(host, guestSurface, modifier, overlayScale = 0.85f, inDeviceView = true) },
-                    modifier = Modifier.fillMaxSize(), haptics = host.settings.haptics)
+                    modifier = Modifier.fillMaxSize(), haptics = host.settings.haptics,
+                    pixels = screenPixels(host.selected?.board).takeIf { host.settings.scaling == ScreenScaling.PIXEL_PERFECT },
+                    multiple = host.settings.integerScale, realPxPerMm = host.settings.realPxPerMm(host.selected?.board))
             }
-            // Stopped, the screen itself offers Start or Recover; the dock is for a running session.
-            AnimatedVisibility(host.active, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) { Dock(host) { confirmStop = true } }
-            if (!host.active) Spacer(Modifier.height(16.dp))
+            // Stopped, the screen itself offers Start or Recover; the dock is for a running session. Tucked away, it
+            // leaves its room to the device and waits as a tab at the right edge.
+            val docked = host.active && !host.settings.dockHidden
+            AnimatedVisibility(docked, modifier = Modifier.zIndex(1f), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                Dock(host, onHide = { host.settings.dockHidden = true }) { confirmStop = true }
+            }
+            if (!docked) Spacer(Modifier.height(16.dp))
         }
+        if (host.active && host.settings.dockHidden) DockTab(Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(bottom = 16.dp)) { host.settings.dockHidden = false }
         // Floats over the device under the top bar, so a message never resizes the guest screen.
         ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(start = 16.dp, end = 16.dp, top = 64.dp))
@@ -148,20 +169,50 @@ private fun Busy(label: String) {
 }
 
 @Composable
-private fun Dock(host: GuestHost, onStop: () -> Unit) {
+private fun Dock(host: GuestHost, onHide: () -> Unit, onStop: () -> Unit) {
+    // Dragged right it follows the finger, and past a third of its width it tucks away; short of that it springs back.
+    var drag by remember { mutableStateOf(0f) }
+    var width by remember { mutableStateOf(1) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(24.dp), tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag("dock")) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+            .graphicsLayer { translationX = drag; alpha = 1f - (drag / width).coerceIn(0f, 0.6f) }
+            .pointerInput(Unit) {
+                width = size.width
+                detectHorizontalDragGestures(onDragEnd = { if (drag > size.width / 3f) onHide(); drag = 0f }, onDragCancel = { drag = 0f }) { _, dx ->
+                    drag = (drag + dx).coerceAtLeast(0f)
+                }
+            }.testTag("dock")) {
+        Row(Modifier.padding(start = 8.dp, end = 0.dp, top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically) {
             val canControl = host.status in listOf("running", "paused")
             DockButton(if (host.paused) LtIcons.Play else LtIcons.Pause, if (host.paused) "Resume" else "Pause",
                 { host.setPaused(!host.paused) }, Modifier.weight(1f), enabled = canControl, tag = "pause_guest")
             DockButton(LtIcons.Fullscreen, "Full screen", { host.navigate(Screen.FULLSCREEN) }, Modifier.weight(1f), tag = "fullscreen_button")
-            DockButton(LtIcons.Camera, "Screenshot", host::screenshot, Modifier.weight(1f), enabled = canControl, tag = "screenshot_button")
+            if (host.settings.screenshotButton) DockButton(LtIcons.Camera, "Screenshot", host::screenshot, Modifier.weight(1f), enabled = canControl, tag = "screenshot_button")
             if (host.settings.hitchButton) DockButton(LtIcons.Timeline, "Inspect", host::openHitch, Modifier.weight(1f), enabled = canControl, tag = "hitch_button")
             if (host.carrierButton) CarrierDockButton(host, Modifier.weight(1f))
             // While a shutdown is under way the same button forces it.
             DockButton(LtIcons.Stop, if (host.status == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
                 enabled = host.sessionOwned, tint = LtColors.Danger, tag = "stop_guest")
+            // Tuck the dock away (or drag it right).
+            Box(Modifier.width(32.dp).height(56.dp).clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)).clickable(onClick = onHide)
+                .testTag("dock_hide"), contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Hide the controls", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** The tucked-away dock: a small tab at the right edge; a tap, or a drag left, brings the dock back. */
+@Composable
+private fun DockTab(modifier: Modifier, onShow: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp), tonalElevation = 2.dp,
+        shadowElevation = 2.dp, modifier = modifier.zIndex(2f).pointerInput(Unit) {
+            var pulled = 0f
+            detectHorizontalDragGestures(onDragEnd = { if (pulled < -24f) onShow(); pulled = 0f }, onDragCancel = { pulled = 0f }) { _, dx -> pulled += dx }
+        }.clickable(onClick = onShow).testTag("dock_show")) {
+        Box(Modifier.size(width = 40.dp, height = 56.dp), contentAlignment = Alignment.Center) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Show the controls", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }

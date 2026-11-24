@@ -1,6 +1,6 @@
 //! The drawn device around the guest screen (port of the Android DeviceFrame): outlines in millimetres, the screen
 //! placed at the panel's exact aspect so the guest never letterboxes, and real Home, Sleep/Wake and volume buttons.
-use eframe::egui::{Color32, CornerRadius, Mesh, Painter, Pos2, Rect, Shape, Stroke, Vec2, epaint, pos2, vec2};
+use eframe::egui::{self, Color32, CornerRadius, Mesh, Painter, Pos2, Rect, Shape, Stroke, Vec2, epaint, pos2, vec2};
 use lighttouch_model::rotation::Rotation;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -280,16 +280,96 @@ fn shifted(layout: Layout, by: Vec2) -> Layout {
     }
 }
 
-/// Points per millimetre for showing this device at its real size, when that's on and applies to it (iPads).
+/// Points per millimetre for showing this device at its real size, when that's on and applies to it.
 pub fn real_scale(
     skin: &Skin,
     settings: &lighttouch_model::settings::Settings,
     ctx: &eframe::egui::Context,
 ) -> Option<f32> {
-    if *skin != Skin::IPAD {
-        return None;
+    settings
+        .real_px_per_mm(*skin == Skin::IPAD)
+        .map(|d| lighttouch_model::real_size::points_per_mm(d, ctx.pixels_per_point()))
+}
+
+/// The screen's pixels standing upright, by board, until a frame says: 320 x 480, Retina 640 x 960, the iPhone 5's
+/// 640 x 1136 and the iPad's 768 x 1024.
+pub fn screen_pixels(board: Option<&str>) -> [u32; 2] {
+    match board {
+        Some(b) if b.starts_with("n81") || b.starts_with("n90") => [640, 960],
+        Some(b) if b.starts_with("n42") => [640, 1136],
+        Some(b) if b.starts_with("k48") => [768, 1024],
+        _ => [320, 480],
     }
-    settings.ipad_px_per_mm().map(|d| lighttouch_model::real_size::points_per_mm(d, ctx.pixels_per_point()))
+}
+
+/// `place` by the Screen scaling settings: fitted, at the real size, or (Pixel perfect) at a whole multiple of the
+/// screen's `pixels`, on the physical pixel grid, never a fraction: below 1x the screen is cropped.
+pub fn place_for(
+    skin: &Skin,
+    space: Rect,
+    rotation: Rotation,
+    frame: bool,
+    settings: &lighttouch_model::settings::Settings,
+    ctx: &eframe::egui::Context,
+    pixels: [u32; 2],
+) -> Placed {
+    let ppp = ctx.pixels_per_point();
+    if settings.scaling == lighttouch_model::settings::Scaling::PixelPerfect {
+        return place_whole(skin, space, rotation, frame, settings.integer_scale, pixels, ppp);
+    }
+    place(skin, space, rotation, frame, real_scale(skin, settings, ctx))
+}
+
+/// The multiple Pixel perfect shows: the largest the whole device fits around (with the device drawn), else the
+/// largest the screen alone fits (the device cropped around it), else 1x (the screen cropped). A `fixed` multiple is a cap on
+/// that, so a window made smaller steps down a whole multiple at a time and back up as it grows.
+pub fn whole_multiple(
+    skin: &Skin,
+    space: Rect,
+    rotation: Rotation,
+    frame: bool,
+    fixed: u8,
+    pixels: [u32; 2],
+    ppp: f32,
+) -> u32 {
+    let fits = |k: u32, whole: bool| {
+        let layout = layout_turned_at(skin, space.center(), mm_scale(skin, k, pixels, ppp), rotation);
+        let r = if whole { layout.body } else { layout.screen };
+        r.width() <= space.width() + 0.5 && r.height() <= space.height() + 0.5
+    };
+    let largest = |whole: bool| (1..=12).rev().find(|&k| fits(k, whole));
+    let auto = frame.then(|| largest(true)).flatten().or_else(|| largest(false)).unwrap_or(1);
+    if fixed > 0 { auto.min(fixed as u32) } else { auto }
+}
+
+/// Points per millimetre that make the screen `k` times its pixels wide.
+fn mm_scale(skin: &Skin, k: u32, pixels: [u32; 2], ppp: f32) -> f32 {
+    k as f32 * pixels[0] as f32 / ppp / skin.screen_width
+}
+
+fn place_whole(
+    skin: &Skin,
+    space: Rect,
+    rotation: Rotation,
+    frame: bool,
+    fixed: u8,
+    pixels: [u32; 2],
+    ppp: f32,
+) -> Placed {
+    let k = whole_multiple(skin, space, rotation, frame, fixed, pixels, ppp);
+    // A device that doesn't fit around the screen at this multiple is cropped with it, as at real size.
+    let mut placed = place(skin, space, rotation, frame, Some(mm_scale(skin, k, pixels, ppp)));
+    // The screen exactly k x its pixels (the drawn mm are a hair off the panel's pixel aspect), starting on a
+    // physical pixel, and the device moved with it.
+    let [w, h] = if rotation.landscape() { [pixels[1], pixels[0]] } else { pixels };
+    let size = vec2((k * w) as f32, (k * h) as f32) / ppp;
+    let center = placed.screen.center();
+    let corner = center - size / 2.0;
+    let min = egui::pos2((corner.x * ppp).round() / ppp, (corner.y * ppp).round() / ppp);
+    let by = min - placed.screen.min;
+    placed.device = placed.device.map(|layout| shifted(layout, by));
+    placed.screen = Rect::from_min_size(min, size);
+    placed
 }
 
 /// Draw the device (everything except the screen contents). `pressed` darkens held buttons.

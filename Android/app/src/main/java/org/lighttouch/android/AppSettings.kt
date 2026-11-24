@@ -9,8 +9,20 @@ enum class ThemeMode(val label: String) { SYSTEM("System"), DARK("Dark"), LIGHT(
 enum class OverlayLevel(val label: String) { OFF("Off"), FPS("FPS"), COMPACT("Basic"), FULL("Full") }
 enum class OverlayCorner(val label: String, val glyph: String) { TOP_LEFT("Top left", "↖"), TOP_RIGHT("Top right", "↗"), BOTTOM_LEFT("Bottom left", "↙"), BOTTOM_RIGHT("Bottom right", "↘") }
 enum class OverlayGraph(val label: String) { FRAME_TIME("Frame time"), FPS("Frame rate") }
-/** Matches the presenter's PresentScale (lighttouch_jni.cpp). */
-enum class ScreenScaling(val label: String, val native: Int) { SMOOTH("Smooth", 0), SHARP("Sharp", 1) }
+/**
+ * Settings → Screen scaling. [native] is the presenter's PresentScale (lighttouch_jni.cpp): 0 posts a guest-sized
+ * buffer the display hardware scales, 1 a whole-number multiple it brings to size (Pixel perfect sizes the view to
+ * that multiple, so nothing is scaled), 2 draws nearest neighbour at the view's size on the CPU.
+ */
+enum class ScreenScaling(val label: String, val about: String, val native: Int) {
+    SMOOTH("Smooth", "Blends pixels: soft, with no jagged edges", 0),
+    SHARP("Sharp", "Hard-edged pixels, some a little wider than others", 2),
+    CRISP("Crisp", "Sharp pixels, evened out with a hint of blending", 1),
+    PIXEL_PERFECT("Pixel perfect", "Whole-number sizes only, with a border", 1),
+}
+
+/** Settings → Screen scaling → Real size: which devices show at the real device's size. */
+enum class RealSize(val label: String) { OFF("Off"), IPADS("iPads"), ALL("All") }
 
 /** User preferences, as Compose state backed by SharedPreferences. Read on the main thread. */
 class AppSettings(private val context: Context) {
@@ -55,8 +67,31 @@ class AppSettings(private val context: Context) {
     private val fewerAppPausesState = mutableStateOf(prefs.getBoolean("fewerAppPauses", false))
     var fewerAppPauses: Boolean get() = fewerAppPausesState.value; set(v) { fewerAppPausesState.value = v; prefs.edit().putBoolean("fewerAppPauses", v).apply() }
 
-    private val scalingState = enumPref("scaling", ScreenScaling.SMOOTH)
-    var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("scaling", v.name).apply() }
+    // "screenScaling" since 0.0.15. The old "scaling" key's Sharp was a whole-number multiple filtered to fit by the
+    // display hardware: Crisp now.
+    private val scalingState = mutableStateOf(prefs.getString("screenScaling", null)?.let { name -> ScreenScaling.entries.firstOrNull { it.name == name } }
+        ?: if (prefs.getString("scaling", null) == "SHARP") ScreenScaling.CRISP else ScreenScaling.SMOOTH)
+    var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("screenScaling", v.name).apply() }
+
+    private val realSizeState = enumPref("realSize", RealSize.OFF)
+    var realSize: RealSize get() = realSizeState.value; set(v) { realSizeState.value = v; prefs.edit().putString("realSize", v.name).apply() }
+
+    /* This phone's measured pixels per millimetre (Measure this display); 0 uses what the system reports. */
+    private val displayPxPerMmState = mutableStateOf(prefs.getFloat("displayPxPerMm", 0f))
+    var displayPxPerMm: Float get() = displayPxPerMmState.value; set(v) { displayPxPerMmState.value = v; prefs.edit().putFloat("displayPxPerMm", v).apply() }
+    /** The density the system reports, in pixels per millimetre (many phones are a few percent off). */
+    val systemPxPerMm: Float get() = context.resources.displayMetrics.let { (it.xdpi + it.ydpi) / 2f / 25.4f }
+    val pxPerMm: Float get() = displayPxPerMm.takeIf { it > 0f } ?: systemPxPerMm
+    /** Pixels per millimetre when [board] shows at its real size; null when it doesn't (Pixel perfect sets its own size). */
+    fun realPxPerMm(board: String?): Float? = when {
+        scaling == ScreenScaling.PIXEL_PERFECT -> null
+        realSize == RealSize.ALL || (realSize == RealSize.IPADS && board?.startsWith("k48") == true) -> pxPerMm
+        else -> null
+    }
+
+    /* Pixel perfect's multiple; 0 is the largest that fits. */
+    private val integerScaleState = mutableStateOf(prefs.getInt("integerScale", 0))
+    var integerScale: Int get() = integerScaleState.value; set(v) { integerScaleState.value = v; prefs.edit().putInt("integerScale", v).apply() }
 
     private val overlayState = enumPref("overlay", OverlayLevel.OFF)
     var overlay: OverlayLevel get() = overlayState.value; set(v) { overlayState.value = v; prefs.edit().putString("overlay", v.name).apply() }
@@ -73,6 +108,12 @@ class AppSettings(private val context: Context) {
     private val overlayInDeviceViewState = mutableStateOf(prefs.getBoolean("overlayInDeviceView", true))
     var overlayInDeviceView: Boolean get() = overlayInDeviceViewState.value; set(v) { overlayInDeviceViewState.value = v; prefs.edit().putBoolean("overlayInDeviceView", v).apply() }
 
+    /* Screenshot in the device page's dock: off by default, also for phones that had it before (full screen's menu keeps it). */
+    private val screenshotButtonState = mutableStateOf(prefs.getBoolean("screenshotButton", false))
+    var screenshotButton: Boolean get() = screenshotButtonState.value; set(v) { screenshotButtonState.value = v; prefs.edit().putBoolean("screenshotButton", v).apply() }
+    /* The device page's dock tucked away to a tab at the right edge, so it doesn't cover the device. */
+    private val dockHiddenState = mutableStateOf(prefs.getBoolean("dockHidden", false))
+    var dockHidden: Boolean get() = dockHiddenState.value; set(v) { dockHiddenState.value = v; prefs.edit().putBoolean("dockHidden", v).apply() }
     private val hitchButtonState = mutableStateOf(prefs.getBoolean("hitchButton", false))
     var hitchButton: Boolean get() = hitchButtonState.value; set(v) { hitchButtonState.value = v; prefs.edit().putBoolean("hitchButton", v).apply() }
 

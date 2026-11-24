@@ -28,6 +28,8 @@ class FirmwareService : Service() {
     /** Each finished step's name and seconds, a line each ("name\tseconds"), for the finished screen's details. */
     @Volatile private var timings = ""
     @Volatile private var process: java.lang.Process? = null
+    /** The IPSW isn't the version's own and the user chose "Use anyway": firmwarekit's `--unchecked-ipsw`. */
+    @Volatile private var unchecked = false
     /** This preparation's log (docs/LOGS.md): firmwarekit's stderr, its one-shot boots and their serial logs. */
     private var log: Logs.Writer? = null
 
@@ -35,7 +37,8 @@ class FirmwareService : Service() {
         override fun supports(firmwareId: String): Boolean =
             File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute() &&
                 FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
-        override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String, jailbreak: Boolean): Bundle {
+        override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String, jailbreak: Boolean,
+                           uncheckedIpsw: Boolean): Bundle {
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
             foreground(PREPARING)
             currentFirmwareId = firmwareId
@@ -44,6 +47,7 @@ class FirmwareService : Service() {
             val job = java.lang.Long.toHexString(SystemClock.uptimeMillis())
             destination = File(parent, "job-$job").absolutePath
             note("preparing")
+            unchecked = uncheckedIpsw
             Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot), bootromPath, jailbreak) }, "firmwarekit").start()
             return status()
         }
@@ -85,6 +89,7 @@ class FirmwareService : Service() {
         fun say(line: String) = log.write("[log] $line\n".toByteArray())
         say("LightTouch ${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_COMMIT}) preparing $firmwareId from ${File(ipsw).name}" +
             (if (jailbreak) ", jailbroken" else "") + (if (bootrom.isNotEmpty()) ", with a boot ROM" else "") +
+            (if (unchecked) ", used anyway (not the version's own IPSW)" else "") +
             " on ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}")
         AppLog.i("Preparation of $firmwareId started" + if (jailbreak) " (jailbreak)" else "")
         val started = SystemClock.elapsedRealtime()
@@ -99,7 +104,9 @@ class FirmwareService : Service() {
                 // afc2 and Cydia with Substrate, from the bootstrap firmwarekit downloads beside its cache
                 (if (jailbreak) listOf("--jailbreak") else emptyList()) +
                 // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
-                (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
+                (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()) +
+                // the user chose "Use anyway" for an IPSW that isn't this version's own
+                (if (unchecked) listOf("--unchecked-ipsw") else emptyList()))
             // create's own lease and boot logs; the device is the rest
             keepWorkLogs(out, log)
             File(out, "work").deleteRecursively()
@@ -181,7 +188,13 @@ class FirmwareService : Service() {
         copier.join(5000)
         endStep()
         check(!cancelling) { "Cancelled" }
-        check(exit == 0) { message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } }
+        check(exit == 0) {
+            message.ifEmpty {
+                // firmwarekit words its own failures (an IPSW used anyway's too); this one stopped without any.
+                val stopped = "firmwarekit ${args.first()} stopped (exit $exit)"
+                if (unchecked) "LightTouch couldn't prepare this IPSW, so it may not support it. ($stopped)" else stopped
+            }
+        }
     }
 
     /**

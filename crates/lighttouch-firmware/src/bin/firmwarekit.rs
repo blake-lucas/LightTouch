@@ -385,13 +385,18 @@ fn create(args: &[String]) -> ExitCode {
     });
     let flag = |name: &str| args.iter().any(|a| a == name);
     let path = |name: &str| option(args, name).map(PathBuf::from);
-    let fail = |e: lighttouch_firmware::error::Error| {
+    let unchecked = flag("--unchecked-ipsw");
+    let fail = |mut e: lighttouch_firmware::error::Error| {
         eprintln!("firmwarekit: {}", e.message);
+        // An IPSW used anyway: say so first, in words, with what went wrong after it.
+        if unchecked && e.code != lighttouch_firmware::error::Code::DiskFull {
+            e.message = format!("LightTouch couldn't prepare this IPSW, so it may not support it. ({})", e.message);
+        }
         emit(Event::error(&e));
         ExitCode::from(1)
     };
     let (Some(ipsw), Some(out)) = (path("--ipsw"), path("--out")) else {
-        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE] [--ipa FILE]... [--no-game-center]");
+        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE] [--ipa FILE]... [--no-game-center] [--unchecked-ipsw]");
         return ExitCode::from(64);
     };
     let setup = || -> lighttouch_firmware::error::Result<Options> {
@@ -440,6 +445,7 @@ fn create(args: &[String]) -> ExitCode {
             bootrom: path("--bootrom"),
             apps: args.windows(2).filter(|w| w[0] == "--ipa").map(|w| PathBuf::from(&w[1])).collect(),
             no_game_center: flag("--no-game-center"),
+            unchecked_ipsw: flag("--unchecked-ipsw"),
         })
     };
     let options = match setup() {
@@ -547,6 +553,24 @@ fn k48_iboot(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `identify --ipsw FILE --id ID [--sha1 HEX]`: what a chosen IPSW is against catalog entry ID, as one JSON line
+/// (ipsw_check::Check), for the prepare screens. Always a verdict: an unreadable file is "not_ipsw" or "damaged".
+fn identify(args: &[String]) -> ExitCode {
+    use lighttouch_catalog::catalog::Catalog;
+    let (Some(ipsw), Some(id)) = (option(args, "--ipsw"), option(args, "--id")) else {
+        eprintln!("usage: firmwarekit identify --ipsw FILE --id ID [--sha1 HEX]");
+        return ExitCode::from(64);
+    };
+    let Some(chosen) = Catalog::get().find(&id) else {
+        eprintln!("firmwarekit: {id} isn't in the catalog");
+        return ExitCode::from(1);
+    };
+    let sha1 = option(args, "--sha1");
+    let check = lighttouch_firmware::ipsw_check::check(&PathBuf::from(ipsw), chosen, sha1.as_deref());
+    println!("{}", check.json());
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("oneshot") {
@@ -555,6 +579,9 @@ fn main() -> ExitCode {
     }
     if args.first().map(String::as_str) == Some("create") {
         return create(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("identify") {
+        return identify(&args[1..]);
     }
     let result = match args.first().map(String::as_str) {
         Some("decrypt") => decrypt(&args[1..]),

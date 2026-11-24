@@ -280,7 +280,7 @@ internal fun CarrierKey(host: GuestHost, key: @Composable (onClick: () -> Unit) 
     CarrierDialogs(host.carrier, dialog) { dialog = null }
 }
 
-/** Settings → Carrier: the device's network, its location (the 3GS's GPS), the dock button, and calls and texts. */
+/** Settings → Carrier: the device's network, its location (the 3GS's and iPhone 5's GPS), the dock button, and calls and texts. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
@@ -306,7 +306,7 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
                 Text("Saved with this device and used every time it starts. Changes reach a running device at once; iOS can take a few seconds to update its status bar.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                if (device.board == "n88ap" || carrier.status?.gps == true) LocationGroup(saved, carrier::save)
+                if (device.board == "n88ap" || device.board == "n42ap" || carrier.status?.gps == true) LocationGroup(saved, carrier::save)
                 SettingsGroup("Session dock") {
                     SwitchRow(LtIcons.Signal, "Show Carrier button", "A dock button for calling the device, sending it texts and these settings",
                         saved.dockButton, "carrier_dock_toggle") { carrier.save(saved.copy(dockButton = it)) }
@@ -399,7 +399,7 @@ private fun LocationGroup(saved: CarrierSettings, save: (CarrierSettings) -> Uni
     val valid = lat != null && lon != null && kotlin.math.abs(lat) <= 90 && kotlin.math.abs(lon) <= 180
     SettingsGroup("Location") {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text("Where the iPhone 3GS's GPS says it is, in degrees", style = MaterialTheme.typography.bodySmall,
+            Text("Where the iPhone's GPS says it is, in degrees", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(latitude, { latitude = it }, label = { Text("Latitude") }, singleLine = true,

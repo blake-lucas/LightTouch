@@ -32,6 +32,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
     if (networkOpen) { NetworkSettingsScreen(host) { networkOpen = false }; return }
     var carrierOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     if (carrierOpen) { CarrierScreen(host) { carrierOpen = false }; return }
+    var scalingOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (scalingOpen) { ScreenScalingScreen(host) { scalingOpen = false }; return }
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
@@ -76,16 +78,17 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     } else {
                         val reason = when {
                             device == null -> "Select an iPhone to change its carrier, calls and texts."
-                            device.board == "n42ap" -> "The iPhone 5's modem isn't supported yet. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
-                            else -> "${device.model} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS and iPhone 4."
+                            else -> "${device.model} has no phone modem. Carrier settings apply to the original iPhone, iPhone 3GS, iPhone 4 and iPhone 5."
                         }
                         ActionRow(LtIcons.Signal, "Carrier", reason, enabled = false, tag = "open_carrier") {}
                     }
                 }
                 SettingsGroup("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
-                    ChoiceRow(LtIcons.Layers, "Screen scaling", ScreenScaling.entries, s.scaling, { it.label },
-                        if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
+                    ActionRow(LtIcons.Layers, "Screen scaling", s.scaling.label + if (s.scaling == ScreenScaling.PIXEL_PERFECT && s.integerScale > 0) ", ${s.integerScale}×" else "",
+                        tag = "open_scaling") { scalingOpen = true }
+                    SwitchRow(LtIcons.Camera, "Screenshot button", "Adds Screenshot to the controls under the device. Full screen's menu always has it",
+                        s.screenshotButton, "screenshot_toggle") { s.screenshotButton = it }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
                 SettingsGroup("Performance") {
