@@ -743,8 +743,9 @@ enum Picture {
     Squares,
 }
 
-/// The preview's sample over the whole display, black around it, drawn as full screen would draw it (the method,
-/// Pixel perfect's multiple or real size, the preview's rotation) until Esc or a click.
+/// The preview's sample over the whole display, its screen drawn as full screen would draw it (the method, Pixel
+/// perfect's multiple or real size, the preview's rotation) in the drawn device, which is cut off where it doesn't fit,
+/// until Esc or a click.
 fn full_preview(app: &mut App, ctx: &egui::Context, draft: f32) {
     let full = ctx.content_rect();
     let mut leave = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -764,6 +765,17 @@ fn full_preview(app: &mut App, ctx: &egui::Context, draft: f32) {
             }
             let shown = device_frame::place_for(&skin, rect, rotation, false, &settings, ctx, pixels).screen;
             let ppp = ctx.pixels_per_point();
+            // The device around that screen: whole where it fits, else centred on the screen and cut off.
+            let across = if rotation.landscape() { skin.screen_height } else { skin.screen_width };
+            let placed = device_frame::place(&skin, rect, rotation, true, Some(shown.width() / across));
+            let corner = placed.screen.min;
+            let shown = Rect::from_min_size(
+                egui::pos2((corner.x * ppp).round() / ppp, (corner.y * ppp).round() / ppp),
+                shown.size(),
+            );
+            if let Some(layout) = &placed.device {
+                device_frame::paint(&ui.painter().with_clip_rect(rect), &skin, layout, |_| false);
+            }
             if state.squares {
                 ui.painter().text(
                     rect.center(),
