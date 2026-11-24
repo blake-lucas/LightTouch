@@ -362,12 +362,8 @@ fn real_size_settings(app: &mut App, ui: &mut Ui, draft: &mut f32, native: f32) 
     });
     Frame::new().inner_margin(Margin { left: 18, right: 18, top: 8, bottom: 0 }).show(ui, |ui| {
         ui.label(
-            widgets::muted(
-                &p,
-                "Measure again after moving LightTouch to another display or changing its resolution. Display scaling \
-                 and zoom are allowed for.",
-            )
-            .size(12.5),
+            widgets::muted(&p, "Measure again after moving LightTouch to another display or changing its resolution.")
+                .size(12.5),
         );
     });
 }
