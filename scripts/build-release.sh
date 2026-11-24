@@ -35,8 +35,8 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
 : "${LT_LINUX_CPUS:=$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"     # the Linux build container's CPUs and jobs
-: "${LT_WIN_DEPS:=$D/release-0.0.10/win-deps}"                       # MinGW sysroot (copied; FFmpeg installs into it)
-: "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (the USB bridge)
+: "${LT_WIN_DEPS:=$D/win-inputs/win-deps}"   # MinGW sysroot (fetch-inputs.py $D/win-inputs msys2; copied, FFmpeg installs into it)
+: "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (an older prebuilt USB bridge, for LT_WIN_USB)
 : "${LT_FFMPEG_ARCHIVE:=$LT_INPUTS/backend/deps-linux/ffmpeg-9.0.1.tar.xz}"   # checked by its SHA-256
 : "${LT_MAC:=}"                                                      # user@host of the Mac; local: this machine is one
 : "${LT_MAC_ROOT:=Documents}"                                        # on the Mac, relative to home
@@ -192,11 +192,18 @@ step_desktop() {
         { tail -30 "$R/desktop-windows.log" >&2; exit 1; }
     # The engine's runtime goes last, so its libwinpthread (which the engine and libstdc++ import from) wins over the
     # older one beside the USB bridge; package-desktop checks the bridge still finds what it imports.
-    local w=$R/app/target/x86_64-pc-windows-gnu/release services=$LT_WIN_INPUTS/services-mobile01/bin
+    # The USB bridge: LT_WIN_USB (a bin/ and licenses/ folder, such as $LT_WIN_INPUTS/services-mobile01), else built
+    # from source with this repository's patches (scripts/build.sh windows-usb).
+    local w=$R/app/target/x86_64-pc-windows-gnu/release usb=${LT_WIN_USB:-}
+    if [ -z "$usb" ]; then
+        bash "$R/app/scripts/build.sh" windows-usb > /dev/null
+        usb=$R/app/build/windows/usb
+    fi
+    local services=$usb/bin
     python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Windows-x86_64" --os windows \
         --app "$w/lighttouch.exe" --firmwarekit "$w/firmwarekit.exe" --engine "$d/win-engine/libqemu-arm.dll" \
         --usbmuxd "$services/lighttouch-usbmuxd.exe" --guest-tools "$tools" --lib "$services" --lib "$d/win-runtime" \
-        --notices "engine=$n/windows/engine" --notices "usb=$n/windows/usb" --group-source "engine=$GH_ENGINE" --onefile \
+        --notices "engine=$n/windows/engine" --notices "usb=$usb/licenses" --group-source "engine=$GH_ENGINE" --onefile \
         > "$R/desktop-windows-package.log" 2>&1 || { tail -30 "$R/desktop-windows-package.log" >&2; exit 1; }
     cp "$d/LightTouch-$V-Linux-x86_64.AppImage" "$d/LightTouch-$V-Windows-x86_64.exe" "$OUTD/"
     ls -1 "$OUTD"/*.AppImage "$OUTD"/*Windows*.exe

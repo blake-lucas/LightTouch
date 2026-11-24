@@ -13,6 +13,8 @@
 #   android-usb    build/android/usb/arm64-v8a/                the APK's USB bridge (usbmuxd-qemu) and app service helper
 #   linux-usb      build/linux/usb/                            usbmuxd-qemu and its libraries for the desktop app
 #                                                             (LIGHTTOUCH_USBMUXD), built in the release's Debian 11 image
+#   windows-usb    build/windows/usb/{bin,licenses}            the Windows bridge (lighttouch-usbmuxd.exe and its DLLs),
+#                                                             cross-built with MinGW (Windows/usbmux/build.py)
 #   android-test   Android app unit tests (Gradle testDebugUnitTest; inputs as for android)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
 #   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust), x86_64
@@ -209,6 +211,19 @@ build_linux_usb() {
     echo "$OUT/linux/usb/usbmuxd-qemu"
 }
 
+build_windows_usb() {
+    local o="$OBJ/windows-usb" caches=(--source-cache "$OBJ/linux-usb/sources" --source-cache "$OBJ/android-usb/sources")
+    local clone="$OBJ/linux-usb/usbmuxd-source" daemon=()
+    log "windows-usb (lighttouch-usbmuxd.exe and its DLLs, MinGW)"
+    [ -d "$clone/.git" ] && daemon=(--daemon-clone "$clone")
+    mkdir -p "$o"
+    python3 "$REPO/Windows/usbmux/build.py" "$o" "${caches[@]}" "${daemon[@]}" --jobs "$JOBS" > "$OBJ/windows-usb.out" 2>&1 ||
+        { tail -30 "$OBJ/windows-usb.out" >&2; exit 1; }
+    rm -rf "$OUT/windows/usb"; mkdir -p "$OUT/windows/usb"
+    cp -a "$o/bridge/bin" "$o/bridge/licenses" "$OUT/windows/usb/"
+    echo "$OUT/windows/usb/bin/lighttouch-usbmuxd.exe"
+}
+
 build_android_test() { ANDROID_TASK=:app:testDebugUnitTest build_android; }
 
 build_android() {
@@ -347,13 +362,13 @@ clean=0; targets=()
 for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
-    -h|--help) sed -n 2,29p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,31p "$0"; exit 0 ;;
     all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|android-engine|android|android-test|android-usb|linux-usb|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    linux-engine|android-engine|android|android-test|android-usb|linux-usb|windows-usb|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
-[ ${#targets[@]} -gt 0 ] || { sed -n 2,29p "$0"; exit 2; }
+[ ${#targets[@]} -gt 0 ] || { sed -n 2,31p "$0"; exit 2; }
 for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in
