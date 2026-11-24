@@ -287,6 +287,8 @@ pub struct Store {
     /// Why the running device has no USB link for installs.
     pub usb_problem: Option<String>,
     installer: InstallQueue<InstallRequest>,
+    /// Installs talking to the guest now.
+    busy: Arc<std::sync::atomic::AtomicUsize>,
     socket: Arc<Mutex<Option<PathBuf>>>,
     icons: HashMap<String, Icon>,
     guest_socket: Option<PathBuf>,
@@ -335,11 +337,18 @@ fn era_date(target: Option<&Target>) -> Option<String> {
 }
 
 impl Store {
+    /// An app is being uploaded to or installed by the guest now (not waiting or downloading).
+    pub fn uploading_or_installing(&self) -> bool {
+        self.busy.load(std::sync::atomic::Ordering::Relaxed) > 0
+    }
+
     pub fn new(scratch: PathBuf, waker: Waker) -> Self {
         let (tx, rx) = channel();
         let socket: Arc<Mutex<Option<PathBuf>>> = Arc::default();
+        let busy: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
         let work = Installer {
             socket: socket.clone(),
+            busy: busy.clone(),
             exact: Mutex::new(None),
             scratch,
             tx: tx.clone(),
@@ -373,6 +382,7 @@ impl Store {
             remove_error: None,
             usb_problem: None,
             installer: InstallQueue::new(work, move || wake()),
+            busy,
             socket,
             icons: HashMap::new(),
             guest_socket: None,
@@ -1194,6 +1204,8 @@ impl Store {
 /// The queue's two steps against the running guest.
 struct Installer {
     socket: Arc<Mutex<Option<PathBuf>>>,
+    /// Installs talking to the guest now (`Store::uploading_or_installing`).
+    busy: Arc<std::sync::atomic::AtomicUsize>,
     /// What the running guest is, asked once per guest.
     exact: Mutex<Option<(PathBuf, Target)>>,
     scratch: PathBuf,
@@ -1277,6 +1289,16 @@ impl queue::Work<InstallRequest> for Installer {
         if cancelled() {
             return Err("Cancelled".into());
         }
+        // The session holds the engine's storage sync while this is above 0 (Model::tick).
+        struct Busy<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Busy<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        self.busy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _busy = Busy(&self.busy);
+        (self.waker)();
         let result = guest.install(&prepared, &info.bundle_id, Some(info.unpacked), &mut |progress| {
             match progress {
                 InstallProgress::Uploading { sent, total } => {

@@ -145,6 +145,7 @@ struct Engine {
     decltype(&qemu_ios_ui_modem_free) modem_free = nullptr;
     // Optional: the vibration motor (engines before API 2.2 lack it).
     decltype(&qemu_ios_ui_vibrator) vibrator = nullptr;
+    void (*storage_sync_hold)(bool) = nullptr;  // qemu_ios_storage_sync_hold; typed here so older headers build
     template <class F> F symbol(const char *n) {
         auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -233,6 +234,8 @@ struct Engine {
             if (!modem_set || !modem_status || !modem_free)
                 modem_set = nullptr, modem_status = nullptr, modem_free = nullptr;
             vibrator = reinterpret_cast<decltype(vibrator)>(lt::os::library_symbol(library, "qemu_ios_ui_vibrator"));
+            storage_sync_hold = reinterpret_cast<decltype(storage_sync_hold)>(
+                lt::os::library_symbol(library, "qemu_ios_storage_sync_hold"));
         } catch (...) {
             lt::os::library_close(library);
             library = nullptr;
@@ -1026,6 +1029,14 @@ lt_status lt_runtime_vibrator(lt_runtime *r, lt_vibrator_info *out, lt_error *e)
         uint64_t pulses = 0;
         const bool on = r->engine->vibrator(&pulses);
         *out = {sizeof(*out), 1, on ? 1u : 0u, 0, pulses};
+    });
+}
+lt_status lt_runtime_hold_storage_sync(lt_runtime *r, int hold, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        if (r->engine->storage_sync_hold) {  // engines before it sync every 2 s regardless
+            r->engine->storage_sync_hold(hold != 0);
+        }
     });
 }
 lt_status lt_runtime_reload_carrier(lt_runtime *r, lt_error *e) {

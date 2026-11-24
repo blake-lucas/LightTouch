@@ -106,6 +106,10 @@ typedef struct QemuIosStorageStats {
     uint64_t erase_ops, erase_ns;
 } QemuIosStorageStats;
 void qemu_ios_storage_stats(QemuIosStorageStats *out);
+/* Holds (true) or releases (false) the periodic sync of the device's storage to the host disk, for the app to call
+ * around an app install: the sync made the guest's writes wait, and an install cut short is lost anyway. Holds nest;
+ * the stop still syncs everything. Engines before it lack the symbol. */
+void qemu_ios_storage_sync_hold(bool hold);
 
 /* True only after the guest writes the final PMU power-off command. */
 bool qemu_ios_ui_guest_shutdown_confirmed(void);

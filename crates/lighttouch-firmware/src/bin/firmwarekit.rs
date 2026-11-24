@@ -125,9 +125,11 @@ fn hfs_format(args: &[String]) -> Result<(), String> {
     let (Some(image), Some(bytes), Some(name)) = (args.first(), args.get(1), args.get(2)) else {
         return Err("hfs-format IMG BYTES NAME [--journaled]".into());
     };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let bytes = bytes.parse().map_err(|_| "BYTES: a number")?;
-    Editor::format(&PathBuf::from(image), bytes, name, args.iter().any(|a| a == "--journaled"), now).map_err(|e| e.to_string())
+    Editor::format(&PathBuf::from(image), bytes, name, args.iter().any(|a| a == "--journaled"), now)
+        .map_err(|e| e.to_string())
 }
 
 fn number(s: &str) -> Result<u32, String> {
@@ -149,7 +151,8 @@ fn k48_build(args: &[String]) -> Result<(), String> {
         data,
         &PathBuf::from(required(args, "--out")?),
     );
-    b.geometry = Geometry::for_vendor_type(option(args, "--vendor-type").map(|v| number(&v)).transpose()?.map(i64::from));
+    b.geometry =
+        Geometry::for_vendor_type(option(args, "--vendor-type").map(|v| number(&v)).transpose()?.map(i64::from));
     // as the K48 recipe picks it: an explicit one, else the IPSW's SCEP for --board (the S5L8920 boards), else the
     // kernel's FIL
     let scep = match (option(args, "--ipsw"), option(args, "--board")) {
@@ -197,13 +200,11 @@ fn k48_check(args: &[String]) -> Result<(), String> {
     let Some(dir) = args.first() else { return Err("k48-check DIR [--mbr FILE] [--system IMG]".into()) };
     let mbr = option(args, "--mbr").map(PathBuf::from);
     let system = option(args, "--system").map(PathBuf::from);
-    let passed = lighttouch_firmware::k48nand_check::check(
-        &PathBuf::from(dir),
-        mbr.as_deref(),
-        system.as_deref(),
-        &|line| println!("{line}"),
-    )
-    .map_err(|e| e.to_string())?;
+    let passed =
+        lighttouch_firmware::k48nand_check::check(&PathBuf::from(dir), mbr.as_deref(), system.as_deref(), &|line| {
+            println!("{line}")
+        })
+        .map_err(|e| e.to_string())?;
     if passed { Ok(()) } else { Err("the store failed its check".into()) }
 }
 
@@ -236,15 +237,19 @@ fn write_n72_nand(args: &[String]) -> Result<(), String> {
     let blocks = number(&required(args, "--blocks")?)? as usize;
     let epoch = number(&required(args, "--epoch")?)?;
     let started = std::time::Instant::now();
-    let (written, meta) = lighttouch_firmware::n72nand::write(&PathBuf::from(volume), blocks, epoch, &PathBuf::from(out))
-        .map_err(|e| e.to_string())?;
-    eprintln!("{written} filesystem pages, {meta} metadata pages (epoch {epoch}) in {:.1} s", started.elapsed().as_secs_f64());
+    let (written, meta) =
+        lighttouch_firmware::n72nand::write(&PathBuf::from(volume), blocks, epoch, &PathBuf::from(out))
+            .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{written} filesystem pages, {meta} metadata pages (epoch {epoch}) in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
 /// The volume an n72 store holds, read back through the page predictor (holes and blank pages as zeros).
 fn read_n72_nand(args: &[String]) -> Result<(), String> {
-    use lighttouch_firmware::n72nand::{predict, PAGE};
+    use lighttouch_firmware::n72nand::{PAGE, predict};
     use std::io::{Seek, SeekFrom, Write};
     let (Some(nand), Some(out)) = (args.first(), args.get(1)) else {
         return Err("read-n72-nand NAND OUT --blocks N".into());
@@ -311,7 +316,10 @@ fn write_n45_nand(args: &[String]) -> Result<(), String> {
     let (written, meta) =
         n45nand::write(&PathBuf::from(volume), &PathBuf::from(out), fil, banks, args.iter().any(|a| a == "--bbt-map"))
             .map_err(|e| e.to_string())?;
-    eprintln!("{written} filesystem pages, {meta} metadata pages (NAND signature {fil:#x}) in {:.1} s", started.elapsed().as_secs_f64());
+    eprintln!(
+        "{written} filesystem pages, {meta} metadata pages (NAND signature {fil:#x}) in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -334,7 +342,8 @@ fn build_n72_nor(args: &[String]) -> Result<(), String> {
         }
     }
     // as N72Recipe: the stock order, of the types the manifest ships
-    let manifest = String::from_utf8_lossy(&ipsw.read(&format!("{prefix}manifest")).map_err(|e| e.to_string())?).into_owned();
+    let manifest =
+        String::from_utf8_lossy(&ipsw.read(&format!("{prefix}manifest")).map_err(|e| e.to_string())?).into_owned();
     let mut shipped = std::collections::BTreeSet::new();
     for m in manifest.split_whitespace() {
         let d = ipsw.read(&format!("{prefix}{m}")).map_err(|e| e.to_string())?;
@@ -344,7 +353,8 @@ fn build_n72_nor(args: &[String]) -> Result<(), String> {
         Some(t) => t.split(',').map(String::from).collect(),
         None => n72nor::ORDER.iter().filter(|t| shipped.contains(**t)).map(|t| t.to_string()).collect(),
     };
-    let wrap: Option<Vec<String>> = option(args, "--wrap").filter(|w| w != "all").map(|w| w.split(',').map(String::from).collect());
+    let wrap: Option<Vec<String>> =
+        option(args, "--wrap").filter(|w| w != "all").map(|w| w.split(',').map(String::from).collect());
     let nor = n72nor::build(&identity_file(args)?, &images, &types, wrap.as_deref()).map_err(|e| e.to_string())?;
     let out = required(args, "--out")?;
     std::fs::write(&out, nor).map_err(|e| format!("{out}: {e}"))?;
@@ -365,7 +375,8 @@ fn build_n45_nor(args: &[String]) -> Result<(), String> {
         }
     }
     let boot_args = option(args, "--boot-args").unwrap_or_else(|| lighttouch_firmware::n45nor::BOOT_ARGS.into());
-    let nor = lighttouch_firmware::n45nor::build(&identity_file(args)?, &images, &boot_args).map_err(|e| e.to_string())?;
+    let nor =
+        lighttouch_firmware::n45nor::build(&identity_file(args)?, &images, &boot_args).map_err(|e| e.to_string())?;
     let out = required(args, "--out")?;
     std::fs::write(&out, nor).map_err(|e| format!("{out}: {e}"))
 }
@@ -396,7 +407,9 @@ fn create(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     };
     let (Some(ipsw), Some(out)) = (path("--ipsw"), path("--out")) else {
-        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE] [--ipa FILE]... [--no-game-center] [--unchecked-ipsw]");
+        eprintln!(
+            "usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE] [--ipa FILE]... [--no-game-center] [--unchecked-ipsw]"
+        );
         return ExitCode::from(64);
     };
     let setup = || -> lighttouch_firmware::error::Result<Options> {
@@ -406,7 +419,8 @@ fn create(args: &[String]) -> ExitCode {
             _ => return Err(lighttouch_firmware::unsupported!("--entry or --catalog with --id is required")),
         };
         if let Some(r) = entry.recipe.as_mut() {
-            for (name, key) in [("--gl-test", "gl_test"), ("--skip-setup", "skip_setup"), ("--jailbreak", "jailbreak")] {
+            for (name, key) in [("--gl-test", "gl_test"), ("--skip-setup", "skip_setup"), ("--jailbreak", "jailbreak")]
+            {
                 if flag(name) {
                     r.options.insert(key.into(), true);
                 }
@@ -477,7 +491,9 @@ fn seed_data(args: &[String]) -> Result<(), String> {
     let var_root = option(args, "--var-root").unwrap_or_else(|| "private/var".into());
     let now = match option(args, "--now") {
         Some(n) => n.parse().map_err(|_| "--now: a number")?,
-        None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0),
+        None => {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        }
     };
     let mut ed = Editor::open(&image).map_err(e)?;
     if let Some(dir) = option(args, "--jailbreak") {
@@ -486,7 +502,8 @@ fn seed_data(args: &[String]) -> Result<(), String> {
         eprintln!("{}\n{}", jb.afc2, jb.cydia);
         eprintln!("root {} paths, mobile {}, modes {:?}", jb.root.len(), jb.mobile.len(), jb.modes);
     }
-    let version = plistedit::read(&ed, "System/Library/CoreServices/SystemVersion.plist").map_err(e)?.unwrap_or_default();
+    let version =
+        plistedit::read(&ed, "System/Library/CoreServices/SystemVersion.plist").map_err(e)?.unwrap_or_default();
     let field = |k: &str| version.get(k).and_then(plist::Value::as_string).unwrap_or("").to_string();
     let (product, build) = (field("ProductVersion"), field("ProductBuildVersion"));
     let major: u32 = product.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(0);
@@ -511,7 +528,9 @@ fn seed_data(args: &[String]) -> Result<(), String> {
         eprintln!("Setup Assistant: seeded as finished (iOS {major})");
     }
     let region = option(args, "--region").unwrap_or_else(|| "LL".into());
-    if let Some(installed) = assets::seed_preinstalled_assets(&mut ed, &var_root, major, &product, &build, &region).map_err(e)? {
+    if let Some(installed) =
+        assets::seed_preinstalled_assets(&mut ed, &var_root, major, &product, &build, &region).map_err(e)?
+    {
         eprintln!("preinstalled assets: {} installed as mobileassetd would at the first boot", installed.len());
     }
     ed.commit().map_err(e)
@@ -572,6 +591,12 @@ fn identify(args: &[String]) -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    // Preparation writes a whole system and is simply redone if it fails, so the engine's periodic storage sync
+    // (qemu-ios nand-image.c) would only make its boots' writes wait. The oneshot boots inherit this.
+    if std::env::var_os("LT_NAND_SYNC").is_none() {
+        // SAFETY: the first statement of main, before any thread starts.
+        unsafe { std::env::set_var("LT_NAND_SYNC", "off") };
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("oneshot") {
         // the engine in this process for one preparation boot; no event lines, its own status

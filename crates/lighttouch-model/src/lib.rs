@@ -222,6 +222,7 @@ impl Model {
         let mut ended = false;
         if let Some(session) = &mut self.session {
             session.poll();
+            session.hold_storage_sync(self.store.uploading_or_installing());
             session.kill_if_overdue();
             session.keep_timing(self.settings.detailed_timing, &self.dirs.profiles());
             if let Some(error) = session.last_error.take() {

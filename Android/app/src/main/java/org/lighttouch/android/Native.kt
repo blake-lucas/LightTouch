@@ -84,4 +84,6 @@ internal object Native {
     external fun micInfo(): LongArray
     /** The guest's vibration motor: on (0 or 1) and how many times it has started; empty without a running engine. */
     external fun vibrator(): LongArray
+    /** Holds or releases the engine's periodic storage sync (lt_runtime_hold_storage_sync); nothing without an engine. */
+    external fun holdStorageSync(hold: Boolean)
 }

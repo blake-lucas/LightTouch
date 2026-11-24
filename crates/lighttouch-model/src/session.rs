@@ -88,6 +88,8 @@ pub struct Session {
     capture: Option<(PathBuf, Instant)>,
     /// A pause was asked for (the worker confirms it with its next status).
     pause_requested: bool,
+    /// The engine's periodic storage sync is held for an app install (`hold_storage_sync`).
+    storage_sync_held: bool,
     tilt: crate::tilt::Tilt,
     /// The inspector's pause waits for the guest tools to name the app in front (they answer only while iOS runs):
     /// when it was asked.
@@ -233,6 +235,7 @@ impl Session {
             timeline: Default::default(),
             capture: None,
             pause_requested: false,
+            storage_sync_held: false,
             tilt: Default::default(),
             recording: None,
             live_timing: None,
@@ -520,6 +523,15 @@ impl Session {
     }
 
     /// The device's carrier settings were saved: the worker writes what changed to the modem.
+    /// Hold the engine's periodic storage sync while apps install, release it after: the sync made the guest's writes
+    /// wait (the upload went in bursts), and an install cut short is lost anyway. Sends only changes.
+    pub fn hold_storage_sync(&mut self, hold: bool) {
+        if hold != self.storage_sync_held && self.phase.active() {
+            self.storage_sync_held = hold;
+            self.send(&Command::HoldStorageSync { hold });
+        }
+    }
+
     pub fn reload_carrier(&mut self) {
         if self.phase.active() {
             self.send(&Command::ReloadCarrier);

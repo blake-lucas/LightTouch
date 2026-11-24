@@ -72,4 +72,6 @@ interface IEngine {
     String modem(String action, String value);
     /** The running modem's state as JSON, "" when there is none. */
     String modemStatus();
+    /** Hold the engine's periodic storage sync while an app installs (true), or release it: lighttouch.h. */
+    oneway void holdStorageSync(boolean hold);
 }

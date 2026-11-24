@@ -137,7 +137,11 @@ fn survey_k48(ed: &mut Editor, tools: &Path, kernel: Option<&[u8]>) -> Result<()
     // The baked helper tools: it_pbd, it_prefs, it_seal (it_msmquiet handled above; no it_gltest here).
     {
         let fw = Firmware::new(ed.snapshot().map_err(|e| e.to_string())?, arch, None);
-        for (name, _path) in [("it_pbd", "usr/local/bin/it_pbd"), ("it_prefs", "usr/local/bin/it_prefs"), ("it_seal", "usr/local/bin/it_seal")] {
+        for (name, _path) in [
+            ("it_pbd", "usr/local/bin/it_pbd"),
+            ("it_prefs", "usr/local/bin/it_prefs"),
+            ("it_seal", "usr/local/bin/it_seal"),
+        ] {
             let bytes = read(tools, name)?;
             let f = fitcheck::loads(name, &bytes, &fw, None);
             log.check(f, true, "left out").map_err(|e| e.to_string())?;
@@ -190,7 +194,8 @@ fn survey_k48(ed: &mut Editor, tools: &Path, kernel: Option<&[u8]>) -> Result<()
 
     // --- The seed (loader + package), which appends the loader and package-binary Fits.
     let omitted: HashSet<String> = HashSet::new();
-    let (_written, record) = guest_package::seed(ed, &tools.join("armv7.itpack"), true, &omitted, &log).map_err(|e| e.to_string())?;
+    let (_written, record) =
+        guest_package::seed(ed, &tools.join("armv7.itpack"), true, &omitted, &log).map_err(|e| e.to_string())?;
     emit_all(&log);
     println!("GUEST-PACKAGE {}", serde_json::to_string(&record.object()).unwrap());
     Ok(())
@@ -232,7 +237,11 @@ fn survey_n72(ed: &mut Editor, tools: &Path, kernel: Option<&[u8]>) -> Result<()
         let tools_fit = if lost.is_empty() {
             Fit::new(piece, true, format!("each loads ({}: {})", fits[0].piece, fits[0].proof))
         } else {
-            Fit::new(piece, false, lost.iter().map(|f| format!("{}: {}", f.piece, f.proof)).collect::<Vec<_>>().join("; "))
+            Fit::new(
+                piece,
+                false,
+                lost.iter().map(|f| format!("{}: {}", f.piece, f.proof)).collect::<Vec<_>>().join("; "),
+            )
         };
         log.check(tools_fit, false, "left out").map_err(|e| e.to_string())?;
 
@@ -272,7 +281,8 @@ fn survey_n72(ed: &mut Editor, tools: &Path, kernel: Option<&[u8]>) -> Result<()
     ed.write(OPENGLES, front_end, Some(0o755)).map_err(|e| e.to_string())?;
 
     let omitted: HashSet<String> = HashSet::new();
-    let (_written, record) = guest_package::seed(ed, &tools.join("armv6.itpack"), true, &omitted, &log).map_err(|e| e.to_string())?;
+    let (_written, record) =
+        guest_package::seed(ed, &tools.join("armv6.itpack"), true, &omitted, &log).map_err(|e| e.to_string())?;
     emit_all(&log);
     println!("GUEST-PACKAGE {}", serde_json::to_string(&record.object()).unwrap());
     Ok(())
