@@ -10,12 +10,13 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -23,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -33,6 +35,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
@@ -140,36 +143,25 @@ internal fun fullscreenFit(skin: DeviceSkin, pixels: IntSize, width: Float, heig
     return FullscreenFit(h * aspect, h, docked)
 }
 
-/** The screens the preview can show. */
-private enum class PreviewScreen(val label: String, val short: String, val pixels: IntSize, val skin: DeviceSkin, val ipad: Boolean = false) {
-    CLASSIC("iPhone, iPod touch · 320 × 480", "320 × 480", IntSize(320, 480), DeviceSkin.ipodTouch2),
-    RETINA("Retina · 640 × 960", "Retina", IntSize(640, 960), DeviceSkin.ipodTouch4),
-    TALL("iPhone 5 · 640 × 1136", "iPhone 5", IntSize(640, 1136), DeviceSkin.iphone5),
-    IPAD("iPad · 1024 × 768", "iPad", IntSize(768, 1024), DeviceSkin.ipad, ipad = true);
+/** The screens the preview can show: the devices with it (the device picker's name), and its resolution under that. */
+private enum class PreviewScreen(val label: String, val resolution: String, val pixels: IntSize, val skin: DeviceSkin, val ipad: Boolean = false) {
+    CLASSIC("iPhone, iPod touch", "320 × 480", IntSize(320, 480), DeviceSkin.ipodTouch2),
+    RETINA("iPhone 4, iPod touch 4G", "640 × 960", IntSize(640, 960), DeviceSkin.ipodTouch4),
+    TALL("iPhone 5", "640 × 1136", IntSize(640, 1136), DeviceSkin.iphone5),
+    IPAD("iPad", "1024 × 768", IntSize(768, 1024), DeviceSkin.ipad, ipad = true);
 
     companion object {
         fun forBoard(board: String?) = screenPixels(board).let { p -> entries.first { it.pixels == p } }
     }
 }
 
-/** The preview's pictures: samples (art/preview/scaling, drawn by tools/scaling-samples/make.py), or 1 cm squares. */
+/** The preview's pictures, as its tabs: samples (art/preview/scaling, drawn by tools/scaling-samples/make.py), or 1 cm squares. */
 private enum class PreviewPicture(val label: String, val file: String?) {
-    PIXEL_ART("Pixel art", "pixel"), GAME("3D game", "game"), HOME("Home screen", "home"), SQUARES("1 cm squares", null)
+    PIXEL_ART("Pixel art", "pixel"), GAME("3D game", "game"), HOME("Home", "home"), SQUARES("1 cm", null)
 }
 
-/** A compact choice for the preview's header: its value as a chip, the choices in a menu. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun <T> MenuChip(value: String, options: List<T>, label: (T) -> String, tag: String, onPick: (T) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        AssistChip(onClick = { open = true }, label = { Text(value, maxLines = 1) }, trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
-            modifier = Modifier.testTag(tag))
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (option in options) DropdownMenuItem(text = { Text(label(option)) }, onClick = { onPick(option); open = false })
-        }
-    }
-}
+/** What the preview's footer says about the picture: the method, how large it's drawn and why, and the factor. */
+private class Shown(val title: String, val detail: String, val factor: String)
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -303,16 +295,21 @@ private fun RealSizeRows(host: GuestHost, onMeasure: () -> Unit) {
 }
 
 /**
- * The preview predicts the device view: the size it shows the selected screen at (Pixel perfect's multiple, real
- * size, or fitted), drawn by the same method, on whole physical pixels. When that's larger than the box, Pixel
- * perfect drops to the largest multiple that fits and other methods are fitted, and the caption above says so.
- * 1 cm squares are always at this phone's measured density, to check the measure with a ruler.
+ * The preview card, laid out like the desktop's: a title, the device picker (its screen's resolution under the name),
+ * the pictures as tabs, the picture in the drawn device on an inset panel, and a footer saying how it's drawn.
+ *
+ * The picture predicts the device view: the size it shows the selected screen at (Pixel perfect's multiple, real
+ * size, or fitted), drawn by the same method, on whole physical pixels. When the device doesn't fit around that here,
+ * Pixel perfect drops to the largest multiple it does (else the largest the screen alone fits, the device cropped) and
+ * other methods are fitted; real size is never shrunk, the panel crops it instead. 1 cm squares are at this phone's
+ * measured density, to check the measure with a ruler.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     val context = LocalContext.current
     val s = host.settings
+    val colors = MaterialTheme.colorScheme
     var screen by rememberSaveable { mutableStateOf(PreviewScreen.forBoard(host.selected?.board)) }
     var picture by rememberSaveable { mutableStateOf(PreviewPicture.PIXEL_ART) }
     // Turned by its rotate button: 0 portrait, 1 Home on the right, 2 Home on the left (the device page's order).
@@ -322,6 +319,7 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     val degrees = when (turned) { 1 -> -90f; 2 -> 90f; else -> 0f }
     val squares = picture == PreviewPicture.SQUARES
     val method = s.scaling
+    val skin = screen.skin
     val source = remember(screen, picture) {
         val file = picture.file ?: PreviewPicture.PIXEL_ART.file
         try {
@@ -340,29 +338,68 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     }
     // Turned, the device view's room turns with it: its width is the screen's height.
     val (roomW, roomH) = if (landscape) room.height to room.width else room.width to room.height
-    val view = deviceViewFit(screen.skin, screen.pixels, roomW / density, roomH / density, density, method, s.integerScale, realPx)
+    val view = deviceViewFit(skin, screen.pixels, roomW / density, roomH / density, density, method, s.integerScale, realPx)
     val shownPixels = if (landscape) IntSize(screen.pixels.height, screen.pixels.width) else screen.pixels
     // How many physical pixels the device view gives each of the screen's pixels.
-    val viewScale = if (view.whole > 0) view.whole.toFloat() else view.scale * density * screen.skin.screenWidth / screen.pixels.width
-    Column(modifier) {
-        // One row of choices (which screen, which picture) and one line saying what's shown: the picture gets the rest.
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MenuChip(screen.short, PreviewScreen.entries, { it.label }, "preview_screen") { screen = it }
-            MenuChip(picture.label, PreviewPicture.entries, { it.label }, "preview_picture_choice") { picture = it }
-        }
+    val viewScale = if (view.whole > 0) view.whole.toFloat() else view.scale * density * skin.screenWidth / screen.pixels.width
+    Column(modifier.clip(RoundedCornerShape(24.dp)).background(colors.surfaceContainer).padding(horizontal = 12.dp, vertical = 14.dp)) {
+        Text("Preview", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 4.dp))
+        Spacer(Modifier.height(10.dp))
+        DevicePicker(screen) { screen = it }
+        Spacer(Modifier.height(10.dp))
+        PictureTabs(picture) { picture = it }
+        Spacer(Modifier.height(10.dp))
+        // The footer's two lines take the bottom; the inset panel holding the picture, the rest.
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-            val box = with(LocalDensity.current) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx() - 28.dp.roundToPx()) }
-            val (scale, caption) = if (squares) {
-                s.pxPerMm * screen.skin.screenWidth / screen.pixels.width to
-                    "1 cm squares · %.0f pixels per inch, %s".format(s.pxPerMm * 25.4f, if (s.displayPxPerMm > 0f) "measured" else "as the system reports")
-            } else previewScale(method, shownPixels, viewScale, view, s.integerScale, box)
+            val footer = 76.dp
+            val panelHeight = (maxHeight - footer).coerceAtLeast(80.dp)
+            val inset = 8.dp
+            // The panel's room for the device, in physical pixels, across and down as shown.
+            val spaceW = (maxWidth - inset * 2).value * density
+            val spaceH = (panelHeight - inset * 2).value * density
+            val m = DEVICE_MARGIN
+            // The whole device has to fit: the screen's size times the body's share (with its side buttons).
+            val (bx, by) = if (landscape) (skin.height + 2 * m) / skin.screenHeight to (skin.width + 2 * m) / skin.screenWidth
+                else (skin.width + 2 * m) / skin.screenWidth to (skin.height + 2 * m) / skin.screenHeight
+            fun fitsIn(k: Float, bx: Float, by: Float) = shownPixels.width * k * bx <= spaceW + 0.5f && shownPixels.height * k * by <= spaceH + 0.5f
+            // Physical pixels per screen pixel here, and the footer's account of it.
+            val (scale, shown) = if (squares) {
+                val cm = "Screen %.1f × %.1f cm".format(skin.screenWidth / 10, skin.screenHeight / 10)
+                s.pxPerMm * skin.screenWidth / screen.pixels.width to
+                    Shown("Real size", "$cm · ${fullscreenFits(skin, window.screenWidthDp * density, window.screenHeightDp * density, s.pxPerMm)}",
+                        "%.0f ppi".format(s.pxPerMm * 25.4f))
+            } else sampleScale(method, screen, shownPixels, viewScale, view, s.integerScale, realPx, s.pxPerMm, ::fitsIn,
+                min(spaceW / (shownPixels.width * bx), spaceH / (shownPixels.height * by)))
+            // The screen upright on whole physical pixels, and the device drawn around it at that size.
+            val screenPx = IntSize((screen.pixels.width * scale).roundToInt(), (screen.pixels.height * scale).roundToInt())
+            val mmScale = screenPx.width / density / skin.screenWidth
+            // Upright, the room is turned back: the device is drawn standing and the whole of it turned.
+            val (uprightW, uprightH) = if (landscape) spaceH to spaceW else spaceW to spaceH
+            val deviceFits = (skin.width + 2 * m) * mmScale * density <= uprightW + 0.5f && (skin.height + 2 * m) * mmScale * density <= uprightH + 0.5f
+            val cropped = if (squares) !deviceFits else screenPx.width > uprightW + 0.5f || screenPx.height > uprightH + 0.5f
             Column {
-                Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp).height(22.dp).testTag("preview_caption"))
-                Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Color(0xFF0E0F12)).testTag("preview_picture")) {
-                    if (squares) Squares(screen, s.pxPerMm, landscape, Modifier.fillMaxSize())
-                    else ScaledPicture(source, method, scale, degrees, Modifier.fillMaxSize())
-                    // Full screen (the sample as full screen draws it) and Rotate, over the picture's top-right corner.
+                Box(Modifier.fillMaxWidth().height(panelHeight).clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLowest)
+                    .testTag("preview_picture")) {
+                    Box(Modifier.fillMaxSize().padding(inset).clipToBounds(), contentAlignment = Alignment.Center) {
+                        val up = with(LocalDensity.current) { uprightW.toDp() to uprightH.toDp() }
+                        Box(Modifier.requiredSize(up.first, up.second).graphicsLayer { rotationZ = degrees }, contentAlignment = Alignment.Center) {
+                            // The whole device centred when it fits, else its screen.
+                            val place = if (deviceFits) Modifier else Modifier.wrapContentSize(unbounded = true).then(centredOnScreen(skin, mmScale))
+                            val size = with(LocalDensity.current) { screenPx.width.toDp() to screenPx.height.toDp() }
+                            DeviceBody(skin, mmScale, size, place, controls = false) { at ->
+                                if (squares) Box(at) {
+                                    Squares(s.pxPerMm, Modifier.fillMaxSize())
+                                    Text("Squares are 1 cm", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.align(Alignment.Center).graphicsLayer { rotationZ = -degrees })
+                                } else ScaledPicture(source, method, scale, 0f, at)
+                            }
+                        }
+                    }
+                    // Only a cropped screen is worth a note: the device around it is often cut off by design.
+                    if (cropped) Text("Cropped to fit here", color = Color.White, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp).clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.67f)).padding(horizontal = 10.dp, vertical = 5.dp))
+                    // Full screen (the sample as full screen draws it) and Rotate, over the panel's top-right corner.
                     Row(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!squares) FilledTonalIconButton(onClick = { full = true }, modifier = Modifier.size(40.dp).testTag("preview_fullscreen")) {
                             Icon(LtIcons.Fullscreen, "Preview full screen", Modifier.size(20.dp))
@@ -371,6 +408,20 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
                             Icon(LtIcons.Rotate, "Rotate", Modifier.size(20.dp))
                         }
                     }
+                }
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = colors.outlineVariant)
+                // The dot and the factor sit level with the middle of the two lines.
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(colors.primary))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(shown.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(shown.detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("preview_caption"))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(shown.factor, style = MaterialTheme.typography.titleSmall)
                 }
             }
         }
@@ -402,35 +453,108 @@ private fun FullPreview(source: Bitmap, method: ScreenScaling, screen: PreviewSc
     }
 }
 
-/**
- * The scale the preview draws a sample at in a [box] of physical pixels, and its one-line caption: what the device
- * view does ("Real size · Smoothed 2.59× · soft edges").
- */
-private fun previewScale(method: ScreenScaling, pixels: IntSize, viewScale: Float, view: DeviceViewFit, fixed: Int, box: IntSize): Pair<Float, String> {
-    fun times(x: Float) = if (abs(x - x.roundToInt()) < 0.01f) "${x.roundToInt()}×" else "%.2f×".format(x)
-    if (method == ScreenScaling.PIXEL_PERFECT) {
-        val k = view.whole
-        val here = largestMultiple(pixels, box.width.toFloat(), box.height.toFloat()).coerceAtLeast(1)
-        val shown = min(k, here)
-        val what = when {
-            fixed > k -> "$fixed× doesn't fit, so $k×"
-            else -> "Pixel perfect $k×"
+/** The device picker: a full-width row with the device's icon, its name over its screen's resolution, and a caret. */
+@Composable
+private fun DevicePicker(screen: PreviewScreen, onPick: (PreviewScreen) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var width by remember { mutableStateOf(0) }
+    val colors = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxWidth().onSizeChanged { width = it.width }) {
+        Row(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerHigh)
+            .clickable { open = true }.padding(horizontal = 16.dp).testTag("preview_screen"), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (screen.ipad) LtIcons.Tablet else LtIcons.Phone, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(screen.label, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${screen.resolution} pixels", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            }
+            Icon(Icons.Filled.KeyboardArrowDown, "Choose a device", tint = colors.onSurfaceVariant)
         }
-        val detail = if (shown < k) "showing $shown× here" else "each pixel $k×$k"
-        return shown.toFloat() to "$what · $detail"
+        // As wide as the picker it opens from.
+        DropdownMenu(open, onDismissRequest = { open = false }, modifier = Modifier.width(with(LocalDensity.current) { width.toDp() })) {
+            for (option in PreviewScreen.entries) DropdownMenuItem(
+                text = { Text("${option.label}  ·  ${option.resolution}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(if (option.ipad) LtIcons.Tablet else LtIcons.Phone, null, Modifier.size(20.dp)) },
+                onClick = { onPick(option); open = false })
+        }
     }
-    val fits = pixels.width * viewScale <= box.width + 0.5f && pixels.height * viewScale <= box.height + 0.5f
-    val scale = if (fits) viewScale else min(box.width.toFloat() / pixels.width, box.height.toFloat() / pixels.height)
-    val k = crispMultiple(viewScale)
-    val real = if (view.real) "Real size · " else if (view.realTooLarge) "Too large for real size · " else ""
-    val what = when (method) {
-        ScreenScaling.SHARP -> if (abs(viewScale - viewScale.roundToInt()) < 0.01f) "Stretched ${times(viewScale)} · even pixels"
-            else "Stretched ${times(viewScale)} · pixels vary in width"
-        ScreenScaling.CRISP -> if (k == 1) "Crisp is Smooth below 2× · ${times(viewScale)}" else "$k× crisp · smoothed to ${times(viewScale)}"
-        else -> "Smoothed ${times(viewScale)} · soft edges"
+}
+
+/** The pictures as tabs of equal width: the picked one raised, the others flat on a darker track. */
+@Composable
+private fun PictureTabs(picture: PreviewPicture, onPick: (PreviewPicture) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLowest).padding(4.dp)
+        .testTag("preview_picture_choice")) {
+        for (option in PreviewPicture.entries) {
+            val picked = option == picture
+            Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(9.dp))
+                .background(if (picked) colors.surfaceContainerHighest else Color.Transparent)
+                .selectable(picked, role = Role.Tab) { onPick(option) }.testTag("preview_tab_" + option.name.lowercase()),
+                contentAlignment = Alignment.Center) {
+                Text(option.label, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                    color = if (picked) colors.primary else colors.onSurfaceVariant)
+            }
+        }
     }
-    val shrunk = if (fits) "" else " · smaller here"
-    return scale to "$real$what$shrunk"
+}
+
+/** Whether full screen shows the whole screen at real size on this phone ([width] x [height] pixels). */
+private fun fullscreenFits(skin: DeviceSkin, width: Float, height: Float, pxPerMm: Float): String {
+    val (mw, mh) = width / pxPerMm to height / pxPerMm
+    val (sw, sh) = skin.screenWidth to skin.screenHeight
+    return when {
+        sw <= mw && sh <= mh -> "full screen shows all of it"
+        sh <= mw && sw <= mh -> "full screen shows all of it turned to landscape"
+        else -> "this phone is smaller, so part of it is always cropped"
+    }
+}
+
+/**
+ * The sample on the preview's panel: the scale it's drawn at (physical pixels per screen pixel) and the footer's
+ * account. [fitsIn] says whether [shown] pixels at a scale fit the panel with the device's share around them; [fit] is
+ * the largest scale at which the whole device fits.
+ */
+private fun sampleScale(method: ScreenScaling, screen: PreviewScreen, shown: IntSize, viewScale: Float, view: DeviceViewFit, fixed: Int,
+                        realPx: Float?, pxPerMm: Float, fitsIn: (Float, Float, Float) -> Boolean, fit: Float): Pair<Float, Shown> {
+    fun times(x: Float) = if (abs(x - x.roundToInt()) < 0.01f) "${x.roundToInt()}×" else "%.2f×".format(x)
+    val skin = screen.skin
+    val (bx, by) = if (shown.width == screen.pixels.width) (skin.width + 2 * DEVICE_MARGIN) / skin.screenWidth to (skin.height + 2 * DEVICE_MARGIN) / skin.screenHeight
+        else (skin.height + 2 * DEVICE_MARGIN) / skin.screenHeight to (skin.width + 2 * DEVICE_MARGIN) / skin.screenWidth
+    fun rendered(k: Float) = "%d × %d rendered".format((shown.width * k).roundToInt(), (shown.height * k).roundToInt())
+    if (method == ScreenScaling.PIXEL_PERFECT) {
+        val k = view.whole.coerceAtLeast(1).toFloat()
+        // The largest multiple the device fits around here, else the largest the screen alone fits.
+        val withDevice = (12 downTo 1).firstOrNull { fitsIn(it.toFloat(), bx, by) }
+        val alone = withDevice ?: (12 downTo 1).firstOrNull { fitsIn(it.toFloat(), 1f, 1f) }
+        val here = (alone ?: 1).toFloat()
+        val onShow = min(k, here)
+        var detail = rendered(k)
+        if (fixed > k) detail += " · ${fixed}× doesn't fit"
+        if (alone == null) detail += " · ${times(onShow)} here, cropped" else if (onShow < k) detail += " · ${times(onShow)} here"
+        return onShow to Shown("Pixel perfect", detail, times(k))
+    }
+    // At real size the preview shows the screen at exactly that size on this phone, never shrunk to fit: the panel
+    // crops it instead. Otherwise it's the device view's size, fitted when that's larger.
+    val real = realPx?.let { it * skin.screenWidth / screen.pixels.width }
+    val wanted = real ?: viewScale
+    val fits = fitsIn(wanted, bx, by)
+    val scale = if (real != null || fits) wanted else fit
+    var detail = rendered(wanted)
+    if (real != null) {
+        // Why the factor isn't 1x: the device's own pixel density against this phone's.
+        val devicePpi = screen.pixels.width / (skin.screenWidth / 25.4f)
+        detail += " · real size (%.0f → %.0f ppi)".format(devicePpi, pxPerMm * 25.4f)
+        if (view.realTooLarge) detail += " · fitted on the device page"
+    }
+    val k = crispMultiple(wanted)
+    when (method) {
+        ScreenScaling.SHARP -> if (abs(wanted - wanted.roundToInt()) >= 0.01f) detail += " · uneven pixels"
+        ScreenScaling.CRISP -> if (k == 1) detail += " · Smooth below 2×" else if (abs(wanted - k) >= 0.01f) detail += " · ${k}× then smoothed"
+        else -> {}
+    }
+    if (real == null && !fits) detail += " · smaller here"
+    return scale to Shown("${method.label} scaling", detail, times(wanted))
 }
 
 /** [source] drawn at [scale] by [method], turned [degrees] (0 or a quarter), centred in the box on whole physical pixels. */
@@ -448,19 +572,16 @@ private fun ScaledPicture(source: Bitmap, method: ScreenScaling, scale: Float, d
     }
 }
 
-/** The screen at real size ([pxPerMm]) over 1 cm squares, centred, cut off at the box's edges when larger. */
+/** 1 cm squares ([pxPerMm]) over the screen it fills, from its top-left corner. */
 @Composable
-private fun Squares(screen: PreviewScreen, pxPerMm: Float, landscape: Boolean, modifier: Modifier) {
+private fun Squares(pxPerMm: Float, modifier: Modifier) {
     Canvas(modifier.clipToBounds()) {
-        val across = screen.skin.screenWidth * pxPerMm; val down = screen.skin.screenHeight * pxPerMm
-        val w = if (landscape) down else across; val h = if (landscape) across else down
-        val left = ((size.width - w) / 2).roundToInt().toFloat(); val top = ((size.height - h) / 2).roundToInt().toFloat()
-        drawRect(Color(0xFF14161A), Offset(left, top), Size(w, h))
+        drawRect(Color(0xFF14161A))
         val cm = 10 * pxPerMm
-        var x = left + cm
-        while (x < left + w - 0.5f) { drawLine(Color(0xFF7A808A), Offset(x, top), Offset(x, top + h), 2f); x += cm }
-        var y = top + cm
-        while (y < top + h - 0.5f) { drawLine(Color(0xFF7A808A), Offset(left, y), Offset(left + w, y), 2f); y += cm }
+        var x = cm
+        while (x < size.width - 0.5f) { drawLine(Color(0xFF5A6070), Offset(x, 0f), Offset(x, size.height), 2f); x += cm }
+        var y = cm
+        while (y < size.height - 0.5f) { drawLine(Color(0xFF5A6070), Offset(0f, y), Offset(size.width, y), 2f); y += cm }
     }
 }
 
