@@ -581,7 +581,10 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let state = &mut app.screen_scaling;
     let mut screen = state.screen.unwrap_or(selected);
     let picker = device_picker(ui, &p, screen);
-    egui::Popup::menu(&picker).width(inner.width()).show(|ui| {
+    // As wide as the picker it opens from: the menu otherwise sizes itself to its longest entry.
+    let width = picker.rect.width();
+    egui::Popup::menu(&picker).width(width).show(|ui| {
+        ui.set_min_width(width - ui.style().spacing.menu_margin.sum().x);
         for option in Screen::ALL {
             let text = format!("{}  ·  {}", option.label(), option.resolution());
             if ui.selectable_label(option == screen, text).clicked() {
