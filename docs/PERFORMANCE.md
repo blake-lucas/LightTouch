@@ -524,7 +524,7 @@ container; older ones keep the format they were prepared with (nothing converts 
 
 Importing an exported device keeps its format; nothing converts an old device to a container.
 
-**In-guest results, desktop.** Writes from 64 KiB to 256 KiB are uncached (`F_NOCACHE`) and end with `fsync`, so
+**In-guest results, desktop.** `fs-write` and `fs-write-big` are uncached (`F_NOCACHE`) and end with `fsync`, so
 they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of the bytes the test wrote.
 
 | Test | iPod touch 2G 3.1.3, container | iPod touch 2G 3.1.3, page files | iPod touch 4G 6.1.6, container | iPhone 3GS 5.1.1, container |
@@ -537,7 +537,7 @@ they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of
 | `fs-fullfsync-4k` (4 KiB + `F_FULLFSYNC`) | 531 µs | 1.7–2.0 ms | 4.2–4.8 ms (~1 MB/s) | 2.8 ms (~1.4 MB/s) |
 | `fs-create` (new 16 KiB file) | 787 µs | 3.2–5.6 ms | 3.2–4.0 ms (~4–5 MB/s) | 3.2 ms (~5 MB/s) |
 
-**In-guest results, Poco F3** (same tests, one pass each, phone at ~29–31 °C on the charger):
+**In-guest results, Poco F3** (same tests, best of 3 rounds in one pass, phone at ~29–31 °C on the charger):
 
 | Test | iPod touch 2G 3.1.3, container | iPod touch 2G 3.1.3, page files | iPod touch 4G 6.1.6, container | iPhone 3GS 5.1.1, container |
 | --- | --- | --- | --- | --- |
@@ -597,6 +597,15 @@ periodic sync) does, as on a real device that loses power. No sync request reach
 | One `syncfs` per guest write program, then the renames | desktop 8 pages 335 µs/page; Poco 1454 µs/page (one `syncfs` = an f2fs checkpoint, ~8.6 ms) vs 464 now | slower on the phone |
 | `fsync` the program's pages from 8 threads at once | desktop 257–452 µs/page vs 605–660 serial; Poco 513–694 vs 676–755 | no clear gain on the phone (f2fs here is `fsync_mode=nobarrier`: an `fsync` is already cheap) |
 | An append-only page log, one `fdatasync` per program | desktop 66, Poco 60 µs/page | changes how an existing device's writes are stored and recovered (erase markers, relocation, the session page cache): too risky for a format only pre-v0.0.12 2G devices have. Converting those devices to containers would also remove it. |
+
+**What would make writes faster, and the cost.** No change in this round: nothing cheap removes a dominant cost.
+- Old 2G page-file devices (8–10× slower writes than a container on both hosts): convert them to a container once,
+  reusing the packing code imports and preparation already have (`NandDisk.hpp`, `nand_disk.rs`). That rewrites the
+  device's NAND once (~0.5 GB) and needs crash-safe switching between the two formats: days of work plus tests.
+- Small synchronous writes on the A4 boards (~0.6 ms a NAND request on the desktop): ~60% is iOS's kernel on the AP,
+  which only faster translated code in general would shrink; the IOP's MMIO handling (~20%) and the thread hand-offs
+  (~17%) are the only storage-specific parts, so trimming them is worth at most ~20–35%.
+- Installs: the unpack is the guest CPU's unzip and file creation; the upload is bound by the USB link.
 
 ### Frame pacing on the iPod touch 4G (2026-10-25)
 
