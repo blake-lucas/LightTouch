@@ -115,6 +115,10 @@ pub enum Command {
     },
     /// The device's carrier settings changed (saved already): write what changed to the modem.
     ReloadCarrier,
+    /// Hold the engine's periodic storage sync while the app installs apps, or release it.
+    HoldStorageSync {
+        hold: bool,
+    },
     /// A network-side event for the modem: a call, the other end answering or hanging up, a text.
     Modem {
         action: ModemAction,

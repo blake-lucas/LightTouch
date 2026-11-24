@@ -468,6 +468,11 @@ impl Runtime {
     }
 
     /// Write the record's saved carrier settings that changed to the modem (after the engine is ready, if it isn't).
+    /// Hold (or release) the engine's periodic storage sync while an app installs (lighttouch.h).
+    pub fn hold_storage_sync(&self, hold: bool) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_hold_storage_sync(r, hold as std::os::raw::c_int, e) })
+    }
+
     pub fn reload_carrier(&self) -> Result<()> {
         self.call(|r, e| unsafe { sys::lt_runtime_reload_carrier(r, e) })
     }

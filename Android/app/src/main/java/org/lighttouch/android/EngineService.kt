@@ -101,6 +101,9 @@ class EngineService : Service() {
         override fun setPresentVisible(visible: Boolean) = Native.setPresentVisible(visible)
         override fun setMicrophone(enabled: Boolean) { microphone = enabled }
         override fun setVibration(enabled: Boolean) { vibration = enabled }
+        override fun holdStorageSync(hold: Boolean) {
+            synchronized(this) { if (hold != storageSyncHeld) { storageSyncHeld = hold; Native.holdStorageSync(hold) } }
+        }
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
@@ -691,6 +694,8 @@ class EngineService : Service() {
 
     /** Settings > Vibration (on unless turned off). */
     @Volatile private var vibration = true
+    /** The app installer holds the engine's periodic storage sync (IEngine.holdStorageSync); one hold at most. */
+    private var storageSyncHeld = false
 
     /**
      * The guest's vibration motor on this phone's: a vibration starts when the motor does and is cancelled when it

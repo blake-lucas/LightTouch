@@ -23,14 +23,15 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
 | `android` | the engine, `android-usb`, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
 | `android-usb` | `build/android/usb/arm64-v8a/` (`libusbmuxd_qemu.so`, `liblt_appservice.so`) | `Android/packaging/build-mobile-android.py`: the USB bridge and its libraries from pinned sources with this repository's patches, static, NDK clang |
+| `windows-usb` | `build/windows/usb/` (`bin/`: `lighttouch-usbmuxd.exe` and its DLLs; `licenses/`) | `Windows/usbmux/build.py`: libplist and libimobiledevice-glue cross-built with MinGW, then `build-native.py` (the daemon and libusbmuxd with the Windows adapter and the shared patches) |
 | `linux-usb` | `build/linux/usb/` (`usbmuxd-qemu`, its libraries in `lib/`) | `Linux/packaging/build-mobile-deps.py` in the Debian 11 image (Docker, `$LT_LINUX_IMAGE`, built from `scripts/release/linux-build.Dockerfile` if missing), as the Linux release builds it |
 | `android-test` | the Android app's unit tests (`testDebugUnitTest`) | the same inputs as `android` |
 
 The USB bridge (usbmuxd-qemu) is patched here: `build-support/patches/usbmuxd-*.patch` and
 `*/packaging/patches/usbmuxd-*.patch`, listed in each recipe script. `android-usb` and `linux-usb` build incrementally
 and start over (keeping the downloads) when the recipe changed, a patch included; the release's `linux` step uses the
-prebuilt Linux prefix only while it matches the recipe and otherwise builds `linux-usb`. The Windows bridge is still a
-prebuilt input and macOS ships LightTouchMac's usbmuxd, so neither gets a new patch.
+prebuilt Linux prefix only while it matches the recipe and otherwise builds `linux-usb`, and the `desktop` step builds
+`windows-usb` unless `LT_WIN_USB` names a prebuilt bridge. macOS ships LightTouchMac's usbmuxd, so it gets no new patch.
 | `firmwarekit` | `build/firmwarekit/linux/firmwarekit` | `crates/lighttouch-firmware` (Rust; links only libc) |
 | `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same for `aarch64-linux-android` (`rustup target add aarch64-linux-android`) with NDK clang; `licenses/` from `crates/lighttouch-firmware/stage-notices.py` |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
@@ -190,8 +191,7 @@ Where the inputs come from:
   the MSYS2 packages that make the MinGW sysroot (identical to `release-0.0.10/win-deps`), and the LightTouchMac app
   whose `usbmuxd` LightTouch.app carries (as `LT_MAC_VENDOR` is locally).
 - **Pinned copies of this machine's inputs**, in the `ci-inputs-1` pre-release: the AppImage tool and runtime
-  (upstream publishes them only as "continuous"), the desktop notices, the Windows USB bridge (`services-mobile01/bin`;
-  `Windows/usbmux` records how it was built but isn't a script yet), and for Android the ANGLE libraries, the frontend
+  (upstream publishes them only as "continuous"), the desktop notices, and for Android the ANGLE libraries, the frontend
   notices and the engine PGO profile. To change one, upload a new `ci-inputs-N` release and update the manifest.
 
 The APK is signed with the `ANDROID_DEBUG_KEYSTORE` repository secret (base64 of the keystore the releases are signed

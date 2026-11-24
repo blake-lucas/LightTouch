@@ -438,6 +438,7 @@ fn run(
                     Ok(())
                 }
                 Command::ReloadCarrier => runtime.reload_carrier(),
+                Command::HoldStorageSync { hold } => runtime.hold_storage_sync(hold),
                 Command::Modem { action } => runtime.modem(&action).map(|_| modem.wrote()),
             };
             if let Err(e) = result {
@@ -802,6 +803,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Microphone { .. } => "microphone",
         Command::Network { .. } => "network",
         Command::ReloadCarrier => "reload_carrier",
+        Command::HoldStorageSync { .. } => "hold_storage_sync",
         Command::Modem { .. } => "modem",
     }
 }

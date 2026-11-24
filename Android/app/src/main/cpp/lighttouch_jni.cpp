@@ -1381,6 +1381,10 @@ JNI(vibrator) jlongArray JNICALL Java_org_lighttouch_android_Native_vibrator(JNI
     jlong data[2]={jlong(info.on),jlong(info.pulses)};
     jlongArray arr=env->NewLongArray(2);env->SetLongArrayRegion(arr,0,2,data);return arr;
 }
+JNI(holdStorageSync) void JNICALL Java_org_lighttouch_android_Native_holdStorageSync(JNIEnv *,jobject,jboolean hold) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_hold_storage_sync(runtime,hold?1:0,&error);
+}
 JNI(micFlush) void JNICALL Java_org_lighttouch_android_Native_micFlush(JNIEnv *,jobject) {
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
     lt_error error=LT_INIT(lt_error);lt_runtime_mic_flush(runtime,&error);

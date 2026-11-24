@@ -40,6 +40,14 @@ internal class StoreInstaller private constructor(private val context: Context) 
     @Volatile var onInstalled: (List<InstalledApp>) -> Unit = {}
     /** Run on the main thread when the queue has emptied; null while no activity exists. */
     @Volatile var onIdle: (() -> Unit)? = null
+    /**
+     * Set by the activity once it reaches the engine: holds (true) or releases its periodic storage sync. The sync made
+     * the guest's writes wait, so uploads went in bursts, and an install cut short is lost anyway. A new connection is
+     * told the current state, so a hold or release made while none existed still arrives.
+     */
+    @Volatile var storageSync: (Boolean) -> Unit = {}
+        set(value) { field = value; value(holdingStorageSync) }
+    @Volatile private var holdingStorageSync = false
 
     private val changePosted = AtomicBoolean(false)
     private var lastNotified = 0L
@@ -157,7 +165,9 @@ internal class StoreInstaller private constructor(private val context: Context) 
         val info = IpaPreflight.prepare(file, prepared, target)
         if (payload is InstallRequest.Local) report.rename(info.name)
         if (cancelled()) throw StoreError("Cancelled")
-        apps.install(socket, prepared, info.bundleId, cancelled) { e ->
+        holdingStorageSync = true
+        storageSync(true)
+        try { apps.install(socket, prepared, info.bundleId, cancelled) { e ->
             when (e.optString("phase")) {
                 "upload" -> { report.update("Copying to device", e.optInt("percent") / 100f); report.overall(QueueStages.copy(e.optInt("percent") / 100f)) }
                 "mutation" -> { report.commit(); report.update("Installing", null) }
@@ -176,7 +186,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
                     }
                 }
             }
-        }
+        } } finally { holdingStorageSync = false; storageSync(false) }
         runCatching { apps.installedApps(socket) }.getOrNull()?.let { list -> main.post { onInstalled(list) } }
     }
 

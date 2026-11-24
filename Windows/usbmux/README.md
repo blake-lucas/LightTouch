@@ -41,6 +41,10 @@ no-preflight path publishes the QEMU device without adding another dependency
 on libimobiledevice or its installer. `conf.c` also references `CoTaskMemFree`,
 so the daemon link needs `ole32` in addition to `shell32`.
 
+**Building it:** `scripts/build.sh windows-usb` (`build.py`) fetches the pinned sources, cross-builds the dependency
+packet (libplist with its size caps and libimobiledevice-glue as MinGW DLLs) and runs `build-native.py` below; the
+release's `desktop` step packages its output. The historical notes below describe how it was first qualified.
+
 `build-native.py` is the offline build entrypoint for that transport milestone.
 It checks the actual dependency build receipt and every installed provider hash,
 checks the pinned unmodified daemon source and libusbmuxd release archive, applies

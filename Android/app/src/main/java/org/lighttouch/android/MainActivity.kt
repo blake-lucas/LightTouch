@@ -239,6 +239,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             workerEvidenceDelivery.advance()
             engine = IEngine.Stub.asInterface(binder)
+            val held = engine
+            installer.storageSync = { hold -> runCatching { held?.holdStorageSync(hold) } }
             refreshDevices()
             applySettings()
             binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)

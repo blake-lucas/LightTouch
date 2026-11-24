@@ -445,6 +445,10 @@ typedef struct {
     uint64_t pulses;
 } lt_vibrator_info;
 lt_status lt_runtime_vibrator(lt_runtime *, lt_vibrator_info *, lt_error *);
+/* Holds (hold != 0) or releases the engine's periodic sync of the device's storage to the host disk, around an app
+ * install: the sync made the guest's writes wait, and an install cut short is lost anyway. Holds nest; stopping the
+ * device still syncs everything. Engines without the hook ignore it. Any thread. */
+lt_status lt_runtime_hold_storage_sync(lt_runtime *, int hold, lt_error *);
 /* The running modem (devices whose board lt_board_has_modem). LT_UNSUPPORTED without a modem or from engines without
  * its hooks.
  * reload_carrier: read the record's saved carrier settings again and write the properties that changed to the modem;

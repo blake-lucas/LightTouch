@@ -243,11 +243,7 @@ abi_struct!(lt_mic_info {
     pushed_frames: u64,
     dropped_frames: u64,
 });
-abi_struct!(lt_vibrator_info {
-    on: u32,
-    reserved: u32,
-    pulses: u64,
-});
+abi_struct!(lt_vibrator_info { on: u32, reserved: u32, pulses: u64 });
 abi_struct!(lt_carrier {
     carrier: [c_char; 64],
     mcc_mnc: [c_char; 8],
@@ -446,7 +442,12 @@ unsafe extern "C" {
     ) -> lt_status;
     pub fn lt_runtime_mic_info(runtime: *mut lt_runtime, info: *mut lt_mic_info, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_mic_flush(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
-    pub fn lt_runtime_vibrator(runtime: *mut lt_runtime, info: *mut lt_vibrator_info, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_vibrator(
+        runtime: *mut lt_runtime,
+        info: *mut lt_vibrator_info,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_hold_storage_sync(runtime: *mut lt_runtime, hold: c_int, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_reload_carrier(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_modem(
         runtime: *mut lt_runtime,

@@ -214,6 +214,7 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         }
     });
     let (live_tx, live) = std::sync::mpsc::channel::<Command>();
+    let services_tx = live_tx.clone();
     if control {
         std::thread::spawn(move || {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -288,8 +289,8 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             }
             Ok(Event::Usb { socket: Some(socket), .. }) => {
                 eprintln!("[{:6.1}] usb bridge at {}", started.elapsed().as_secs_f64(), socket.display());
-                let (action, scratch) = (action.clone(), dirs.cache().join("services"));
-                std::thread::spawn(move || probe_services(socket, started, action, scratch));
+                let (action, scratch, commands) = (action.clone(), dirs.cache().join("services"), services_tx.clone());
+                std::thread::spawn(move || probe_services(socket, started, action, scratch, commands));
             }
             Ok(Event::Exit { clean, dirty, message }) => {
                 eprintln!("[{:6.1}] exit clean={clean} dirty={dirty} {message}", started.elapsed().as_secs_f64());
@@ -456,7 +457,13 @@ enum ServiceAction {
 
 /// Once the USB link is up: connect to the guest, report it, its apps and its newest crash report, then install a
 /// local IPA or the first Legacy Store result for a query.
-fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scratch: PathBuf) {
+fn probe_services(
+    socket: PathBuf,
+    started: Instant,
+    action: ServiceAction,
+    scratch: PathBuf,
+    commands: std::sync::mpsc::Sender<Command>,
+) {
     use lighttouch_catalog::{ipa, store};
     use lighttouch_services::apps::{Guest, InstallProgress};
     let at = || started.elapsed().as_secs_f64();
@@ -470,6 +477,12 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
         std::thread::sleep(Duration::from_millis(500));
     }
     say("attached".into());
+    // LIGHTTOUCH_SERVICES_DELAY=SECONDS: wait that long after the attach first, so an install measures a settled iOS
+    // rather than one still starting up (its first ~20 s of uploads stall while startup has the guest's CPU).
+    if let Some(delay) = std::env::var("LIGHTTOUCH_SERVICES_DELAY").ok().and_then(|v| v.parse::<f64>().ok()) {
+        std::thread::sleep(Duration::from_secs_f64(delay));
+        say(format!("waited {delay} s"));
+    }
     // LIGHTTOUCH_SYSLOG=FILE: the guest's whole system log, as it comes, for the rest of the run.
     if let Some(path) = std::env::var_os("LIGHTTOUCH_SYSLOG") {
         let socket = socket.clone();
@@ -578,7 +591,12 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
             info.name, info.bundle_id, info.short_version, info.unpacked
         ));
         let mut last = String::new();
-        guest
+        // As the app does (Session::hold_storage_sync); LT_INSTALL_SYNC_HOLD=off keeps the periodic sync, for A/B.
+        let hold = std::env::var("LT_INSTALL_SYNC_HOLD").map_or(true, |v| v != "off");
+        if hold {
+            let _ = commands.send(Command::HoldStorageSync { hold: true });
+        }
+        let result = guest
             .install(&copy, &info.bundle_id, Some(info.unpacked), &mut |p| {
                 let line = match p {
                     InstallProgress::Uploading { sent, total } => {
@@ -596,7 +614,11 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
                 }
                 true
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        if hold {
+            let _ = commands.send(Command::HoldStorageSync { hold: false });
+        }
+        result
     });
     let _ = std::fs::remove_file(&copy);
     if let Some(dir) = downloaded {
