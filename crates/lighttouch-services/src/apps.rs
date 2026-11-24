@@ -319,31 +319,51 @@ impl Guest {
             others.push((extra, h));
         }
         let sessions = others.len() as u64 + 1;
+        // Each session takes the next 1 MiB as soon as its last write is answered, so every write lands within a few
+        // MiB of the file's end. Fixed parts (LT_UPLOAD_SPLIT=parts, for A/B) had the later sessions write hundreds of
+        // MiB past it, and iOS filled that gap before answering: single writes took seconds while the upload began.
+        let parts = std::env::var("LT_UPLOAD_SPLIT").is_ok_and(|v| v == "parts");
         let part = total.div_ceil(sessions).div_ceil(UPLOAD_CHUNK as u64) * UPLOAD_CHUNK as u64;
-        let (sent, abort) = (AtomicU64::new(0), AtomicBool::new(false));
+        let (next, sent, abort) = (AtomicU64::new(0), AtomicU64::new(0), AtomicBool::new(false));
+        // LT_UPLOAD_TRACE=1: one stderr line per write (session, offset, how long the guest took to answer).
+        let trace = std::env::var_os("LT_UPLOAD_TRACE").is_some();
+        let began = std::time::Instant::now();
         let write_part = |afc: &mut Afc, handle: u64, index: u64| -> Result<()> {
-            let (start, end) = (index * part, ((index + 1) * part).min(total));
-            if start >= end {
-                return Ok(());
-            }
+            let (mut at, end) = if parts { (index * part, ((index + 1) * part).min(total)) } else { (0, total) };
             let mut file = std::fs::File::open(ipa)?;
-            file.seek(SeekFrom::Start(start))?;
-            if start > 0 {
-                afc.seek(handle, start)?;
-            }
             let mut buffer = vec![0u8; UPLOAD_CHUNK];
-            let mut at = start;
-            while at < end {
+            // Where this session's handle writes next: a fresh handle starts at 0.
+            let mut position = 0;
+            loop {
                 if abort.load(Ordering::Relaxed) {
                     return Err(Error("Cancelled.".into()));
                 }
+                if !parts {
+                    at = next.fetch_add(UPLOAD_CHUNK as u64, Ordering::Relaxed);
+                }
+                if at >= end {
+                    return Ok(());
+                }
                 let n = (end - at).min(UPLOAD_CHUNK as u64) as usize;
+                if position != at {
+                    afc.seek(handle, at)?;
+                }
+                file.seek(SeekFrom::Start(at))?;
                 file.read_exact(&mut buffer[..n])?;
+                let asked = began.elapsed();
                 afc.write(handle, &buffer[..n])?;
+                if trace {
+                    let done = began.elapsed();
+                    eprintln!(
+                        "upload-trace {:.3} {index} {at} {:.1}",
+                        done.as_secs_f64(),
+                        (done - asked).as_secs_f64() * 1e3
+                    );
+                }
                 at += n as u64;
+                position = at;
                 sent.fetch_add(n as u64, Ordering::Relaxed);
             }
-            Ok(())
         };
         let first = &mut *afc;
         let run = |afc: &mut Afc, handle: u64, index: u64| {

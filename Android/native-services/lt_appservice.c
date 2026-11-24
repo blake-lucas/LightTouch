@@ -61,9 +61,11 @@
 #define CONNECT_WINDOW_MS 20000
 #define CONNECT_RETRY_MS 500
 #define UPLOAD_CHUNK (1u << 20)         /* one AFC write each, answered before the next: see mobile.py */
-/* AFC sessions writing the IPA at once, each its own contiguous part (desktop: lighttouch-services apps.rs). Each
- * 1 MiB write waits for the guest to store it; several in flight keep the USB link busy (docs/STORAGE.md).
- * LT_UPLOAD_AFC in the helper's environment overrides it, for A/B (1: one stream, as before). */
+/* AFC sessions writing the IPA at once, each taking the next 1 MiB as soon as its last write is answered (desktop:
+ * lighttouch-services apps.rs). Each write waits for the guest to store it; several in flight keep the USB link busy,
+ * and taking them in order keeps every write within a few MiB of the file's end (docs/STORAGE.md). LT_UPLOAD_AFC in
+ * the helper's environment overrides the count, for A/B (1: one stream); LT_UPLOAD_SPLIT=parts gives each session a
+ * fixed contiguous part instead, as before, where iOS filled the gap ahead of the later parts before answering. */
 #define UPLOAD_SESSIONS 8
 #define INSTALL_ABSOLUTE_S 600       /* plus the unpacked size at UNPACK_FLOOR_BPS */
 #define INSTALL_IDLE_S 90           /* no status and no unpacking progress for this long */
@@ -919,6 +921,7 @@ struct upload_part {
 	uint64_t handle;
 	int fd;
 	uint64_t start, end;
+	uint64_t *next;         /* shared, atomic: the next chunk's offset; NULL for a fixed part from start to end */
 	uint64_t *sent;         /* shared, atomic */
 	int *failed;            /* shared, atomic: any part's failure stops the others */
 	int error;              /* this part's afc_error_t, or -1 for a read error */
@@ -929,16 +932,20 @@ static void *upload_part_run(void *arg)
 {
 	struct upload_part *p = arg;
 	unsigned char *buffer = malloc(UPLOAD_CHUNK);
-	uint64_t at = p->start;
+	uint64_t at = p->start, position = 0;   /* a fresh handle writes at 0 */
 	if (!buffer) {
 		p->error = -1;
 		goto done;
 	}
-	if (at > 0 && afc_file_seek(p->afc, p->handle, (int64_t)at, SEEK_SET) != AFC_E_SUCCESS) {
-		p->error = AFC_E_UNKNOWN_ERROR;
-		goto done;
-	}
-	while (at < p->end && !__atomic_load_n(p->failed, __ATOMIC_RELAXED)) {
+	while (!__atomic_load_n(p->failed, __ATOMIC_RELAXED)) {
+		if (p->next)
+			at = __atomic_fetch_add(p->next, UPLOAD_CHUNK, __ATOMIC_RELAXED);
+		if (at >= p->end)
+			break;
+		if (position != at && afc_file_seek(p->afc, p->handle, (int64_t)at, SEEK_SET) != AFC_E_SUCCESS) {
+			p->error = AFC_E_UNKNOWN_ERROR;
+			goto done;
+		}
 		uint32_t want = (uint32_t)(p->end - at < UPLOAD_CHUNK ? p->end - at : UPLOAD_CHUNK);
 		ssize_t got = pread(p->fd, buffer, want, (off_t)at);
 		if (got < 0 && errno == EINTR)
@@ -958,6 +965,7 @@ static void *upload_part_run(void *arg)
 			offset += written;
 		}
 		at += want;
+		position = at;
 		__atomic_add_fetch(p->sent, want, __ATOMIC_RELAXED);
 	}
 done:
@@ -1063,12 +1071,19 @@ static int action_install(struct session *s, const char *ipa, const char *bundle
 			n++;
 		}
 		uint64_t part = ((total + (uint64_t)n - 1) / (uint64_t)n + UPLOAD_CHUNK - 1) / UPLOAD_CHUNK * UPLOAD_CHUNK;
-		uint64_t sent = 0;
+		const char *split = getenv("LT_UPLOAD_SPLIT");
+		int fixed = split && strcmp(split, "parts") == 0;
+		uint64_t sent = 0, next = 0;
 		int failed = 0, started = 0;
 		for (int i = 0; i < n; i++) {
 			parts[i].fd = fd;
-			parts[i].start = (uint64_t)i * part < total ? (uint64_t)i * part : total;
-			parts[i].end = (uint64_t)(i + 1) * part < total ? (uint64_t)(i + 1) * part : total;
+			if (fixed) {
+				parts[i].start = (uint64_t)i * part < total ? (uint64_t)i * part : total;
+				parts[i].end = (uint64_t)(i + 1) * part < total ? (uint64_t)(i + 1) * part : total;
+			} else {
+				parts[i].end = total;
+				parts[i].next = &next;
+			}
 			parts[i].sent = &sent;
 			parts[i].failed = &failed;
 			if (pthread_create(&parts[i].thread, NULL, upload_part_run, &parts[i]) != 0) {
