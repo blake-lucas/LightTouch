@@ -35,22 +35,23 @@ pub enum Screen {
 impl Screen {
     const ALL: [Screen; 4] = [Screen::Classic, Screen::Retina, Screen::Tall, Screen::Ipad];
 
-    /// The menu button's label: just the resolution, so both menus fit side by side in the narrowest preview.
-    fn short(self) -> &'static str {
+    /// The devices with this screen, for the device menu.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "iPhone, iPod touch",
+            Self::Retina => "iPhone 4, iPod touch 4G",
+            Self::Tall => "iPhone 5",
+            Self::Ipad => "iPad",
+        }
+    }
+
+    /// Its resolution, under its name in the device picker.
+    fn resolution(self) -> &'static str {
         match self {
             Self::Classic => "320 × 480",
             Self::Retina => "640 × 960",
             Self::Tall => "640 × 1136",
             Self::Ipad => "1024 × 768",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Classic => "iPhone, iPod touch · 320 × 480",
-            Self::Retina => "Retina · 640 × 960",
-            Self::Tall => "iPhone 5 · 640 × 1136",
-            Self::Ipad => "iPad · 1024 × 768",
         }
     }
 
@@ -191,12 +192,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let area = ui.available_rect_before_wrap();
     // The settings column holds the card (upright, so only its 54 mm side runs across) with its padding and the
     // scroll bar when measuring: on a much denser display than the first guess it widens, leaving the preview at
-    // least 320 points, and when that leaves the preview too little, the preview goes below the settings instead.
+    // least 344 points, and when that leaves the preview too little, the preview goes below the settings instead.
     let ppm = real_size::points_per_mm(draft, ctx.pixels_per_point());
     let card_room = if app.screen_scaling.measuring { CARD_HEIGHT * ppm + 110.0 } else { 0.0 };
-    let cap = area.width() - 48.0 - 28.0 - 320.0;
-    let wide = area.width() >= 820.0 && card_room.max(440.0) <= cap.max(440.0);
-    let column = if wide { card_room.clamp(440.0, cap.max(440.0)) } else { (area.width() - 48.0).max(200.0) };
+    // The preview needs about 344 points for a 320-pixel screen at 1x inside its card and panel.
+    let cap = area.width() - 48.0 - 20.0 - 344.0;
+    let wide = area.width() >= 820.0 && card_room.max(420.0) <= cap.max(420.0);
+    let column = if wide { card_room.clamp(420.0, cap.max(420.0)) } else { (area.width() - 48.0).max(200.0) };
     let left = Rect::from_min_size(area.min + vec2(24.0, 0.0), vec2(column, area.height()));
     let mut left_ui = ui.new_child(egui::UiBuilder::new().id_salt("screen-scaling-settings").max_rect(left));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut left_ui, |ui| {
@@ -221,7 +223,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     });
     if wide {
         // Level with the first section's label, so the page title stands alone.
-        let right = Rect::from_min_max(egui::pos2(left.right() + 28.0, area.top() + 80.0), area.max - vec2(24.0, 24.0));
+        let right = Rect::from_min_max(egui::pos2(left.right() + 20.0, area.top() + 80.0), area.max - vec2(24.0, 24.0));
         preview(app, ui, right, draft, area);
     }
     ui.allocate_rect(area, Sense::hover());
@@ -557,72 +559,163 @@ fn drag(ui: &Ui, handle: Rect, down: bool, draft: &mut f32, ppp: f32, length: f3
     }
 }
 
-/// The preview: one card holding its two menus and a caption along the top, and the picture in the rest of `rect`.
+/// What the preview's footer says about the picture: the method, how large it's drawn and why, and the factor.
+struct Shown {
+    title: String,
+    detail: String,
+    factor: String,
+}
+
+/// The preview card, laid out like the Android page: a title, the device picker (its screen's resolution under the
+/// name), the pictures as tabs, the picture in an inset panel, and a footer saying how it's drawn.
 fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let p = app.palette;
     let selected = Screen::for_board(app.model.current().map(|d| d.board.as_str()));
-    if rect.height() < 200.0 {
+    if rect.height() < 260.0 {
         return;
     }
-    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())).rect_filled(
-        rect,
-        CornerRadius::same(theme::radius::CARD),
-        p.container,
-    );
-    let inner = rect.shrink(12.0);
+    let clip = rect.intersect(ui.clip_rect());
+    ui.painter().with_clip_rect(clip).rect_filled(rect, CornerRadius::same(theme::radius::CARD), p.container);
+    let inner = rect.shrink2(vec2(12.0, 14.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().id_salt("screen-scaling-preview").max_rect(inner));
     let ui = &mut ui;
+    ui.label(RichText::new("Preview").font(theme::title()));
+    ui.add_space(10.0);
+
     let state = &mut app.screen_scaling;
     let mut screen = state.screen.unwrap_or(selected);
-    // The menus: which screen (its resolution on the button, the models in the menu) and which picture (the
-    // samples, or 1 cm squares). Short labels keep both on one row in the narrowest preview.
-    let picture = if state.squares { "1 cm squares" } else { state.sample.label() };
-    ui.horizontal(|ui| {
-        let menu = widgets::chip_menu(ui, &p, screen.short());
-        egui::Popup::menu(&menu).show(|ui| {
-            for option in Screen::ALL {
-                if ui.selectable_label(option == screen, option.label()).clicked() {
-                    screen = option;
-                }
+    let picker = device_picker(ui, &p, screen);
+    egui::Popup::menu(&picker).width(inner.width()).show(|ui| {
+        for option in Screen::ALL {
+            let text = format!("{}  ·  {}", option.label(), option.resolution());
+            if ui.selectable_label(option == screen, text).clicked() {
+                screen = option;
             }
-        });
-        let menu = widgets::chip_menu(ui, &p, picture);
-        egui::Popup::menu(&menu).show(|ui| {
-            for sample in [Sample::PixelArt, Sample::Game, Sample::Home] {
-                if ui.selectable_label(!state.squares && state.sample == sample, sample.label()).clicked() {
-                    state.sample = sample;
-                    state.squares = false;
-                }
-            }
-            if ui.selectable_label(state.squares, "1 cm squares").clicked() {
-                state.squares = true;
-            }
-        });
+        }
     });
     if Some(screen) != state.screen && (state.screen.is_some() || screen != selected) {
         state.screen = Some(screen);
     }
-    ui.add_space(2.0);
-    let caption_at = ui.cursor().min;
-    // One line of caption under the menus, then the picture.
-    let space = Rect::from_min_max(caption_at + vec2(0.0, 28.0), inner.max);
-    if space.height() < 80.0 {
+    ui.add_space(10.0);
+    let mut picture = if state.squares { Picture::Squares } else { Picture::Sample(state.sample) };
+    tabs(
+        ui,
+        &p,
+        &mut picture,
+        &[
+            (Picture::Sample(Sample::PixelArt), Sample::PixelArt.label()),
+            (Picture::Sample(Sample::Game), Sample::Game.label()),
+            (Picture::Sample(Sample::Home), "Home"),
+            (Picture::Squares, "1 cm"),
+        ],
+    );
+    match picture {
+        Picture::Sample(sample) => {
+            state.sample = sample;
+            state.squares = false;
+        }
+        Picture::Squares => state.squares = true,
+    }
+    ui.add_space(10.0);
+
+    // The footer's two lines take the bottom; the inset panel holding the picture, the rest.
+    let footer_height = 52.0;
+    let panel = Rect::from_min_max(ui.cursor().min, egui::pos2(inner.right(), inner.bottom() - footer_height));
+    if panel.height() < 80.0 {
         return;
     }
-    let caption = if app.screen_scaling.squares {
+    ui.painter().with_clip_rect(clip).rect_filled(panel, CornerRadius::same(12), p.container_lowest);
+    let space = panel.shrink(8.0);
+    let shown = if app.screen_scaling.squares {
         squares(app, ui, space, screen, draft)
     } else {
         sample(app, ui, space, screen, draft, page)
     };
-    let mut job = egui::text::LayoutJob::simple(
-        caption,
-        FontId::new(12.5, egui::FontFamily::Proportional),
+
+    let painter = ui.painter().with_clip_rect(clip);
+    let rule = panel.bottom() + 12.0;
+    painter.hline(inner.x_range(), rule, Stroke::new(1.0, p.outline_variant));
+    let row = rule + 10.0;
+    painter.circle_filled(egui::pos2(inner.left() + 4.0, row + 8.0), 3.5, p.primary);
+    let factor = painter.layout_no_wrap(shown.factor, FontId::new(14.0, theme::medium()), p.on_surface);
+    let text_left = inner.left() + 16.0;
+    let text_width = (inner.right() - factor.size().x - 12.0 - text_left).max(40.0);
+    let line = |text: String, size: f32, color: Color32| {
+        let font = FontId::new(size, egui::FontFamily::Proportional);
+        let mut job = egui::text::LayoutJob::simple(text, font, color, text_width);
+        job.wrap.max_rows = 1;
+        painter.layout_job(job)
+    };
+    let title = line(shown.title, 14.0, p.on_surface);
+    let detail = line(shown.detail, 12.0, p.on_surface_variant);
+    painter.galley(egui::pos2(text_left, row), title, p.on_surface);
+    painter.galley(egui::pos2(text_left, row + 19.0), detail, p.on_surface_variant);
+    painter.galley(egui::pos2(inner.right() - factor.size().x, row), factor, p.on_surface);
+}
+
+/// The device picker: a full-width row with the device's icon, its name over its screen's resolution, and a caret.
+fn device_picker(ui: &mut Ui, p: &theme::Palette, screen: Screen) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::click());
+    let fill = if response.hovered() { p.container_highest } else { p.container_high };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(12), fill);
+    let icon = if screen == Screen::Ipad { TABLET } else { icons::PHONE };
+    let at = rect.left_center();
+    painter.text(
+        at + vec2(16.0, 0.0),
+        Align2::LEFT_CENTER,
+        icon,
+        FontId::new(24.0, theme::icons()),
         p.on_surface_variant,
-        inner.width() - 4.0,
     );
-    job.wrap.max_rows = 1;
-    let galley = ui.painter().layout_job(job);
-    ui.painter().galley(caption_at + vec2(2.0, 12.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
+    painter.text(
+        at + vec2(52.0, -9.0),
+        Align2::LEFT_CENTER,
+        screen.label(),
+        FontId::new(14.5, theme::medium()),
+        p.on_surface,
+    );
+    let small = FontId::new(12.0, egui::FontFamily::Proportional);
+    let pixels = format!("{} pixels", screen.resolution());
+    painter.text(at + vec2(52.0, 10.0), Align2::LEFT_CENTER, pixels, small, p.on_surface_variant);
+    let caret = FontId::new(16.0, theme::icons());
+    painter.text(
+        rect.right_center() - vec2(16.0, 0.0),
+        Align2::RIGHT_CENTER,
+        icons::CARET_DOWN,
+        caret,
+        p.on_surface_variant,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Tabs of equal width across the row: the picked one raised, the others flat on a darker track.
+fn tabs<T: PartialEq + Copy>(ui: &mut Ui, p: &theme::Palette, value: &mut T, options: &[(T, &str)]) {
+    let (track, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+    ui.painter().rect_filled(track, CornerRadius::same(12), p.container_lowest);
+    let cell = (track.width() - 8.0) / options.len() as f32;
+    for (i, (option, text)) in options.iter().enumerate() {
+        let r = Rect::from_min_size(track.min + vec2(4.0 + i as f32 * cell, 4.0), vec2(cell, track.height() - 8.0));
+        let response = ui.interact(r, ui.make_persistent_id(("scaling-tab", i)), Sense::click());
+        let picked = *value == *option;
+        if picked {
+            ui.painter().rect_filled(r, CornerRadius::same(9), p.container_highest);
+        } else if response.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(9), p.container_high);
+        }
+        let color = if picked { p.primary } else { p.on_surface_variant };
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, *text, FontId::new(13.0, theme::medium()), color);
+        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            *value = *option;
+        }
+    }
+}
+
+/// What the preview shows on the screen.
+#[derive(Clone, Copy, PartialEq)]
+enum Picture {
+    Sample(Sample),
+    Squares,
 }
 
 /// "2×", "2.37×".
@@ -633,8 +726,8 @@ fn times(x: f32) -> String {
 /// A sample picture as the device view will show it: the size the device page gives the screen (Pixel perfect's
 /// multiple, real size with the draft measure, or fitted), drawn by the same method on whole physical pixels. When
 /// that's larger than the preview, Pixel perfect shows the largest multiple that fits here and the other methods are
-/// fitted; the caption says what's shown.
-fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, page: Rect) -> String {
+/// fitted; the footer says what's shown.
+fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, page: Rect) -> Shown {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let mut settings = app.model.settings.clone();
@@ -653,45 +746,46 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
         pixels[0] as f32 * k <= space.width() * ppp + 0.5 && pixels[1] as f32 * k <= space.height() * ppp + 0.5
     };
     let fit = (space.width() * ppp / pixels[0] as f32).min(space.height() * ppp / pixels[1] as f32);
-    let (scale, caption) = if settings.scaling == Scaling::PixelPerfect {
+    // The size the device view draws the screen at, in physical pixels.
+    let rendered = |k: f32| format!("{} × {} rendered", (pixels[0] as f32 * k).round(), (pixels[1] as f32 * k).round());
+    let (scale, shown) = if settings.scaling == Scaling::PixelPerfect {
         let k = view_scale.round().max(1.0);
         let here = (1..=12).rev().map(|k| k as f32).find(|&k| fits(k));
         let cropped = here.is_none();
         let here = here.unwrap_or(1.0);
-        let shown = k.min(here);
+        let on_show = k.min(here);
         let fixed = settings.integer_scale as f32;
-        let what = if fixed > k {
-            format!("{} doesn't fit, so {}", times(fixed), times(k))
-        } else {
-            format!("Pixel perfect {}", times(k))
-        };
-        let detail = match (shown < k, cropped) {
-            (_, true) => format!("showing {} here, cropped", times(shown)),
-            (true, false) => format!("showing {} here", times(shown)),
-            (false, false) => format!("each pixel {k}×{k}"),
-        };
+        let mut detail = rendered(k);
+        if fixed > k {
+            detail += &format!(" · {} doesn't fit", times(fixed));
+        }
+        match (on_show < k, cropped) {
+            (_, true) => detail += &format!(" · {} here, cropped", times(on_show)),
+            (true, false) => detail += &format!(" · {} here", times(on_show)),
+            (false, false) => {}
+        }
         // A multiple counts physical pixels: at 200% display scaling, 1x looks half the size of other windows' 1x.
-        let hidpi = if ppp > 1.01 {
-            format!(" · physical pixels, so smaller at {:.0}% scaling", ppp * 100.0)
-        } else {
-            String::new()
-        };
-        (shown, format!("Device view · {what} · {detail}{hidpi}"))
+        if ppp > 1.01 {
+            detail += &format!(" · smaller at {:.0}% display scaling", ppp * 100.0);
+        }
+        (on_show, Shown { title: "Pixel perfect".into(), detail, factor: times(k) })
     } else {
         let scale = if fits(view_scale) { view_scale } else { fit };
         let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], view_scale);
-        let what = match settings.scaling {
-            Scaling::Sharp if (view_scale - view_scale.round()).abs() < 0.01 => {
-                format!("Stretched {} · even pixels", times(view_scale))
-            }
-            Scaling::Sharp => format!("Stretched {} · pixels vary in width", times(view_scale)),
-            Scaling::Crisp if (view_scale - k as f32).abs() < 0.01 => format!("{k}× crisp"),
-            Scaling::Crisp => format!("{k}× crisp · smoothed to {}", times(view_scale)),
-            _ => format!("Smoothed {} · soft edges", times(view_scale)),
-        };
-        let real = device_frame::real_scale(&skin, &settings, &ctx).is_some();
-        let shrunk = if fits(view_scale) { "" } else { " · smaller here" };
-        (scale, format!("Device view · {}{what}{shrunk}", if real { "Real size · " } else { "" }))
+        let mut detail = rendered(view_scale);
+        if device_frame::real_scale(&skin, &settings, &ctx).is_some() {
+            detail += " · real size";
+        }
+        match settings.scaling {
+            Scaling::Sharp if (view_scale - view_scale.round()).abs() >= 0.01 => detail += " · uneven pixels",
+            Scaling::Crisp if (view_scale - k as f32).abs() >= 0.01 => detail += &format!(" · {k}× then smoothed"),
+            _ => {}
+        }
+        if !fits(view_scale) {
+            detail += " · smaller here";
+        }
+        let title = format!("{} scaling", settings.scaling.label());
+        (scale, Shown { title, detail, factor: times(view_scale) })
     };
     // Centred on whole physical pixels.
     let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
@@ -711,11 +805,11 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     });
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
     texture.paint(&painter, rect, Rotation::Portrait, false);
-    caption
+    shown
 }
 
-/// The screen at its real size (the draft measure) over 1 cm squares, in the drawn device. Returns the caption.
-fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -> String {
+/// The screen at its real size (the draft measure) over 1 cm squares, in the drawn device.
+fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) -> Shown {
     let ctx = ui.ctx().clone();
     let ppm = real_size::points_per_mm(draft, ctx.pixels_per_point());
     let skin = screen.skin();
@@ -751,7 +845,8 @@ fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) 
         crop_note(ui, space, "Cropped to fit here");
     }
     let size = format!("Screen {:.1} × {:.1} cm", skin.screen_width / 10.0, skin.screen_height / 10.0);
-    format!("1 cm squares · {size} at real size · {}", fullscreen_fit(&skin, monitor_pixels(&ctx), draft))
+    let detail = format!("{size} · {}", fullscreen_fit(&skin, monitor_pixels(&ctx), draft));
+    Shown { title: "Real size".into(), detail, factor: format!("{:.0} ppi", draft * 25.4) }
 }
 
 /// A note along the bottom of the preview: why part of the picture is missing.
