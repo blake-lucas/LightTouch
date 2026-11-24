@@ -7,8 +7,12 @@
 #
 #   linux-engine   build/linux/libqemu-arm.so                  x86_64 engine (qemu-ios, portable board)
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
-#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK (LT_ANDROID_ENGINE: a prebuilt
-#                                                             engine; LT_APP_ID_SUFFIX/LT_APP_LABEL: a side-by-side install)
+#   android        build/android/LightTouch-debug.apk (+ engine, android-usb) arm64 debug APK (LT_ANDROID_ENGINE /
+#                                                             LT_ANDROID_USB: prebuilt ones; LT_APP_ID_SUFFIX/LT_APP_LABEL:
+#                                                             a side-by-side install)
+#   android-usb    build/android/usb/arm64-v8a/                the APK's USB bridge (usbmuxd-qemu) and app service helper
+#   linux-usb      build/linux/usb/                            usbmuxd-qemu and its libraries for the desktop app
+#                                                             (LIGHTTOUCH_USBMUXD), built in the release's Debian 11 image
 #   android-test   Android app unit tests (Gradle testDebugUnitTest; inputs as for android)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
 #   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust), x86_64
@@ -142,6 +146,69 @@ build_android_engine() {
     echo "$e"
 }
 
+# The USB bridge, built from its pinned sources with this repository's patches (build-support/patches,
+# */packaging/patches): incrementally, or from scratch (keeping the downloads) once the recipe has changed.
+build_android_usb() {
+    local o="$OBJ/android-usb" ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+    local s="$REPO/Android/packaging/build-mobile-android.py"
+    log "android-usb (usbmuxd-qemu and the app service helper, arm64-v8a)"
+    if [ -e "$o/build-recipe.json" ] && ! python3 "$s" "$o" --ndk "$ndk" --matches; then
+        echo "the bridge's recipe changed: rebuilding $o"
+        find "$o" -mindepth 1 -maxdepth 1 ! -name sources -exec rm -rf {} +
+    fi
+    mkdir -p "$OBJ"
+    python3 "$s" "$o" --ndk "$ndk" --jobs "$JOBS" --source-cache "$LT_INPUTS" > "$OBJ/android-usb.out" 2>&1 ||
+        { tail -30 "$OBJ/android-usb.out" >&2; exit 1; }
+    rm -rf "$OUT/android/usb"; mkdir -p "$OUT/android/usb"
+    cp -a "$o/arm64-v8a" "$OUT/android/usb/"
+}
+
+# The desktop's USB bridge, as the Linux release builds it (scripts/build-release.sh's linux step mounts
+# build/obj/linux-usb when the prebuilt one is older than the recipe), plus build/linux/usb: usbmuxd-qemu with the
+# libraries it loads beyond the base system in lib/, which it finds there by itself.
+build_linux_usb() {
+    local o="$OBJ/linux-usb" s="$REPO/Linux/packaging/build-mobile-deps.py" image="${LT_LINUX_IMAGE:-lighttouch-linux-build}"
+    local clone="$LT_INPUTS/linux-desktop/dependencies/usbmuxd-source" cache=()
+    log "linux-usb (usbmuxd-qemu and its libraries, in $image)"
+    docker image inspect "$image" > /dev/null 2>&1 ||
+        docker build -q -t "$image" -f "$REPO/scripts/release/linux-build.Dockerfile" "$REPO/scripts/release"
+    if [ -e "$o/build-recipe.json" ] && ! python3 "$s" "$o" --matches; then
+        echo "the bridge's recipe changed: rebuilding $o"
+        find "$o" -mindepth 1 -maxdepth 1 ! -name sources -exec rm -rf {} +
+        find "$o/sources" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+    fi
+    mkdir -p "$o"
+    [ -d "$clone/.git" ] && cache=(--daemon-cache "$clone")
+    # Downloads and unpacking happen here: the image's Python 3.9 tarfile has no extraction filter.
+    python3 "$s" "$o" --prepare-only "${cache[@]}" > "$OBJ/linux-usb.out" 2>&1 || { tail -30 "$OBJ/linux-usb.out" >&2; exit 1; }
+    docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp -e "JOBS=$JOBS" \
+        --mount "type=bind,src=$REPO,dst=/src/app,readonly" --mount "type=bind,src=$o,dst=/build/mobile-private-runtime-ui15" \
+        "$image" bash -euc '
+            # The recipe asks make for -j2.
+            mkdir -p /tmp/shims
+            printf "#!/bin/bash\nargs=(); for a in \"\$@\"; do case \"\$a\" in -j2) args+=(-j$JOBS) ;; *) args+=(\"\$a\") ;; esac; done\nexec %s \"\${args[@]}\"\n" \
+                "$(command -v make)" > /tmp/shims/make
+            chmod +x /tmp/shims/make
+            export PATH=/tmp/shims:$PATH LC_ALL=C.UTF-8
+            m=/build/mobile-private-runtime-ui15
+            python3 /src/app/Linux/packaging/build-mobile-deps.py $m
+            rm -rf $m/runtime; mkdir -p $m/runtime/lib
+            cp $m/prefix/bin/usbmuxd-qemu $m/runtime/
+            for l in libimobiledevice-1.0.so.6 libimobiledevice-glue-1.0.so.0 libplist-2.0.so. libusbmuxd-2.0.so.7 \
+                     libssl.so.1.1 libcrypto.so.1.1; do
+                p=$(LD_LIBRARY_PATH=$m/prefix/lib ldd $m/runtime/usbmuxd-qemu |
+                    awk -v l="$l" '"'"'($1 == l || (l ~ /\.$/ && index($1, l) == 1)) && $3 ~ /^\// { print $3; exit }'"'"')
+                [ -n "$p" ] || { echo "usbmuxd-qemu does not load $l" >&2; exit 1; }
+                cp -L "$p" $m/runtime/lib/
+            done
+            patchelf --set-rpath "\$ORIGIN/lib" $m/runtime/usbmuxd-qemu
+            for f in $m/runtime/lib/*; do patchelf --set-rpath "\$ORIGIN" "$f"; done' >> "$OBJ/linux-usb.out" 2>&1 ||
+        { tail -30 "$OBJ/linux-usb.out" >&2; exit 1; }
+    rm -rf "$OUT/linux/usb"; mkdir -p "$OUT/linux"
+    cp -a "$o/runtime" "$OUT/linux/usb"
+    echo "$OUT/linux/usb/usbmuxd-qemu"
+}
+
 build_android_test() { ANDROID_TASK=:app:testDebugUnitTest build_android; }
 
 build_android() {
@@ -150,11 +217,14 @@ build_android() {
     local engine="${LT_ANDROID_ENGINE:-$OUT/android/engine}"
     if [ -n "${LT_ANDROID_ENGINE:-}" ]; then need "$engine/arm64-v8a/libqemu-arm.so" "LT_ANDROID_ENGINE engine"
     else build_android_engine; fi
+    # LT_ANDROID_USB=DIR (libusbmuxd_qemu.so and liblt_appservice.so, an android-usb output) packages that bridge.
+    local usb="${LT_ANDROID_USB:-$OUT/android/usb/arm64-v8a}"
+    if [ -n "${LT_ANDROID_USB:-}" ]; then need "$usb/libusbmuxd_qemu.so" "LT_ANDROID_USB bridge"
+    else build_android_usb; fi
     mkdir -p "$OBJ" "$OUT/android"
     log "android APK (arm64-v8a, debug)"
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
-    need "$w/mobile-android/arm64-v8a" "Android mobile services"
     # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (cargo is
     # incremental), or the APK carries whatever firmwarekit was last built.
     build_firmwarekit_android
@@ -176,7 +246,7 @@ build_android() {
         -PappIdSuffix="${LT_APP_ID_SUFFIX:-}" -PappLabel="${LT_APP_LABEL:-LightTouch}" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
         -PsourceReference="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}" \
-        -PbuildRoot="$OBJ/android-gradle" -PmobileServicesArm64="$w/mobile-android/arm64-v8a" \
+        -PbuildRoot="$OBJ/android-gradle" -PmobileServicesArm64="$usb" \
         -PfrontendNotices="$w/product/frontend-inputs-15" \
         -PfrontendNoticesSha256=88918185b1a3ba3ea1b4c910c8b7dde56391597574f53824a160fef45d2b76a7 \
         -PangleArm64Libraries="$angle/lib" -PangleArm64Manifest="$angle/elf-closure.json" \
@@ -277,13 +347,13 @@ clean=0; targets=()
 for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
-    -h|--help) sed -n 2,25p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,29p "$0"; exit 0 ;;
     all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|android-engine|android|android-test|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    linux-engine|android-engine|android|android-test|android-usb|linux-usb|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
-[ ${#targets[@]} -gt 0 ] || { sed -n 2,25p "$0"; exit 2; }
+[ ${#targets[@]} -gt 0 ] || { sed -n 2,29p "$0"; exit 2; }
 for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in

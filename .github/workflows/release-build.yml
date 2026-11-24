@@ -249,7 +249,8 @@ jobs:
           key=$( { echo "$ANDROID_NDK_VERSION"; cat release-$VER/engine/contrib/portable/{dependencies.json,crypto-dependencies.json,build-deps.py,build-crypto-deps.py,cache.py,libgpg-error-android-lock.patch} \
                     release-$VER/engine/contrib/ffmpeg/*.patch release-$VER/app/build-support/dependencies.json \
                     release-$VER/app/build-support/patches/* release-$VER/app/Android/packaging/build-mobile-android.py \
-                    release-$VER/app/Android/native-services/* release-$VER/app/Linux/packaging/patches/*; } | sha256sum | cut -c1-24)
+                    release-$VER/app/Android/native-services/* release-$VER/app/Linux/packaging/patches/* \
+                    release-$VER/app/Android/packaging/patches/* release-$VER/app/Android/packaging/curl-stub/curl_stub.c release-$VER/app/Android/packaging/curl-stub/curl/curl.h; } | sha256sum | cut -c1-24)
           echo "key=$key" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v5
         id: android-deps
@@ -315,6 +316,8 @@ jobs:
           QEMU_IOS: ${{ github.workspace }}/release-${{ needs.setup.outputs.version }}/engine
           LT_INPUTS: ${{ github.workspace }}/ci-inputs/builds
           LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
+          # The USB bridge the cached step above built (scripts/build.sh would otherwise build it again).
+          LT_ANDROID_USB: ${{ github.workspace }}/ci-inputs/builds/mobile-android/arm64-v8a
           LT_CHECK_VERSION: "false"
           LT_GRADLE_OFFLINE: "false"
           LT_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/

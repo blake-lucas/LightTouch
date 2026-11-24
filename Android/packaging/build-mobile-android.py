@@ -16,6 +16,11 @@ tools use TSS and nothing in either executable references libtatsu, which this
 script checks. Allowed system libraries: libc, libm, libdl, liblog.
 
   build-mobile-android.py OUTPUT [--ndk DIR] [--source-cache DIR ...] [--jobs N]
+  build-mobile-android.py OUTPUT --matches [--ndk DIR]
+
+--matches exits 0 if OUTPUT's libraries and daemon were built from the current
+recipe (the helper is relinked whenever its source changes), else 1: a stale
+OUTPUT must be rebuilt from scratch, apart from OUTPUT/sources.
 
 Archives are taken from OUTPUT/sources, then from --source-cache directories
 (searched a few levels deep; each candidate's sha256 must match), and only
@@ -120,6 +125,7 @@ def main():
     parser.add_argument('--ndk', type=Path, default=Path.home() / 'Android/Sdk/ndk/28.2.13676358')
     parser.add_argument('--source-cache', type=Path, action='append')
     parser.add_argument('--jobs', type=int, default=max(1, min(8, os.cpu_count() or 1)))
+    parser.add_argument('--matches', action='store_true', help='Only check whether OUTPUT is up to date')
     args = parser.parse_args()
     output = args.output.resolve()
     ndk = args.ndk.resolve()
@@ -133,8 +139,6 @@ def main():
                         if line.startswith('Pkg.Revision'))
 
     sources, build, prefix, out = output / 'sources', output / 'build', output / 'prefix', output / ABI
-    for directory in (sources, build, prefix / 'lib/pkgconfig', prefix / 'include', out):
-        directory.mkdir(parents=True, exist_ok=True)
     pinned = {p['name']: p for p in json.loads((APP / 'build-support/dependencies.json').read_text())['packages']}
     packages = [pinned[name] for name in ORDER]
 
@@ -149,8 +153,13 @@ def main():
     stamp = output / 'build-recipe.json'
     # The helper is the last link step and feeds no library, so editing it reuses the output.
     library_inputs = lambda r: {k: v for k, v in r.items() if k != 'helper_source_sha256'}
-    if stamp.exists() and library_inputs(json.loads(stamp.read_text())) != library_inputs(recipe):
+    current = stamp.exists() and library_inputs(json.loads(stamp.read_text())) == library_inputs(recipe)
+    if args.matches:
+        raise SystemExit(0 if current else 1)
+    if stamp.exists() and not current:
         raise RuntimeError('Use a fresh output for changed mobile build inputs')
+    for directory in (sources, build, prefix / 'lib/pkgconfig', prefix / 'include', out):
+        directory.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps(recipe, indent=2) + '\n')
 
     trees = {}

@@ -125,12 +125,20 @@ step_windows() {
 }
 
 step_linux() {
-    local b=$R/linux-build mounts=() d p
+    local b=$R/linux-build mounts=() d p usb=$LT_LINUX_INPUTS/mobile-private-runtime-ui15
     # The prebuilt prefixes go where they were built: their pkg-config files name /build/<dir>.
-    for p in deps-full crypto mobile-private-runtime-ui15; do
+    for p in deps-full crypto; do
         need "$LT_LINUX_INPUTS/$p" "Linux input $p"
         mounts+=(--mount "type=bind,src=$LT_LINUX_INPUTS/$p,dst=/build/$p,readonly")
     done
+    # The USB bridge's prefix: the prebuilt one while its recipe (patches included) is this release's, else built
+    # from source by scripts/build.sh linux-usb.
+    if ! python3 "$R/app/Linux/packaging/build-mobile-deps.py" "$usb" --matches; then
+        echo "linux: $usb is older than the USB bridge's recipe; building it" >&2
+        LT_LINUX_IMAGE=$LT_LINUX_IMAGE bash "$R/app/scripts/build.sh" linux-usb > /dev/null
+        usb=$R/app/build/obj/linux-usb
+    fi
+    mounts+=(--mount "type=bind,src=$usb,dst=/build/mobile-private-runtime-ui15,readonly")
     # The worktrees' .git files point into these repositories (and their object alternates).
     for d in "$(git -C "$R/app" rev-parse --path-format=absolute --git-common-dir)" \
              "$(git -C "$R/engine" rev-parse --path-format=absolute --git-common-dir)"; do

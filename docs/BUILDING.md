@@ -11,6 +11,7 @@ Networking needs an engine with slirp and fresh firmware tools, including `ittru
 scripts/build.sh linux-engine          # build/linux/libqemu-arm.so
 scripts/build.sh android               # build/android/engine/arm64-v8a/ + build/android/LightTouch-debug.apk
 scripts/build.sh portable-tests        # Portable/ unit tests (ctest)
+scripts/build.sh linux-usb             # build/linux/usb/usbmuxd-qemu, the desktop's USB bridge (LIGHTTOUCH_USBMUXD)
 LT_MAC=user@mac scripts/build.sh guest-package ltbench   # build/guest-package/*.itpack, build/ltbench/LTBench.ipa
 scripts/build.sh all                   # linux-engine android portable-tests (+ the Mac targets when LT_MAC is set)
 scripts/build.sh --clean android       # reconfigure from scratch (after a configure-level change)
@@ -20,8 +21,16 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | --- | --- | --- |
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
-| `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android` | the engine, `android-usb`, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android-usb` | `build/android/usb/arm64-v8a/` (`libusbmuxd_qemu.so`, `liblt_appservice.so`) | `Android/packaging/build-mobile-android.py`: the USB bridge and its libraries from pinned sources with this repository's patches, static, NDK clang |
+| `linux-usb` | `build/linux/usb/` (`usbmuxd-qemu`, its libraries in `lib/`) | `Linux/packaging/build-mobile-deps.py` in the Debian 11 image (Docker, `$LT_LINUX_IMAGE`, built from `scripts/release/linux-build.Dockerfile` if missing), as the Linux release builds it |
 | `android-test` | the Android app's unit tests (`testDebugUnitTest`) | the same inputs as `android` |
+
+The USB bridge (usbmuxd-qemu) is patched here: `build-support/patches/usbmuxd-*.patch` and
+`*/packaging/patches/usbmuxd-*.patch`, listed in each recipe script. `android-usb` and `linux-usb` build incrementally
+and start over (keeping the downloads) when the recipe changed, a patch included; the release's `linux` step uses the
+prebuilt Linux prefix only while it matches the recipe and otherwise builds `linux-usb`. The Windows bridge is still a
+prebuilt input and macOS ships LightTouchMac's usbmuxd, so neither gets a new patch.
 | `firmwarekit` | `build/firmwarekit/linux/firmwarekit` | `crates/lighttouch-firmware` (Rust; links only libc) |
 | `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same for `aarch64-linux-android` (`rustup target add aarch64-linux-android`) with NDK clang; `licenses/` from `crates/lighttouch-firmware/stage-notices.py` |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
@@ -72,10 +81,11 @@ tracked). The defaults are the development machine's paths.
 | Variable | Default | What it is, and where it came from |
 | --- | --- | --- |
 | `QEMU_IOS` | `~/git-projects/qemu-ios` | the engine source (github.com/samhenrigold/qemu-ios fork, `dev/perf`) |
-| `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `mobile-android/arm64-v8a` (the USB bridge helpers `libusbmuxd_qemu.so` and `liblt_appservice.so`, from `Android/packaging/build-mobile-android.py`); `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
+| `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `linux-desktop/dependencies/usbmuxd-source` (a clone of the bridge's repository the bridge builds clone instead of GitHub, if present) and the source archives `android-usb` finds in it; `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
 | `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
 | `LT_ANDROID_ENGINE` | unset (build it) | an `android-engine` output folder (holding `arm64-v8a/`) for `android` to package instead of building the engine |
+| `LT_ANDROID_USB` | unset (build it) | a folder holding `libusbmuxd_qemu.so` and `liblt_appservice.so` for `android` to package instead of building `android-usb` |
 | `LT_APP_ID_SUFFIX`, `LT_APP_LABEL` | none, `LightTouch` | a test APK that installs beside the regular app (e.g. `.fwkit`; its own data) and its launcher name |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |

@@ -28,8 +28,11 @@ cargo build
 LIGHTTOUCH_ENGINE=/path/to/libqemu-arm.so LIGHTTOUCH_GUEST_TOOLS=/path/to/guest-tools target/debug/lighttouch
 target/debug/lighttouch run <record id> --seconds 60 --shot frame.ppm   # headless session
 LIGHTTOUCH_FIRMWAREKIT=/path/to/firmwarekit target/debug/lighttouch prepare n72ap-7E18 [--ipsw FILE]
-LIGHTTOUCH_USBMUXD=/path/to/usbmuxd-qemu target/debug/lighttouch run <record id> --store "doodle jump"   # or --install App.ipa, --services
+LIGHTTOUCH_USBMUXD=build/linux/usb/usbmuxd-qemu target/debug/lighttouch run <record id> --store "doodle jump"   # or --install App.ipa, --services
 ```
+
+`scripts/build.sh linux-usb` builds that `usbmuxd-qemu` (the USB bridge, with the repository's patches) as the
+release does.
 
 Windows, cross-built from Linux with the posix-threads MinGW toolchain (`.cargo/config.toml` picks the linker):
 

@@ -68,7 +68,8 @@ desktop, before the upload change (2026-11-23): upload ~28 s at ~10 MB/s, unpack
   ~8 KiB of data per guest turnaround; and each AFC write of 1 MiB waited for the guest to store it before the next
   left. Neither CPU was busy (AP ~40%, bridge ~5%): pure latency.
 - **Now:** the bridge sends 32760-byte transactions (time inside the bridge's sends during an upload 22.5 → 11.9 s) (`build-support/patches/usbmuxd-qemu-large-transactions.patch`,
-  applied by the Android, Linux and Windows bridge builds; macOS ships a different usbmuxd), and the apps upload an
+  applied by the Android and Linux bridge builds; the Windows bridge is still a prebuilt input and macOS ships a
+  different usbmuxd, so both keep 16 KiB transactions), and the apps upload an
   IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`,
   `Android/native-services/lt_appservice.c`). A packet longer than the transfer iOS armed fills it and continues in
   the next, as on a real link (qemu-ios `docs/tcp-usb-protocol.md`); every install verifies the zip's CRCs. With
