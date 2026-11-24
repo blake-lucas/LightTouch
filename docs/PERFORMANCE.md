@@ -63,6 +63,21 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 | Settings › Screen scaling: Sharp uses the CPU nearest-neighbour path at the view's size; Crisp and Pixel perfect post a whole-multiple buffer drawn on the presenter thread (Smooth unchanged) | `c493d8dd`, `717da03a` | Poco, Jetpack title on an iPod touch 2G, 2–3 interleaved 20 s runs per method: **guest fps unchanged (58.7–59.4 everywhere; develop's Smooth 58.9)**. Present work per frame, median: Smooth 0.8 ms; device view (2×) Sharp 2.1, Crisp 1.7, Pixel perfect 1.7; full screen (3×) Sharp 3.6–3.9, Crisp 3.5, Pixel perfect 3.0–3.3. Full screen posts land ~8 ms later than Smooth (11 → 19–20 ms) and 0.92 of frames are shown (0.95 with Smooth); the device view adds ~2 ms. Rejected: rounding Crisp's multiple up (4× in full screen, 4.7 ms); Android keeps 1× below 2× so a Retina guest isn't drawn at 1280×1920 every frame. |
 | Cheaper presenter scaling | `3509e0db` | The Android presenter's per-pixel nearest-neighbour upscale was rewritten to copy runs per source pixel and duplicate rows. |
 
+### iPhone 5, iOS 10.3.4: BQL and main loop (engine `dev/a6-bql`, 2026-11-24)
+
+The A6 board runs four vCPU threads (two AP cores, the NAND IOP, the audio AE2) that take the BQL ~15–30K times a
+second between them, mostly for MMIO and interrupts, and wait for each other more than for the main loop. Measured
+on the Linux desktop with a prepared record booted once per session and measured rounds (open Settings → General →
+Back → Home ×3, or idle) each with an engine capture; the desktop's wall-clock waits follow the host's load (BQL wait
+2.8–12.6% of wall for the same rounds), so changes there are judged by counts (takes, holds, MMIO accesses), wall time
+on the Poco. A static screen publishes few frames, so the overlay's per-frame BQL and main-loop figures cover seconds
+each (idle Home: 2 frames in 30 s read as 178 ms BQL and 115 ms main-loop CPU "per frame").
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| The modem's firmware upload no longer CRCs each image for a discarded log line (`LT_MDM_LOG_CRC=on` for A/B) | `ad7a0fa053` | A few minutes after boot iOS uploads the baseband's images; the bitwise CRC of each ran on the main loop with the BQL held. Desktop, whole sessions: EHCI bottom-half max hold 334 ms → 8.4–10.4 ms (host-side), both AP vCPUs had waited 328 ms behind it |
+| Diagnostics: BQL waits and holds by site and vCPU, MMIO register histogram (`LT_MMIO_HIST=on`) | `83b79f35f6` | Settings round: AP cores ~7–14K BQL takes/s each; hottest registers PMGR `+0x1700` (performance-state requests, 2–3.8K reads and 0.4–0.75K writes/s), AIC acknowledge and IPI registers (~0.4–1.9K/s), I2C 0x33300000 (~1.4K/s) |
+
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
 Guest `n81ap-10B500` on the Poco F3 (`fcbench.py APK 30 n81-doodlejump`, `n81-jetpack`,
