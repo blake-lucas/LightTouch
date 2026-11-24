@@ -501,8 +501,21 @@ private fun FullPreview(source: Bitmap, method: ScreenScaling, screen: PreviewSc
             PreviewDevice(screen.skin, screen.pixels, scale, degrees, landscape, Modifier.fillMaxSize()) { at ->
                 ScaledPicture(source, method, scale, 0f, at)
             }
-            Text("Tap to leave", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp))
+            // How it's scaled, and how to leave, on a dark pill: readable over the device or the backdrop.
+            val times = if (abs(scale - scale.roundToInt()) < 0.01f) "${scale.roundToInt()}×" else "%.2f×".format(scale)
+            val status = when {
+                method == ScreenScaling.PIXEL_PERFECT -> "Pixel perfect $times" + if (fixed > scale.roundToInt()) " · ${fixed}× doesn't fit" else ""
+                real != null -> "${method.label} · real size, $times" +
+                    if (shown.width * scale > w + 0.5f || shown.height * scale > h + 0.5f) " · cropped" else ""
+                else -> "${method.label} scaling $times"
+            }
+            val rendered = "%d × %d rendered".format((shown.width * scale).roundToInt(), (shown.height * scale).roundToInt())
+            Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp, start = 16.dp, end = 16.dp).clip(RoundedCornerShape(18.dp))
+                .background(Color.Black.copy(alpha = 0.72f)).padding(horizontal = 16.dp, vertical = 8.dp).testTag("preview_full_status"),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(status, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                Text("$rendered · tap to leave", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
