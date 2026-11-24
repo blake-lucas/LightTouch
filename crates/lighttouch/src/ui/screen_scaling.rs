@@ -35,6 +35,16 @@ pub enum Screen {
 impl Screen {
     const ALL: [Screen; 4] = [Screen::Classic, Screen::Retina, Screen::Tall, Screen::Ipad];
 
+    /// The menu button's label: just the resolution, so both menus fit side by side in the narrowest preview.
+    fn short(self) -> &'static str {
+        match self {
+            Self::Classic => "320 × 480",
+            Self::Retina => "640 × 960",
+            Self::Tall => "640 × 1136",
+            Self::Ipad => "1024 × 768",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Classic => "iPhone, iPod touch · 320 × 480",
@@ -210,7 +220,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         ui.add_space(28.0);
     });
     if wide {
-        let right = Rect::from_min_max(egui::pos2(left.right() + 28.0, area.top() + 26.0), area.max - vec2(24.0, 24.0));
+        // Level with the first section's label, so the page title stands alone.
+        let right = Rect::from_min_max(egui::pos2(left.right() + 28.0, area.top() + 80.0), area.max - vec2(24.0, 24.0));
         preview(app, ui, right, draft, area);
     }
     ui.allocate_rect(area, Sense::hover());
@@ -546,22 +557,28 @@ fn drag(ui: &Ui, handle: Rect, down: bool, draft: &mut f32, ppp: f32, length: f3
     }
 }
 
-/// The preview: its choices along the top, then the picture in the rest of `rect`.
+/// The preview: one card holding its two menus and a caption along the top, and the picture in the rest of `rect`.
 fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let p = app.palette;
     let selected = Screen::for_board(app.model.current().map(|d| d.board.as_str()));
-    let mut ui = ui.new_child(egui::UiBuilder::new().id_salt("screen-scaling-preview").max_rect(rect));
+    if rect.height() < 200.0 {
+        return;
+    }
+    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())).rect_filled(
+        rect,
+        CornerRadius::same(theme::radius::CARD),
+        p.container,
+    );
+    let inner = rect.shrink(12.0);
+    let mut ui = ui.new_child(egui::UiBuilder::new().id_salt("screen-scaling-preview").max_rect(inner));
     let ui = &mut ui;
     let state = &mut app.screen_scaling;
     let mut screen = state.screen.unwrap_or(selected);
-    // One header row: which screen and which picture (the samples, or 1 cm squares), each a menu sized to its label;
-    // a narrow column wraps the picture menu under the screen's.
+    // The menus: which screen (its resolution on the button, the models in the menu) and which picture (the
+    // samples, or 1 cm squares). Short labels keep both on one row in the narrowest preview.
     let picture = if state.squares { "1 cm squares" } else { state.sample.label() };
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.label(RichText::new("Preview").font(theme::label()).color(p.primary));
-        ui.add_space(8.0);
-        let menu = widgets::chip_menu(ui, &p, screen.label());
+    ui.horizontal(|ui| {
+        let menu = widgets::chip_menu(ui, &p, screen.short());
         egui::Popup::menu(&menu).show(|ui| {
             for option in Screen::ALL {
                 if ui.selectable_label(option == screen, option.label()).clicked() {
@@ -585,16 +602,13 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     if Some(screen) != state.screen && (state.screen.is_some() || screen != selected) {
         state.screen = Some(screen);
     }
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     let caption_at = ui.cursor().min;
-    // One line of caption above the picture.
-    let area = Rect::from_min_max(caption_at + vec2(0.0, 26.0), rect.max);
-    if area.height() < 120.0 {
+    // One line of caption under the menus, then the picture.
+    let space = Rect::from_min_max(caption_at + vec2(0.0, 28.0), inner.max);
+    if space.height() < 80.0 {
         return;
     }
-    let painter = ui.painter().with_clip_rect(area.intersect(ui.clip_rect()));
-    painter.rect_filled(area, CornerRadius::same(theme::radius::CARD), p.container);
-    let space = area.shrink(12.0);
     let caption = if app.screen_scaling.squares {
         squares(app, ui, space, screen, draft)
     } else {
@@ -604,7 +618,7 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
         caption,
         FontId::new(12.5, egui::FontFamily::Proportional),
         p.on_surface_variant,
-        rect.width() - 4.0,
+        inner.width() - 4.0,
     );
     job.wrap.max_rows = 1;
     let galley = ui.painter().layout_job(job);
