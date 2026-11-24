@@ -636,7 +636,6 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let rule = panel.bottom() + 12.0;
     painter.hline(inner.x_range(), rule, Stroke::new(1.0, p.outline_variant));
     let row = rule + 10.0;
-    painter.circle_filled(egui::pos2(inner.left() + 4.0, row + 8.0), 3.5, p.primary);
     let factor = painter.layout_no_wrap(shown.factor, FontId::new(14.0, theme::medium()), p.on_surface);
     let text_left = inner.left() + 16.0;
     let text_width = (inner.right() - factor.size().x - 12.0 - text_left).max(40.0);
@@ -648,9 +647,12 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     };
     let title = line(shown.title, 14.0, p.on_surface);
     let detail = line(shown.detail, 12.0, p.on_surface_variant);
+    // The dot and the factor sit level with the middle of the two lines.
+    let middle = row + (19.0 + detail.size().y) / 2.0;
     painter.galley(egui::pos2(text_left, row), title, p.on_surface);
     painter.galley(egui::pos2(text_left, row + 19.0), detail, p.on_surface_variant);
-    painter.galley(egui::pos2(inner.right() - factor.size().x, row), factor, p.on_surface);
+    painter.circle_filled(egui::pos2(inner.left() + 4.0, middle), 3.5, p.primary);
+    painter.galley(egui::pos2(inner.right() - factor.size().x, middle - factor.size().y / 2.0), factor, p.on_surface);
 }
 
 /// The device picker: a full-width row with the device's icon, its name over its screen's resolution, and a caret.
