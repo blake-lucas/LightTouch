@@ -6,6 +6,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -69,13 +76,18 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
             // Stopped, the screen itself offers Start or Recover; the dock is for a running session. Tucked away, it
             // leaves its room to the device and waits as a tab at the right edge.
             val docked = host.active && !host.settings.dockHidden
-            AnimatedVisibility(docked, modifier = Modifier.zIndex(1f), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            // In from the right edge, where the tab waits; out after Dock has slid it off that way.
+            AnimatedVisibility(docked, modifier = Modifier.zIndex(1f), enter = expandVertically() + slideInHorizontally { it } + fadeIn(),
+                exit = shrinkVertically() + fadeOut()) {
                 Dock(host, onHide = { host.settings.dockHidden = true }) { confirmStop = true }
             }
             if (!docked) Spacer(Modifier.height(16.dp))
         }
-        if (host.active && host.settings.dockHidden) DockTab(Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(bottom = 16.dp)) { host.settings.dockHidden = false }
+        AnimatedVisibility(host.active && host.settings.dockHidden, modifier = Modifier.align(Alignment.BottomEnd).zIndex(2f)
+            .windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 16.dp),
+            enter = slideInHorizontally { it } + fadeIn(), exit = slideOutHorizontally { it } + fadeOut()) {
+            DockTab { host.settings.dockHidden = false }
+        }
         // Floats over the device under the top bar, so a message never resizes the guest screen.
         ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(start = 16.dp, end = 16.dp, top = 64.dp))
@@ -170,16 +182,26 @@ private fun Busy(label: String) {
 
 @Composable
 private fun Dock(host: GuestHost, onHide: () -> Unit, onStop: () -> Unit) {
-    // Dragged right it follows the finger, and past a third of its width it tucks away; short of that it springs back.
-    var drag by remember { mutableStateOf(0f) }
+    // Dragged right it follows the finger; let go past a third of its width (or tap its arrow) and it slides the rest
+    // of the way off before it's hidden, so it never jumps back first. Short of that it springs back.
+    val slide = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
     var width by remember { mutableStateOf(1) }
+    val tuck: () -> Unit = {
+        scope.launch {
+            slide.animateTo(width * 1.1f, tween(160))
+            onHide()
+        }
+    }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(24.dp), tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
-            .graphicsLayer { translationX = drag; alpha = 1f - (drag / width).coerceIn(0f, 0.6f) }
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).onSizeChanged { width = it.width.coerceAtLeast(1) }
+            .graphicsLayer { translationX = slide.value; alpha = 1f - (slide.value / width).coerceIn(0f, 1f) * 0.6f }
             .pointerInput(Unit) {
-                width = size.width
-                detectHorizontalDragGestures(onDragEnd = { if (drag > size.width / 3f) onHide(); drag = 0f }, onDragCancel = { drag = 0f }) { _, dx ->
-                    drag = (drag + dx).coerceAtLeast(0f)
+                detectHorizontalDragGestures(
+                    onDragEnd = { if (slide.value > width / 3f) tuck() else scope.launch { slide.animateTo(0f) } },
+                    onDragCancel = { scope.launch { slide.animateTo(0f) } }) { change, dx ->
+                    change.consume()
+                    scope.launch { slide.snapTo((slide.value + dx).coerceAtLeast(0f)) }
                 }
             }.testTag("dock")) {
         Row(Modifier.padding(start = 8.dp, end = 0.dp, top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly,
@@ -195,7 +217,7 @@ private fun Dock(host: GuestHost, onHide: () -> Unit, onStop: () -> Unit) {
             DockButton(LtIcons.Stop, if (host.status == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
                 enabled = host.sessionOwned, tint = LtColors.Danger, tag = "stop_guest")
             // Tuck the dock away (or drag it right).
-            Box(Modifier.width(32.dp).height(56.dp).clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)).clickable(onClick = onHide)
+            Box(Modifier.width(32.dp).height(56.dp).clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)).clickable(onClick = tuck)
                 .testTag("dock_hide"), contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Hide the controls", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -203,15 +225,20 @@ private fun Dock(host: GuestHost, onHide: () -> Unit, onStop: () -> Unit) {
     }
 }
 
-/** The tucked-away dock: a small tab at the right edge; a tap, or a drag left, brings the dock back. */
+/**
+ * The tucked-away dock: a small tab at the right edge; a tap, or a drag left, brings the dock back. It's kept out of
+ * the system's edge-swipe Back gesture, which would otherwise take the drag.
+ */
 @Composable
-private fun DockTab(modifier: Modifier, onShow: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp), tonalElevation = 2.dp,
-        shadowElevation = 2.dp, modifier = modifier.zIndex(2f).pointerInput(Unit) {
+private fun DockTab(onShow: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp), tonalElevation = 2.dp,
+        shadowElevation = 2.dp, modifier = Modifier.systemGestureExclusion().pointerInput(Unit) {
             var pulled = 0f
-            detectHorizontalDragGestures(onDragEnd = { if (pulled < -24f) onShow(); pulled = 0f }, onDragCancel = { pulled = 0f }) { _, dx -> pulled += dx }
+            detectHorizontalDragGestures(onDragEnd = { if (pulled < -24f) onShow(); pulled = 0f }, onDragCancel = { pulled = 0f }) { change, dx ->
+                change.consume(); pulled += dx
+            }
         }.clickable(onClick = onShow).testTag("dock_show")) {
-        Box(Modifier.size(width = 40.dp, height = 56.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(width = 44.dp, height = 64.dp), contentAlignment = Alignment.Center) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Show the controls", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
