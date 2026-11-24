@@ -278,15 +278,24 @@ jobs:
           mkdir -p "$B/mobile-android"
           cp -a "$RUNNER_TEMP/mobile-android/arm64-v8a" "$B/mobile-android/"
           ls -la "$B/mobile-android/arm64-v8a"
-      # Gradle's downloaded plugins and libraries: without this every run fetches them all from Maven Central again,
-      # which rate-limits shared runners (HTTP 429 on kotlin-reflect's POM failed run 45277541232).
-      - uses: actions/cache@v5
+      # Gradle's downloaded plugins and libraries. Maven Central rate-limits shared runners (HTTP 429 on
+      # kotlin-reflect's POM failed runs 45277541232 and 45305814460), so: restore what an earlier run fetched, fetch
+      # the rest through Google's mirror of Central (LT_MAVEN_MIRROR, read by settings.gradle.kts) with patient
+      # retries, and save the cache even when the job fails, so one good fetch is never lost.
+      - name: Restore Gradle's downloads
+        id: gradle-cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper
           key: lt-gradle-${{ hashFiles(format('release-{0}/app/Android/**/*.gradle*', env.VER), format('release-{0}/app/Android/gradle/**', env.VER)) }}
           restore-keys: lt-gradle-
+      - name: Gradle retries
+        run: |
+          mkdir -p "$HOME/.gradle"
+          printf '%s\n' 'systemProp.org.gradle.internal.repository.max.retries=8' \
+            'systemProp.org.gradle.internal.repository.initial.backoff=4000' >> "$HOME/.gradle/gradle.properties"
       - name: Signing key
         env:
           KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
@@ -308,6 +317,7 @@ jobs:
           LT_GUEST_TOOLS: ${{ github.workspace }}/ci-inputs/guest-tools
           LT_CHECK_VERSION: "false"
           LT_GRADLE_OFFLINE: "false"
+          LT_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
           LT_SOURCE_REFERENCE: https://github.com/${{ github.repository }}/tree/${{ github.sha }}
           JOBS: "4"
         run: |
@@ -318,6 +328,15 @@ jobs:
             g=release-$VER/app/build/obj/android-gradle.out
             [ -f "$g" ] && { echo "::group::android-gradle.out"; tail -200 "$g"; echo "::endgroup::"; }
             exit 1; }
+      - name: Save Gradle's downloads
+        if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
       - name: The APK is signed with that key
         run: |
           set -euo pipefail
