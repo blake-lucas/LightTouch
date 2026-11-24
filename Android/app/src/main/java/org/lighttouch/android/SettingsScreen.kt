@@ -53,11 +53,18 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).testTag("settings")) {
+                SettingsGroup("Display") {
+                    ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
+                    ActionRow(LtIcons.Layers, "Screen scaling", s.scaling.label + if (s.scaling == ScreenScaling.PIXEL_PERFECT && s.integerScale > 0) ", ${s.integerScale}×" else "",
+                        tag = "open_scaling") { scalingOpen = true }
+                }
                 SettingsGroup("Controls") {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
                     SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
                     SwitchRow(LtIcons.TouchApp, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
                     SwitchRow(LtIcons.Vibrate, "Vibration", "Vibrate this phone when the iPhone does", s.vibration, "vibration_toggle") { s.vibration = it; host.applySettings() }
+                    SwitchRow(LtIcons.Camera, "Screenshot button", "Adds Screenshot to the controls under the device. Full screen's menu always has it",
+                        s.screenshotButton, "screenshot_toggle") { s.screenshotButton = it }
                 }
                 SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
@@ -65,12 +72,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     SwitchRow(LtIcons.Mic, "Microphone", "iOS apps can record from your phone's microphone. It is only on while an app is recording. iPhone 3GS, iPhone 4, iPod touch 4G and iPad",
                         s.microphone, "microphone_toggle") { if (it) host.enableMicrophone() else { s.microphone = false; host.applySettings() } }
                 }
+                // Carrier is always shown, so Settings keeps its shape; greyed out with the reason when the device
+                // has no modem LightTouch drives.
                 SettingsGroup("Connection") {
                     ActionRow(LtIcons.Network, "Network", s.network.summary, tag = "open_network") { networkOpen = true }
-                }
-                // Always shown, so Settings keeps its shape; greyed out with the reason when the device has no modem
-                // LightTouch drives.
-                SettingsGroup("Carrier") {
                     val device = host.selected
                     if (device?.cellular == true) {
                         ActionRow(LtIcons.Signal, "Carrier", host.carrier.settings?.summary ?: "Calls, texts and the network of ${device.name}",
@@ -83,15 +88,9 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         ActionRow(LtIcons.Signal, "Carrier", reason, enabled = false, tag = "open_carrier") {}
                     }
                 }
-                SettingsGroup("Display") {
-                    ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
-                    ActionRow(LtIcons.Layers, "Screen scaling", s.scaling.label + if (s.scaling == ScreenScaling.PIXEL_PERFECT && s.integerScale > 0) ", ${s.integerScale}×" else "",
-                        tag = "open_scaling") { scalingOpen = true }
-                    SwitchRow(LtIcons.Camera, "Screenshot button", "Adds Screenshot to the controls under the device. Full screen's menu always has it",
-                        s.screenshotButton, "screenshot_toggle") { s.screenshotButton = it }
+                // Pausing, and how the emulator trades speed for fewer stalls.
+                SettingsGroup("Running") {
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
-                }
-                SettingsGroup("Performance") {
                     SwitchRow(LtIcons.Speed, "Fewer pauses when apps open", "The emulator keeps its translated code when an iOS app opens instead of clearing it, so apps open with fewer stalls. Games may run up to about 5% slower. Applies the next time the device starts",
                         s.fewerAppPauses, "fewer_app_pauses") { s.fewerAppPauses = it }
                 }
@@ -116,10 +115,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         enabled = !host.profileBusy && (host.running || host.profileRecording), tag = "profile_capture") { host.toggleProfile() }
                     ActionRow(LtIcons.File, "Export logs", "Saves LightTouch's logs as a zip to attach to a bug report. Leaves out your files and personal details.",
                         enabled = !host.logsBusy, tag = "export_logs") { host.exportLogs() }
-                    if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
-                        "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                 }
                 SettingsGroup("Device") {
+                    if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
+                        "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
                         enabled = host.selected != null && !host.active && !host.busy) { host.pickGuestTools() }
                     ActionRow(LtIcons.Download, "Prepare from an IPSW", "Choose a device and iOS version; LightTouch downloads Apple's firmware and builds it here",

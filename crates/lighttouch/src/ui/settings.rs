@@ -63,26 +63,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.fullscreen_controls);
                     },
                 );
-                widgets::setting_row(
-                    ui,
-                    &p,
-                    icons::CAMERA,
-                    "Screenshot button",
-                    "Adds Screenshot to the controls under the device. Full screen's More menu always has it",
-                    |ui| {
-                        widgets::switch(ui, &p, &mut settings.screenshot_button);
-                    },
-                );
-                widgets::setting_row(
-                    ui,
-                    &p,
-                    icons::PAUSE,
-                    "Pause when minimized",
-                    "Resumes when the window comes back",
-                    |ui| {
-                        widgets::switch(ui, &p, &mut settings.pause_when_hidden);
-                    },
-                );
             });
 
             widgets::section(ui, &p, "Controls");
@@ -118,6 +98,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.tilt);
                     },
                 );
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::CAMERA,
+                    "Screenshot button",
+                    "Adds Screenshot to the controls under the device. Full screen's More menu always has it",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.screenshot_button);
+                    },
+                );
             });
 
             widgets::section(ui, &p, "Audio");
@@ -150,8 +140,31 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 );
             });
 
-            widgets::section(ui, &p, "Performance");
+            widgets::section(ui, &p, "Connection");
+            let network = app.model.settings.network.summary();
             widgets::card(ui, &p, |ui| {
+                widgets::setting_row(ui, &p, icons::GLOBE, "Network", &network, |ui| {
+                    if widgets::tonal(ui, &p, "Open").clicked() {
+                        app.page = Page::Network;
+                    }
+                });
+                super::carrier::settings_row(app, ui);
+            });
+            let settings = &mut app.model.settings;
+
+            // Pausing and how the emulator trades speed for fewer stalls.
+            widgets::section(ui, &p, "Running");
+            widgets::card(ui, &p, |ui| {
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::PAUSE,
+                    "Pause when minimized",
+                    "Resumes when the window comes back",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.pause_when_hidden);
+                    },
+                );
                 widgets::setting_row(
                     ui,
                     &p,
@@ -164,17 +177,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 );
             });
 
-            widgets::section(ui, &p, "Connection");
-            widgets::card(ui, &p, |ui| {
-                widgets::setting_row(ui, &p, icons::GLOBE, "Network", &settings.network.summary(), |ui| {
-                    if widgets::tonal(ui, &p, "Open").clicked() {
-                        app.page = Page::Network;
-                    }
-                });
-            });
-            widgets::section(ui, &p, "Carrier");
-            widgets::card(ui, &p, |ui| super::carrier::settings_row(app, ui));
-            let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Performance overlay");
             widgets::card(ui, &p, |ui| {
