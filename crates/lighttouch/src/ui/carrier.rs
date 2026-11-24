@@ -59,7 +59,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let status = app.model.modem_status().cloned();
     let modem_error = app.model.modem_error().map(str::to_string);
     let sent = app.model.session.as_ref().map(|s| s.sent_texts.clone()).unwrap_or_default();
-    let gps = device.board == "n88ap" || status.as_ref().is_some_and(|s| s.gps);
+    let gps = device.board == "n88ap" || device.board == "n42ap" || status.as_ref().is_some_and(|s| s.gps);
     let mut edited = saved.clone();
     let mut problem: Option<String> = None;
     egui::ScrollArea::vertical().id_salt("carrier-page").auto_shrink([false, false]).show(ui, |ui| {
@@ -179,7 +179,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         &p,
                         icons::MAP_PIN,
                         "GPS position",
-                        "Where the iPhone 3GS's GPS says it is, in degrees",
+                        "Where the iPhone's GPS says it is, in degrees",
                         |ui| {
                             let typed = (form.latitude.trim().parse::<f64>(), form.longitude.trim().parse::<f64>());
                             let valid = matches!(typed, (Ok(a), Ok(o)) if a.abs() <= 90.0 && o.abs() <= 180.0);
