@@ -321,7 +321,7 @@ pub fn place_for(
 }
 
 /// The multiple Pixel perfect shows: the largest the whole device fits around (with the device drawn), else the
-/// largest the screen alone fits (the device left out), else 1x (the screen cropped). A `fixed` multiple is a cap on
+/// largest the screen alone fits (the device cropped around it), else 1x (the screen cropped). A `fixed` multiple is a cap on
 /// that, so a window made smaller steps down a whole multiple at a time and back up as it grows.
 pub fn whole_multiple(
     skin: &Skin,
@@ -357,11 +357,8 @@ fn place_whole(
     ppp: f32,
 ) -> Placed {
     let k = whole_multiple(skin, space, rotation, frame, fixed, pixels, ppp);
+    // A device that doesn't fit around the screen at this multiple is cropped with it, as at real size.
     let mut placed = place(skin, space, rotation, frame, Some(mm_scale(skin, k, pixels, ppp)));
-    // A device that doesn't fit around the screen at this multiple isn't drawn cut off: the screen shows alone.
-    if placed.device.is_some_and(|d| d.body.width() > space.width() + 0.5 || d.body.height() > space.height() + 0.5) {
-        placed.device = None;
-    }
     // The screen exactly k x its pixels (the drawn mm are a hair off the panel's pixel aspect), starting on a
     // physical pixel, and the device moved with it.
     let [w, h] = if rotation.landscape() { [pixels[1], pixels[0]] } else { pixels };
