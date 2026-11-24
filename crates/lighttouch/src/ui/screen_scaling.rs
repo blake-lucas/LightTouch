@@ -82,6 +82,14 @@ pub enum Sample {
 }
 
 impl Sample {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PixelArt => "Pixel art",
+            Self::Game => "3D game",
+            Self::Home => "Home screen",
+        }
+    }
+
     fn png(self, screen: Screen) -> &'static [u8] {
         macro_rules! art {
             ($name:literal) => {
@@ -546,9 +554,11 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     let ui = &mut ui;
     let state = &mut app.screen_scaling;
     let mut screen = state.screen.unwrap_or(selected);
-    // The screen menu sizes to its label; the view toggle and the samples wrap onto as many rows as the column
-    // needs, so nothing is drawn over anything at any width.
-    ui.horizontal(|ui| {
+    // One header row: which screen and which picture (the samples, or 1 cm squares), each a menu sized to its label;
+    // a narrow column wraps the picture menu under the screen's.
+    let picture = if state.squares { "1 cm squares" } else { state.sample.label() };
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
         ui.label(RichText::new("Preview").font(theme::label()).color(p.primary));
         ui.add_space(8.0);
         let menu = widgets::chip_menu(ui, &p, screen.label());
@@ -559,37 +569,26 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
                 }
             }
         });
+        let menu = widgets::chip_menu(ui, &p, picture);
+        egui::Popup::menu(&menu).show(|ui| {
+            for sample in [Sample::PixelArt, Sample::Game, Sample::Home] {
+                if ui.selectable_label(!state.squares && state.sample == sample, sample.label()).clicked() {
+                    state.sample = sample;
+                    state.squares = false;
+                }
+            }
+            if ui.selectable_label(state.squares, "1 cm squares").clicked() {
+                state.squares = true;
+            }
+        });
     });
     if Some(screen) != state.screen && (state.screen.is_some() || screen != selected) {
         state.screen = Some(screen);
     }
-    ui.add_space(6.0);
-    // The toggle and the samples on one row when there's room (about 530 points), else the samples under it.
-    let one_row = ui.available_width() >= 540.0;
-    let chips = |ui: &mut Ui, state: &mut ScreenScalingState| {
-        for (sample, label) in
-            [(Sample::PixelArt, "Pixel art"), (Sample::Game, "3D game"), (Sample::Home, "Home screen")]
-        {
-            if widgets::chip(ui, &p, state.sample == sample, label).clicked() {
-                state.sample = sample;
-            }
-        }
-    };
-    ui.horizontal(|ui| {
-        widgets::segmented(ui, &p, &mut state.squares, &[(false, "Samples"), (true, "1 cm squares")]);
-        if one_row && !state.squares {
-            ui.add_space(12.0);
-            chips(ui, state);
-        }
-    });
-    if !one_row && !state.squares {
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| chips(ui, state));
-    }
-    ui.add_space(6.0);
+    ui.add_space(4.0);
     let caption_at = ui.cursor().min;
-    // Up to two lines of caption above the picture.
-    let area = Rect::from_min_max(caption_at + vec2(0.0, 40.0), rect.max);
+    // One line of caption above the picture.
+    let area = Rect::from_min_max(caption_at + vec2(0.0, 26.0), rect.max);
     if area.height() < 120.0 {
         return;
     }
@@ -607,9 +606,9 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
         p.on_surface_variant,
         rect.width() - 4.0,
     );
-    job.wrap.max_rows = 2;
+    job.wrap.max_rows = 1;
     let galley = ui.painter().layout_job(job);
-    ui.painter().galley(caption_at + vec2(2.0, 20.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
+    ui.painter().galley(caption_at + vec2(2.0, 12.0 - galley.size().y / 2.0), galley, p.on_surface_variant);
 }
 
 /// "2×", "2.37×".
@@ -642,42 +641,43 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     let fit = (space.width() * ppp / pixels[0] as f32).min(space.height() * ppp / pixels[1] as f32);
     let (scale, caption) = if settings.scaling == Scaling::PixelPerfect {
         let k = view_scale.round().max(1.0);
-        let here = (1..=12).rev().map(|k| k as f32).find(|&k| fits(k)).unwrap_or(1.0);
+        let here = (1..=12).rev().map(|k| k as f32).find(|&k| fits(k));
+        let cropped = here.is_none();
+        let here = here.unwrap_or(1.0);
         let shown = k.min(here);
         let fixed = settings.integer_scale as f32;
-        let capped = if fixed > k {
-            format!("{} doesn't fit the device view, so it uses {}. ", times(fixed), times(k))
+        let what = if fixed > k {
+            format!("{} doesn't fit, so {}", times(fixed), times(k))
         } else {
-            String::new()
+            format!("Pixel perfect {}", times(k))
         };
-        let note = if shown < k {
-            format!("{} doesn't fit here; showing {}", times(k), times(shown))
-        } else {
-            format!("Scaled {} — each original pixel is {k}×{k} screen pixels", times(k))
+        let detail = match (shown < k, cropped) {
+            (_, true) => format!("showing {} here, cropped", times(shown)),
+            (true, false) => format!("showing {} here", times(shown)),
+            (false, false) => format!("each pixel {k}×{k}"),
         };
         // A multiple counts physical pixels: at 200% display scaling, 1x looks half the size of other windows' 1x.
         let hidpi = if ppp > 1.01 {
-            format!(". At {:.0}% display scaling, 1× looks smaller", ppp * 100.0)
+            format!(" · physical pixels, so smaller at {:.0}% scaling", ppp * 100.0)
         } else {
             String::new()
         };
-        (shown, format!("Device view: {capped}{note}{hidpi}"))
+        (shown, format!("Device view · {what} · {detail}{hidpi}"))
     } else {
         let scale = if fits(view_scale) { view_scale } else { fit };
-        let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], scale);
+        let k = scaling::prescale_factor(Scaling::Crisp, [1, 1], view_scale);
         let what = match settings.scaling {
-            Scaling::Sharp if (scale - scale.round()).abs() < 0.01 => {
-                format!("Stretched {} — every pixel the same width", times(scale))
+            Scaling::Sharp if (view_scale - view_scale.round()).abs() < 0.01 => {
+                format!("Stretched {} · even pixels", times(view_scale))
             }
-            Scaling::Sharp => format!("Stretched {} — pixels vary in width", times(scale)),
-            Scaling::Crisp if (scale - k as f32).abs() < 0.01 => format!("{k}× crisp"),
-            Scaling::Crisp => format!("{k}× crisp, then smoothed to {}", times(scale)),
-            _ => format!("Smoothed to {} — soft edges", times(scale)),
+            Scaling::Sharp => format!("Stretched {} · pixels vary in width", times(view_scale)),
+            Scaling::Crisp if (view_scale - k as f32).abs() < 0.01 => format!("{k}× crisp"),
+            Scaling::Crisp => format!("{k}× crisp · smoothed to {}", times(view_scale)),
+            _ => format!("Smoothed {} · soft edges", times(view_scale)),
         };
         let real = device_frame::real_scale(&skin, &settings, &ctx).is_some();
-        let shrunk =
-            if fits(view_scale) { String::new() } else { format!(" (the device view shows {})", times(view_scale)) };
-        (scale, format!("Device view: {}{what}{shrunk}", if real { "Real size: " } else { "" }))
+        let shrunk = if fits(view_scale) { "" } else { " · smaller here" };
+        (scale, format!("Device view · {}{what}{shrunk}", if real { "Real size · " } else { "" }))
     };
     // Centred on whole physical pixels.
     let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
@@ -737,7 +737,7 @@ fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) 
         crop_note(ui, space, "Cropped to fit here");
     }
     let size = format!("Screen {:.1} × {:.1} cm", skin.screen_width / 10.0, skin.screen_height / 10.0);
-    format!("{size} at real size. {}", fullscreen_fit(&skin, monitor_pixels(&ctx), draft))
+    format!("1 cm squares · {size} at real size · {}", fullscreen_fit(&skin, monitor_pixels(&ctx), draft))
 }
 
 /// A note along the bottom of the preview: why part of the picture is missing.
@@ -752,14 +752,14 @@ fn crop_note(ui: &Ui, space: Rect, note: &str) {
 
 /// Whether full screen shows the whole screen at real size on this display.
 fn fullscreen_fit(skin: &Skin, monitor: Option<[u32; 2]>, px_per_mm: f32) -> &'static str {
-    let Some([w, h]) = monitor else { return "Full screen shows as much of it as fits" };
+    let Some([w, h]) = monitor else { return "full screen shows as much of it as fits" };
     let (mw, mh) = (w as f32 / px_per_mm, h as f32 / px_per_mm);
     let (sw, sh) = (skin.screen_width, skin.screen_height);
     if sw <= mw && sh <= mh {
-        "Full screen shows all of it"
+        "full screen shows all of it"
     } else if sh <= mw && sw <= mh {
-        "Full screen shows all of it turned to landscape"
+        "full screen shows all of it turned to landscape"
     } else {
-        "This display is smaller, so part of it is always cropped"
+        "this display is smaller, so part of it is always cropped"
     }
 }

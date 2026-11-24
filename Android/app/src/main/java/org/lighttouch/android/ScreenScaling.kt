@@ -137,19 +137,35 @@ internal fun fullscreenFit(skin: DeviceSkin, pixels: IntSize, width: Float, heig
 }
 
 /** The screens the preview can show. */
-private enum class PreviewScreen(val label: String, val pixels: IntSize, val skin: DeviceSkin, val ipad: Boolean = false) {
-    CLASSIC("iPhone, iPod touch · 320 × 480", IntSize(320, 480), DeviceSkin.ipodTouch2),
-    RETINA("Retina · 640 × 960", IntSize(640, 960), DeviceSkin.ipodTouch4),
-    TALL("iPhone 5 · 640 × 1136", IntSize(640, 1136), DeviceSkin.iphone5),
-    IPAD("iPad · 1024 × 768", IntSize(768, 1024), DeviceSkin.ipad, ipad = true);
+private enum class PreviewScreen(val label: String, val short: String, val pixels: IntSize, val skin: DeviceSkin, val ipad: Boolean = false) {
+    CLASSIC("iPhone, iPod touch · 320 × 480", "320 × 480", IntSize(320, 480), DeviceSkin.ipodTouch2),
+    RETINA("Retina · 640 × 960", "Retina", IntSize(640, 960), DeviceSkin.ipodTouch4),
+    TALL("iPhone 5 · 640 × 1136", "iPhone 5", IntSize(640, 1136), DeviceSkin.iphone5),
+    IPAD("iPad · 1024 × 768", "iPad", IntSize(768, 1024), DeviceSkin.ipad, ipad = true);
 
     companion object {
         fun forBoard(board: String?) = screenPixels(board).let { p -> entries.first { it.pixels == p } }
     }
 }
 
-/** The preview's sample pictures (art/preview/scaling, drawn by tools/scaling-samples/make.py). */
-private enum class PreviewSample(val label: String, val file: String) { PIXEL_ART("Pixel art", "pixel"), GAME("3D game", "game"), HOME("Home screen", "home") }
+/** The preview's pictures: samples (art/preview/scaling, drawn by tools/scaling-samples/make.py), or 1 cm squares. */
+private enum class PreviewPicture(val label: String, val file: String?) {
+    PIXEL_ART("Pixel art", "pixel"), GAME("3D game", "game"), HOME("Home screen", "home"), SQUARES("1 cm squares", null)
+}
+
+/** A compact choice for the preview's header: its value as a chip, the choices in a menu. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun <T> MenuChip(value: String, options: List<T>, label: (T) -> String, tag: String, onPick: (T) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        AssistChip(onClick = { open = true }, label = { Text(value, maxLines = 1) }, trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+            modifier = Modifier.testTag(tag))
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for (option in options) DropdownMenuItem(text = { Text(label(option)) }, onClick = { onPick(option); open = false })
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -198,6 +214,19 @@ private fun Methods(host: GuestHost, compact: Boolean = false) {
                     shape = SegmentedButtonDefaults.itemShape(i, ScreenScaling.entries.size), icon = {},
                     modifier = Modifier.testTag("scaling_" + method.name.lowercase()),
                     label = { Text(method.label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp)) })
+            }
+        }
+        // Real size beside the methods, so the preview can compare it; Pixel perfect sets its own size, so its
+        // multiples take this row instead.
+        if (s.scaling != ScreenScaling.PIXEL_PERFECT) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Real size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp, end = 12.dp))
+            SingleChoiceSegmentedButtonRow(Modifier.weight(1f).testTag("real_size_row")) {
+                RealSize.entries.forEachIndexed { i, option ->
+                    SegmentedButton(selected = s.realSize == option, onClick = { s.realSize = option },
+                        shape = SegmentedButtonDefaults.itemShape(i, RealSize.entries.size), icon = {},
+                        label = { Text(option.label, maxLines = 1, style = MaterialTheme.typography.labelSmall) })
+                }
             }
         }
     }
@@ -281,13 +310,13 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     val context = LocalContext.current
     val s = host.settings
     var screen by rememberSaveable { mutableStateOf(PreviewScreen.forBoard(host.selected?.board)) }
-    var sample by rememberSaveable { mutableStateOf(PreviewSample.PIXEL_ART) }
-    var squares by rememberSaveable { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
+    var picture by rememberSaveable { mutableStateOf(PreviewPicture.PIXEL_ART) }
+    val squares = picture == PreviewPicture.SQUARES
     val method = s.scaling
-    val source = remember(screen, sample) {
+    val source = remember(screen, picture) {
+        val file = picture.file ?: PreviewPicture.PIXEL_ART.file
         try {
-            context.assets.open("scaling/${sample.file}-${screen.pixels.width}x${screen.pixels.height}.png").use { BitmapFactory.decodeStream(it) }
+            context.assets.open("scaling/$file-${screen.pixels.width}x${screen.pixels.height}.png").use { BitmapFactory.decodeStream(it) }
         } catch (_: Exception) { Bitmap.createBitmap(screen.pixels.width, screen.pixels.height, Bitmap.Config.ARGB_8888) }
     }
     // The device view's room: as last laid out, else the window less the device page's bars.
@@ -304,34 +333,20 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     // How many physical pixels the device view gives each of the screen's pixels.
     val viewScale = if (view.whole > 0) view.whole.toFloat() else view.scale * density * screen.skin.screenWidth / screen.pixels.width
     Column(modifier) {
-        Box {
-            AssistChip(onClick = { menu = true }, label = { Text(screen.label) }, trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
-                modifier = Modifier.testTag("preview_screen"))
-            DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                for (option in PreviewScreen.entries) DropdownMenuItem(text = { Text(option.label) }, onClick = { screen = option; menu = false })
-            }
-        }
-        val views = listOf(false to "Samples", true to "1 cm squares")
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().testTag("preview_view")) {
-            views.forEachIndexed { i, (value, label) ->
-                SegmentedButton(selected = squares == value, onClick = { squares = value }, shape = SegmentedButtonDefaults.itemShape(i, views.size),
-                    icon = {}, label = { Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium) })
-            }
-        }
-        // Wraps on a narrow phone rather than running off the edge.
-        if (!squares) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (option in PreviewSample.entries)
-                FilterChip(sample == option, onClick = { sample = option }, label = { Text(option.label, maxLines = 1) })
+        // One row of choices (which screen, which picture) and one line saying what's shown: the picture gets the rest.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MenuChip(screen.short, PreviewScreen.entries, { it.label }, "preview_screen") { screen = it }
+            MenuChip(picture.label, PreviewPicture.entries, { it.label }, "preview_picture_choice") { picture = it }
         }
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-            val box = with(LocalDensity.current) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx() - 56.dp.roundToPx()) }
+            val box = with(LocalDensity.current) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx() - 28.dp.roundToPx()) }
             val (scale, caption) = if (squares) {
                 s.pxPerMm * screen.skin.screenWidth / screen.pixels.width to
-                    "Squares are 1 cm at %.0f pixels per inch (%s)".format(s.pxPerMm * 25.4f, if (s.displayPxPerMm > 0f) "measured" else "as the system reports")
+                    "1 cm squares · %.0f pixels per inch, %s".format(s.pxPerMm * 25.4f, if (s.displayPxPerMm > 0f) "measured" else "as the system reports")
             } else previewScale(method, screen.pixels, viewScale, view, s.integerScale, box)
             Column {
-                Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
-                    modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 6.dp).heightIn(min = 32.dp).testTag("preview_caption"))
+                Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp).height(22.dp).testTag("preview_caption"))
                 Box(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Color(0xFF0E0F12)).testTag("preview_picture")) {
                     if (squares) Squares(screen, s.pxPerMm, Modifier.fillMaxSize())
                     else ScaledPicture(source, method, scale, Modifier.fillMaxSize())
@@ -341,29 +356,35 @@ private fun ScalingPreview(host: GuestHost, modifier: Modifier) {
     }
 }
 
-/** The scale the preview draws a sample at in a [box] of physical pixels, and the caption saying what it shows. */
+/**
+ * The scale the preview draws a sample at in a [box] of physical pixels, and its one-line caption: what the device
+ * view does ("Device view · Real size · Smoothed 2.59× · soft edges").
+ */
 private fun previewScale(method: ScreenScaling, pixels: IntSize, viewScale: Float, view: DeviceViewFit, fixed: Int, box: IntSize): Pair<Float, String> {
     fun times(x: Float) = if (abs(x - x.roundToInt()) < 0.01f) "${x.roundToInt()}×" else "%.2f×".format(x)
     if (method == ScreenScaling.PIXEL_PERFECT) {
         val k = view.whole
         val here = largestMultiple(pixels, box.width.toFloat(), box.height.toFloat()).coerceAtLeast(1)
         val shown = min(k, here)
-        val capped = if (fixed > k) "$fixed× doesn't fit the device view, so it uses $k×. " else ""
-        val note = if (shown < k) "$k× doesn't fit here; showing $shown×" else "Scaled $k× — each original pixel is $k×$k screen pixels"
-        return shown.toFloat() to "Device view: " + capped + note
+        val what = when {
+            fixed > k -> "$fixed× doesn't fit, so $k×"
+            else -> "Pixel perfect $k×"
+        }
+        val detail = if (shown < k) "showing $shown× here" else "each pixel $k×$k"
+        return shown.toFloat() to "Device view · $what · $detail"
     }
     val fits = pixels.width * viewScale <= box.width + 0.5f && pixels.height * viewScale <= box.height + 0.5f
     val scale = if (fits) viewScale else min(box.width.toFloat() / pixels.width, box.height.toFloat() / pixels.height)
-    val k = crispMultiple(scale)
-    val real = if (view.real) "Real size: " else if (view.realTooLarge) "Too large for real size, so fitted: " else ""
+    val k = crispMultiple(viewScale)
+    val real = if (view.real) "Real size · " else if (view.realTooLarge) "Too large for real size · " else ""
     val what = when (method) {
-        ScreenScaling.SHARP -> if (abs(scale - scale.roundToInt()) < 0.01f) "Stretched ${times(scale)} — every pixel the same width"
-            else "Stretched ${times(scale)} — pixels vary in width"
-        ScreenScaling.CRISP -> if (k == 1) "Smoothed ${times(scale)} — below 2×, Crisp is Smooth" else "$k× crisp, then smoothed to ${times(scale)}"
-        else -> "Smoothed to ${times(scale)} — soft edges"
+        ScreenScaling.SHARP -> if (abs(viewScale - viewScale.roundToInt()) < 0.01f) "Stretched ${times(viewScale)} · even pixels"
+            else "Stretched ${times(viewScale)} · pixels vary in width"
+        ScreenScaling.CRISP -> if (k == 1) "Crisp is Smooth below 2× · ${times(viewScale)}" else "$k× crisp · smoothed to ${times(viewScale)}"
+        else -> "Smoothed ${times(viewScale)} · soft edges"
     }
-    val shrunk = if (fits) "" else " (the device view shows ${times(viewScale)})"
-    return scale to "Device view: " + real + what + shrunk
+    val shrunk = if (fits) "" else " · smaller here"
+    return scale to "Device view · $real$what$shrunk"
 }
 
 /** [source] drawn at [scale] by [method], centred in the box on whole physical pixels. */
