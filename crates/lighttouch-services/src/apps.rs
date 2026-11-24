@@ -368,10 +368,12 @@ impl Guest {
                     abort_ref.store(true, Ordering::Relaxed);
                 }
             }
+            // The first real failure, not the "Cancelled." the other sessions stop with once one fails.
             let mut result = Ok(());
             for w in workers {
                 let r = w.join().unwrap_or_else(|_| Err(Error("upload thread panicked".into())));
-                if result.is_ok() {
+                let stopped = |r: &Result<()>| matches!(r, Err(e) if e.0 == "Cancelled.");
+                if result.is_ok() || (stopped(&result) && r.is_err() && !stopped(&r)) {
                     result = r;
                 }
             }

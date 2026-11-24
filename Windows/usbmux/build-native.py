@@ -93,7 +93,10 @@ def main():
     for name in pins['daemon']['preimage_sha256']:
         shutil.copyfile(args.daemon_source / name, daemon / name)
     patch(daemon, 'windows-host.patch')
-    patch(daemon, '../../build-support/patches/usbmuxd-qemu-large-transactions.patch')
+    for name, digest in pins['daemon'].get('shared_patches_sha256', {}).items():   # also applied by Linux and Android
+        if hashlib.sha256((HERE / '../..' / name).read_bytes()).hexdigest() != digest:
+            raise SystemExit(f'{name} differs from its SOURCES.json pin')
+        patch(daemon, Path('../..') / name)
     objects = output / 'objects'
     objects.mkdir()
     common = [CC, '-std=gnu11', '-O2', '-Wall',

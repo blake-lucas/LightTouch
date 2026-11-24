@@ -386,6 +386,18 @@ static lockdownd_service_descriptor_t start_service(struct session *s, const cha
 	return NULL;
 }
 
+/* One quiet attempt, for optional extra connections: a failure is no error for the user. */
+static lockdownd_service_descriptor_t start_service_quiet(struct session *s, const char *name)
+{
+	lockdownd_service_descriptor_t service = NULL;
+	if (!s->lockdown || lockdownd_start_service(s->lockdown, name, &service) != LOCKDOWN_E_SUCCESS || !service) {
+		if (service)
+			lockdownd_service_descriptor_free(service);
+		return NULL;
+	}
+	return service;
+}
+
 static instproxy_client_t instproxy_open(struct session *s)
 {
 	lockdownd_service_descriptor_t service = start_service(s, INSTPROXY_SERVICE_NAME);
@@ -1033,7 +1045,7 @@ static int action_install(struct session *s, const char *ipa, const char *bundle
 		parts[0].handle = handle;
 		int n = 1;
 		while (n < want) {
-			lockdownd_service_descriptor_t extra_service = start_service(s, AFC_SERVICE_NAME);
+			lockdownd_service_descriptor_t extra_service = start_service_quiet(s, AFC_SERVICE_NAME);
 			if (!extra_service)
 				break;
 			afc_client_t extra = NULL;

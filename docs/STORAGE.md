@@ -61,12 +61,13 @@ desktop, before the upload change (2026-11-23): upload ~28 s at ~10 MB/s, unpack
   plus the ~290 MB the staged IPA took.
 - **Upload: the USB link was the cap.** The engine's USB transport is strictly request/response: the host bridge
   (`usbmuxd-qemu`) sends one transaction, the emulated OTG controller delivers it into the transfer the guest armed
-  and answers; until iOS re-arms the endpoint every transaction is NAKed. iOS arms 16–32 KiB OUT transfers (all
-  multiples of 512: measured with `LT_USB_STATS=1` on 3.1.3, 4.2.1, 5.1.1, 6.1.x and 10.3.4) and takes ~300–600 µs
-  per turnaround. The bridge sent at most 16 KiB per transaction, plus a zero-length packet after every full one, so
+  and answers; until iOS re-arms the endpoint every transaction is NAKed. iOS arms 16–32 KiB OUT transfers while
+  the host sends 16 KiB packets (`LT_USB_STATS=1` on 3.1.3, 4.2.1, 5.1.1, 6.1.x), 4–32 KiB once it sends 32760-byte
+  ones, always 32 KiB on iOS 10.3.4, and every armed size checked was a 512 multiple (4.2.1, iPad 5.1.1, 10.3.4); it
+  takes ~300–600 µs per turnaround. The bridge sent at most 16 KiB per transaction, plus a zero-length packet after every full one, so
   ~8 KiB of data per guest turnaround; and each AFC write of 1 MiB waited for the guest to store it before the next
   left. Neither CPU was busy (AP ~40%, bridge ~5%): pure latency.
-- **Now:** the bridge sends 32760-byte transactions (`build-support/patches/usbmuxd-qemu-large-transactions.patch`,
+- **Now:** the bridge sends 32760-byte transactions (time inside the bridge's sends during an upload 22.5 → 11.9 s) (`build-support/patches/usbmuxd-qemu-large-transactions.patch`,
   applied by the Android, Linux and Windows bridge builds; macOS ships a different usbmuxd), and the apps upload an
   IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`,
   `Android/native-services/lt_appservice.c`). A packet longer than the transfer iOS armed fills it and continues in
@@ -89,7 +90,8 @@ reaches the host as a flush (NAND has none: iOS's `F_FULLFSYNC` becomes ordinary
 pending; every 2 s, if it is, the thread `fdatasync`s the overlay file with no lock held (not `syncfs`, which on
 Android's f2fs is a whole-filesystem checkpoint, ~8.6 ms on the Poco). `fdatasync` covers every dirty page of the
 file, so a program is on disk within ~2 s plus the sync's own time (≤0.3 s measured, while flushing ~100 MB). Without
-it, the host's writeback decides: Linux flushes pages older than 30 s. `LT_NAND_SYNC=off` turns it off,
+it, the host's own writeback decides when (Linux's default expiry is 30 s; in the simulation below it had already
+flushed within ~18 s). `LT_NAND_SYNC=off` turns it off,
 `LT_NAND_SYNC_MS` sets the interval, `LT_NAND_SYNC_LOG=1` logs each sync. 2 s: the "few seconds" asked for, ≤0.5
 syncs a second, and no measurable cost at that rate (Results). It bounds the loss; it does not make the overlay
 crash-consistent (the overlay is opened without flushes, so qcow2's metadata ordering isn't enforced on disk between
