@@ -2,12 +2,9 @@ name: LT Bench
 
 # Builds LTBench.ipa (tools/guestbench, docs/GUEST-BENCHMARKS.md) on a GitHub macOS runner, so the guest
 # benchmark doesn't need the development Mac: the full app and an fs-only variant (storage tests, 3 rounds).
+# Manual only (Actions > LT Bench > Run workflow): macOS runner minutes are too dear to spend on every push.
 
 on:
-  push:
-    paths:
-      - .github/workflows/ltbench.yml
-      - tools/guestbench/**
   workflow_dispatch:
 
 permissions:
