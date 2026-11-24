@@ -504,8 +504,9 @@ the IOP's cache-control registers without the BQL (no change).
 ### Storage writes (2026-11-23)
 
 Reports said every device writes at only 1–2 MB/s, in bursts. Where each number below comes from:
-**in-guest** = LT Bench inside iOS (`tools/bench/ltbio.py`, desktop headless; best of 3); **host** = the
-engine's own counters of NAND page programs, which are also what the performance overlay's "write" line shows.
+**in-guest** = LT Bench inside iOS (`tools/bench/ltbio.py`, desktop headless; best of 3); **host counters** = the
+engine's own counts of NAND page programs, which are also what the performance overlay's "write" line shows. The
+desktop is a shared VM: the same test varied up to ~2× between runs, so its rows give the range seen.
 
 **What the overlay shows.** Its write figure is the bytes of NAND pages the engine programmed (page plus spare)
 over the last second, refreshed four times a second, with "busy" the share of wall time the host spent on them.
@@ -515,12 +516,12 @@ in bursts (host busy 1–5%) while it boots and starts Infinity Blade, and 20–
 **How a device's NAND is stored** decides the write path. Devices prepared since v0.0.12 hold it in a qcow2
 container; older ones keep the format they were prepared with (nothing converts them).
 
-| Format | Boards, made by | Page program on the host | In-guest `fs-write-big`, desktop |
+| Format | Boards, seen in | Page program on the host | In-guest `fs-write-big`, desktop |
 | --- | --- | --- | --- |
-| qcow2 container: system image + the device's overlay | every board, v0.0.12 on | a `pwrite` into the overlay (the first one in a 64 KiB cluster goes through qcow2); synced to disk when iOS stops | 2G 3.1.3 150 MB/s, 4G 42–48, 3GS 48 |
-| Packed base + one file per written page | iPod touch 2G, v0.0.11 and earlier | write a temporary file, `fsync` it, rename it over `N.page` | 2G 3.1.3 6–8 MB/s |
-| Chip files written in place | iPod touch 2G, early desktop | a block-layer write (a thread-pool round trip), no sync until stop | 2G 4.2.1 30–42 MB/s |
-| Chip files + ownership map | A4 boards, v0.0.11 and earlier | `pwrite`; the map is a shared mapping | 3GS 52–57 MB/s (`fs-fullfsync-4k` 5.0 ms, `fs-create` 5.6 ms) |
+| qcow2 container: system image + the device's overlay | every board, v0.0.12 on (from git) | a `pwrite` into the overlay (the first one in a 64 KiB cluster goes through qcow2); synced to disk when iOS stops | 2G 3.1.3 150 MB/s, 4G 42–57, 3GS 48 |
+| Packed base + one file per written page | iPod touch 2G records prepared before v0.0.12 | write a temporary file, `fsync` it, rename it over `N.page` | 2G 3.1.3 6–8 MB/s |
+| Chip files written in place | an early desktop iPod touch 2G record | a block-layer write (a thread-pool round trip), no sync until stop | 2G 4.2.1 30–42 MB/s |
+| Chip files + ownership map | A4 records prepared before v0.0.12 | `pwrite`; the map is a shared mapping | 3GS 52–57 MB/s (`fs-fullfsync-4k` 5.0 ms, `fs-create` 5.6 ms) |
 
 Importing an exported device keeps its format; nothing converts an old device to a container.
 
@@ -529,13 +530,13 @@ they time the flash path, not iOS's cache. Per-operation rows convert to MB/s of
 
 | Test | iPod touch 2G 3.1.3, container | iPod touch 2G 3.1.3, page files | iPod touch 4G 6.1.6, container | iPhone 3GS 5.1.1, container |
 | --- | --- | --- | --- | --- |
-| `fs-write` (64 KiB writes, 8 MiB, `fsync`) | 18 µs/KiB (57 MB/s) | 158–195 µs/KiB (5–6 MB/s) | 39–40 µs/KiB (26 MB/s) | 37 µs/KiB (28 MB/s) |
-| `fs-write-big` (256 KiB writes, 16 MiB, `fsync`) | 6.8 µs/KiB (150 MB/s) | 133–162 µs/KiB (6–8 MB/s) | 22–24 µs/KiB (42–48 MB/s) | 21 µs/KiB (48 MB/s) |
+| `fs-write` (64 KiB writes, 8 MiB, `fsync`) | 18 µs/KiB (57 MB/s) | 158–195 µs/KiB (5–6 MB/s) | 25–40 µs/KiB (26–41 MB/s) | 37 µs/KiB (28 MB/s) |
+| `fs-write-big` (256 KiB writes, 16 MiB, `fsync`) | 6.8 µs/KiB (150 MB/s) | 133–162 µs/KiB (6–8 MB/s) | 18–24 µs/KiB (42–57 MB/s) | 21 µs/KiB (48 MB/s) |
 | `fs-write-cached` (through iOS's cache, `fsync`) | 5.9 µs/KiB | 111–158 µs/KiB | 16 µs/KiB | 14 µs/KiB |
 | `fs-rand-4k` (scattered 4 KiB, one `fsync`) | 136 µs (30 MB/s) | 568–822 µs (5–7 MB/s) | 305–398 µs (10–13 MB/s) | 305 µs (13 MB/s) |
 | `fs-fsync-4k` (4 KiB + `fsync`) | 450 µs | 1.5–2.0 ms | 487–575 µs | 423 µs |
-| `fs-fullfsync-4k` (4 KiB + `F_FULLFSYNC`) | 531 µs | 1.7–2.0 ms | 4.2–4.8 ms (~1 MB/s) | 2.8 ms (~1.4 MB/s) |
-| `fs-create` (new 16 KiB file) | 787 µs | 3.2–5.6 ms | 3.2–4.0 ms (~4–5 MB/s) | 3.2 ms (~5 MB/s) |
+| `fs-fullfsync-4k` (4 KiB + `F_FULLFSYNC`) | 531 µs | 1.7–2.0 ms | 2.7–4.8 ms (0.9–1.5 MB/s) | 2.8 ms (~1.4 MB/s) |
+| `fs-create` (new 16 KiB file) | 787 µs | 3.2–5.6 ms | 1.9–4.0 ms (4–9 MB/s) | 3.2 ms (~5 MB/s) |
 
 **In-guest results, Poco F3** (same tests, best of 3 rounds in one pass, phone at ~29–31 °C on the charger):
 
@@ -566,10 +567,11 @@ HFS+ and the flash driver per request), not by the host's storage, which is busy
   (`perf` with QEMU's `QEMU_PERFMAP_DIR` naming translated code by guest address): 72% translated guest code, 99% of
   that iOS's kernel, flat across XNU and the storage kexts; 6% `tb_jmp_cache_clear_page` (iOS's per-page TLB
   invalidations). So a small synchronous write costs mostly guest kernel work, as reads did (above).
-- **App installs (4G, host counters):** the upload ran at ~9.5 MB/s with the AP about half idle (waiting on the USB
+- **App installs (desktop 4G; IPA and unpacked sizes over the install's progress times):** the upload ran at ~9.5 MB/s with the AP about half idle (waiting on the USB
   link), the unpack at ~6.3 MB/s with the AP 50–90% busy (unzip and file creation in iOS).
 - **Old iPod touch 2G devices (page files) are bound by the host's `fsync`:** the vCPU is only ~40% busy, and every
-  4 KiB page costs a new file, an `fsync` and a rename (~0.4–0.6 ms on this desktop's disk). A guest write program
+  4 KiB page costs a new file, an `fsync` and a rename (~0.4–0.6 ms on this desktop's disk, timed with a standalone
+  test program on the host filesystem). A guest write program
   carries 5–8 pages for long writes and 1–2 for synchronous ones.
 
 **When a write is safe on the host.** A container device makes no `fsync` while it runs (`strace` over 10 s of the
@@ -588,10 +590,11 @@ then starting it with Recover and running LT Bench's `fs-check` on the 8 MiB fil
 | plain `fsync`, killed 35 s later (the guest idle) | intact | the same |
 | clean stop, then LT Bench reinstalled | intact | no restore |
 
-A plain `fsync` on iOS's HFS+ does not make a new file's metadata durable at once; only `F_FULLFSYNC` (or iOS's own
-periodic sync) does, as on a real device that loses power. No sync request reaches the engine either way.
+No sync request reaches the engine for either kind of sync, and the second and third tests show the engine keeps what
+reached it, so we infer the loss in the plain-`fsync` test is iOS's own: HFS+ makes a file's metadata durable at once
+only on `F_FULLFSYNC` (or at its periodic sync), as a real device that loses power would behave. Not traced in the guest.
 
-| Old 2G page files: tried, not done | Measured (host, 4160-byte pages) | Why not |
+| Old 2G page files: tried, not done | Measured with a standalone program on the host filesystem (4160-byte files) | Why not |
 | --- | --- | --- |
 | Drop the per-page `fsync` | desktop 62–95 µs/page vs 470–560 with it | after a host crash a renamed page can be empty, and a short page file reads back as zeros: silent corruption inside a file |
 | One `syncfs` per guest write program, then the renames | desktop 8 pages 335 µs/page; Poco 1454 µs/page (one `syncfs` = an f2fs checkpoint, ~8.6 ms) vs 464 now | slower on the phone |
