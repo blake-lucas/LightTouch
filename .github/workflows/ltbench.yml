@@ -1,0 +1,58 @@
+name: LT Bench
+
+# Builds LTBench.ipa (tools/guestbench, docs/GUEST-BENCHMARKS.md) on a GitHub macOS runner, so the guest
+# benchmark doesn't need the development Mac: the full app and an fs-only variant (storage tests, 3 rounds).
+
+on:
+  push:
+    paths:
+      - .github/workflows/ltbench.yml
+      - tools/guestbench/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ltbench:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        with:
+          repository: blake-lucas/qemu-ios
+          ref: develop
+          path: qemu-ios
+          fetch-depth: 1
+          sparse-checkout: contrib/armv6-toolchain
+
+      - name: Tools
+        run: command -v ldid >/dev/null || brew install ldid
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/ltbench"
+          QEMU_IOS="$PWD/qemu-ios" bash tools/guestbench/build.sh "$OUT/full"
+          QEMU_IOS="$PWD/qemu-ios" LTB_CFLAGS='-DONLY="fs-write,fs-read,fs-read-16k,fs-write-big,fs-write-cached,fs-rand-4k,fs-fsync-4k,fs-fullfsync-4k,fs-create" -DROUNDS=3' \
+            bash tools/guestbench/build.sh "$OUT/fs"
+          # one test, many rounds, for profiling
+          for v in "fullfsync:fs-fullfsync-4k:40" "fsync:fs-fsync-4k:60" "create:fs-create:20" "big:fs-write-big:8" "check:fs-check:1"; do
+            IFS=: read -r name test rounds <<< "$v"
+            QEMU_IOS="$PWD/qemu-ios" LTB_CFLAGS="-DONLY=\"$test\" -DROUNDS=$rounds" bash tools/guestbench/build.sh "$OUT/$name"
+          done
+          # durability: fs-write ends with F_FULLFSYNC, then more writes to be killed in; fs-check after the restart
+          QEMU_IOS="$PWD/qemu-ios" LTB_CFLAGS='-DONLY="fs-write,fs-read,fs-write-big,fs-write-cached,fs-rand-4k,fs-create" -DROUNDS=3 -DIO_FULLSYNC' \
+            bash tools/guestbench/build.sh "$OUT/durable"
+          ls -la "$OUT"/*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ltbench
+          path: ${{ runner.temp }}/ltbench
+          if-no-files-found: error
+          retention-days: 30
