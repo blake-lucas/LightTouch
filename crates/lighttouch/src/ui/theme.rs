@@ -33,6 +33,11 @@ pub struct Palette {
 pub const ACCENT: Color32 = Color32::from_rgb(0x71, 0xDC, 0xC8);
 pub const DANGER: Color32 = Color32::from_rgb(0xFF, 0x6B, 0x6B);
 pub const WARNING: Color32 = Color32::from_rgb(0xFF, 0xC5, 0x6B);
+/// WARNING for text and icons on the palette's surfaces: the pale amber is unreadable on light ones, which take
+/// Android's darker amber.
+pub fn warning(p: &Palette) -> Color32 {
+    if p.dark { WARNING } else { Color32::from_rgb(0x8A, 0x53, 0x00) }
+}
 pub const PAUSED: Color32 = Color32::from_rgb(0x9A, 0xA2, 0xA6);
 /// Overlay hues, one per subsystem (MangoHud's convention).
 pub const FPS: Color32 = Color32::from_rgb(0xFF, 0xB8, 0x6B);

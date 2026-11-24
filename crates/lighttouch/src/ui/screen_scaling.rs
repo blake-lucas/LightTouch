@@ -460,7 +460,7 @@ fn measure_display(
                     "Measured on a {w} × {h} display, not this one. Measure here and save to use this display."
                 ))
                 .size(12.5)
-                .color(theme::WARNING),
+                .color(theme::warning(&p)),
             );
         } else if s.estimate {
             ui.label(widgets::muted(&p, "Using an estimate until you measure and save").size(12.5));

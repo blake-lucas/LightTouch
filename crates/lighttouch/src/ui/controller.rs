@@ -816,7 +816,7 @@ fn access_row(c: &mut ControllerUi, p: &theme::Palette, ui: &mut Ui) {
             );
         }
         Some(Err(e)) => {
-            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(theme::WARNING)).wrap());
+            ui.add(egui::Label::new(RichText::new(e).size(12.0).color(theme::warning(&p))).wrap());
         }
         None => {}
     }
@@ -2282,7 +2282,7 @@ fn key_map_prompt(app: &mut App, ui: &mut Ui) {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 220.0), Sense::hover());
         draw_key_map(ui.painter(), &p, rect, &map.keys);
         let note = map.refused.clone().unwrap_or_default();
-        ui.label(RichText::new(note).size(12.5).color(theme::WARNING));
+        ui.label(RichText::new(note).size(12.5).color(theme::warning(&p)));
         ui.add_space(8.0);
         widgets::dialog_buttons(ui, |ui| {
             if widgets::tonal(ui, &p, "Cancel").clicked() {
