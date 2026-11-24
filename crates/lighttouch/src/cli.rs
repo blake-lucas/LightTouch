@@ -6,6 +6,7 @@
 //!                    [--no-game-center]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
+//!                [--install-dir APP.app [--afc N]]
 //! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
 //! lighttouch guest <bridge mux.sock>
 //! lighttouch export <record id> <FILE.lighttouch.zip>
@@ -68,7 +69,8 @@ fn option(args: &[String], name: &str) -> Option<String> {
 /// `guest <usbmux socket>`: connect to a running guest (the app's own bridge) as the store does, and say what it is.
 fn guest(args: &[String]) -> Result<(), String> {
     let socket = PathBuf::from(args.first().ok_or("guest needs the bridge's mux.sock")?);
-    let mut guest = lighttouch_services::apps::Guest::connect(&socket, Duration::from_secs(120)).map_err(|e| e.to_string())?;
+    let mut guest =
+        lighttouch_services::apps::Guest::connect(&socket, Duration::from_secs(120)).map_err(|e| e.to_string())?;
     let target = guest.target().map_err(|e| e.to_string())?;
     println!("{} iOS {} {}", target.product_type, target.ios, target.arch);
     for app in guest.installed().map_err(|e| e.to_string())? {
@@ -150,6 +152,10 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     };
     let frames = FrameReader::create(&segment_name()).map_err(|e| format!("frame memory: {e}"))?;
     let action = match (option(args, "--install"), option(args, "--store")) {
+        _ if option(args, "--install-dir").is_some() => Some(ServiceAction::InstallDir(
+            PathBuf::from(option(args, "--install-dir").unwrap()),
+            option(args, "--afc").and_then(|n| n.parse().ok()).unwrap_or(1),
+        )),
         (Some(path), _) => Some(ServiceAction::Install(PathBuf::from(path))),
         (_, Some(query)) => Some(ServiceAction::Store(query)),
         _ => args.iter().any(|a| a == "--services").then_some(ServiceAction::Report),
@@ -443,6 +449,8 @@ enum ServiceAction {
     Report,
     Install(PathBuf),
     Store(String),
+    /// An unpacked .app over N parallel AFC sessions, then a Developer install (docs/STORAGE.md experiments).
+    InstallDir(PathBuf, usize),
 }
 
 /// Once the USB link is up: connect to the guest, report it, its apps and its newest crash report, then install a
@@ -508,6 +516,18 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
     std::fs::create_dir_all(&scratch).ok();
     let (source, downloaded) = match action {
         ServiceAction::Report => return,
+        ServiceAction::InstallDir(dir, connections) => {
+            let say_sync = |text: String| eprintln!("[{:6.1}] services: {text}", started.elapsed().as_secs_f64());
+            match guest.install_unpacked(&dir, connections, &say_sync) {
+                Ok(r) => say(format!(
+                    "installed (developer, {connections} AFC) {} files {} dirs {} bytes, {} links skipped, {} AFC \
+                     requests, upload {:.1} s install {:.1} s, staging after: {:?}",
+                    r.files, r.dirs, r.bytes, r.skipped_links, r.requests, r.upload_s, r.install_s, r.staging_after
+                )),
+                Err(e) => say(format!("install failed: {e}")),
+            }
+            return;
+        }
         ServiceAction::Install(path) => (path, None),
         ServiceAction::Store(query) => {
             let apps = match store::search(&query, &target) {

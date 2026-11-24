@@ -93,6 +93,7 @@ def main():
     for name in pins['daemon']['preimage_sha256']:
         shutil.copyfile(args.daemon_source / name, daemon / name)
     patch(daemon, 'windows-host.patch')
+    patch(daemon, '../../build-support/patches/usbmuxd-qemu-large-transactions.patch')
     objects = output / 'objects'
     objects.mkdir()
     common = [CC, '-std=gnu11', '-O2', '-Wall',

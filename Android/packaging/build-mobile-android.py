@@ -49,6 +49,8 @@ DAEMON_PATCHES = (  # applied in this order
     ('linux-standard-headers', APP / 'Linux/packaging/patches/usbmuxd-linux-standard-headers.patch'),
     ('private-qemu-config', APP / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch'),
     ('android-parent-death', HERE / 'patches/usbmuxd-android-parent-death.patch'),
+    # 32760-byte transactions: twice the data per guest turnaround (docs/STORAGE.md, "USB uploads").
+    ('large-transactions', APP / 'build-support/patches/usbmuxd-qemu-large-transactions.patch'),
 )
 HELPER = APP / 'Android/native-services/lt_appservice.c'
 CURL_STUB = (HERE / 'curl-stub/curl/curl.h', HERE / 'curl-stub/curl_stub.c')

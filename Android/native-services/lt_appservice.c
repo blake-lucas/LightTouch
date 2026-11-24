@@ -61,6 +61,10 @@
 #define CONNECT_WINDOW_MS 20000
 #define CONNECT_RETRY_MS 500
 #define UPLOAD_CHUNK (1u << 20)         /* one AFC write each, answered before the next: see mobile.py */
+/* AFC sessions writing the IPA at once, each its own contiguous part (desktop: lighttouch-services apps.rs). Each
+ * 1 MiB write waits for the guest to store it; several in flight keep the USB link busy (docs/STORAGE.md).
+ * LT_UPLOAD_AFC in the helper's environment overrides it, for A/B (1: one stream, as before). */
+#define UPLOAD_SESSIONS 8
 #define INSTALL_ABSOLUTE_S 600       /* plus the unpacked size at UNPACK_FLOOR_BPS */
 #define INSTALL_IDLE_S 90           /* no status and no unpacking progress for this long */
 #define UNPACK_FLOOR_BPS (256u << 10)
@@ -898,6 +902,59 @@ static int afc_check(afc_error_t err, const char *phase)
 	return -1;
 }
 
+struct upload_part {
+	afc_client_t afc;
+	uint64_t handle;
+	int fd;
+	uint64_t start, end;
+	uint64_t *sent;         /* shared, atomic */
+	int *failed;            /* shared, atomic: any part's failure stops the others */
+	int error;              /* this part's afc_error_t, or -1 for a read error */
+	pthread_t thread;
+};
+
+static void *upload_part_run(void *arg)
+{
+	struct upload_part *p = arg;
+	unsigned char *buffer = malloc(UPLOAD_CHUNK);
+	uint64_t at = p->start;
+	if (!buffer) {
+		p->error = -1;
+		goto done;
+	}
+	if (at > 0 && afc_file_seek(p->afc, p->handle, (int64_t)at, SEEK_SET) != AFC_E_SUCCESS) {
+		p->error = AFC_E_UNKNOWN_ERROR;
+		goto done;
+	}
+	while (at < p->end && !__atomic_load_n(p->failed, __ATOMIC_RELAXED)) {
+		uint32_t want = (uint32_t)(p->end - at < UPLOAD_CHUNK ? p->end - at : UPLOAD_CHUNK);
+		ssize_t got = pread(p->fd, buffer, want, (off_t)at);
+		if (got < 0 && errno == EINTR)
+			continue;
+		if (got != (ssize_t)want) {
+			p->error = -1;
+			goto done;
+		}
+		uint32_t offset = 0;
+		while (offset < want) {
+			uint32_t written = 0;
+			afc_error_t e = afc_file_write(p->afc, p->handle, (const char *)buffer + offset, want - offset, &written);
+			if (e != AFC_E_SUCCESS || written == 0 || written > want - offset) {
+				p->error = e != AFC_E_SUCCESS ? e : AFC_E_UNKNOWN_ERROR;
+				goto done;
+			}
+			offset += written;
+		}
+		at += want;
+		__atomic_add_fetch(p->sent, want, __ATOMIC_RELAXED);
+	}
+done:
+	if (p->error)
+		__atomic_store_n(p->failed, 1, __ATOMIC_RELAXED);
+	free(buffer);
+	return NULL;
+}
+
 static int action_install(struct session *s, const char *ipa, const char *bundle_id)
 {
 	int fd = open(ipa, O_RDONLY | O_CLOEXEC);
@@ -935,7 +992,6 @@ static int action_install(struct session *s, const char *ipa, const char *bundle
 	int rc = 1;
 	uint64_t handle = 0;
 	int opened = 0;
-	char *buffer = NULL;
 	instproxy_client_t client = NULL;
 	plist_t apps = NULL;
 
@@ -962,51 +1018,88 @@ static int action_install(struct session *s, const char *ipa, const char *bundle
 		goto out;
 	opened = 1;
 
-	buffer = malloc(UPLOAD_CHUNK);
-	if (!buffer) {
-		emit_error("out of memory");
-		goto out;
-	}
-	uint64_t sent = 0;
-	int last_percent = -1;
-	for (;;) {
-		ssize_t got = read(fd, buffer, UPLOAD_CHUNK);
-		if (got < 0 && errno == EINTR)
-			continue;
-		if (got < 0) {
-			emit_error("Reading the IPA failed: %s", strerror(errno));
-			goto out;
+	{
+		/* Extra sessions are a speed-up only: one that doesn't start leaves the work to those that did. */
+		const char *env = getenv("LT_UPLOAD_AFC");
+		int want = env && atoi(env) > 0 ? atoi(env) : UPLOAD_SESSIONS;
+		if (want > 16)
+			want = 16;
+		uint64_t chunks = (total + UPLOAD_CHUNK - 1) / UPLOAD_CHUNK;
+		if ((uint64_t)want > chunks)
+			want = (int)chunks;
+		struct upload_part parts[16];
+		memset(parts, 0, sizeof(parts));
+		parts[0].afc = afc;
+		parts[0].handle = handle;
+		int n = 1;
+		while (n < want) {
+			lockdownd_service_descriptor_t extra_service = start_service(s, AFC_SERVICE_NAME);
+			if (!extra_service)
+				break;
+			afc_client_t extra = NULL;
+			afc_error_t e = afc_client_new(s->device, extra_service, &extra);
+			lockdownd_service_descriptor_free(extra_service);
+			if (e != AFC_E_SUCCESS)
+				break;
+			uint64_t h = 0;
+			if (afc_file_open(extra, remote, AFC_FOPEN_RW, &h) != AFC_E_SUCCESS) {
+				afc_client_free(extra);
+				break;
+			}
+			parts[n].afc = extra;
+			parts[n].handle = h;
+			n++;
 		}
-		if (got == 0)
-			break;
-		uint32_t offset = 0;
-		while (offset < (uint32_t)got) {
-			uint32_t written = 0;
-			uint32_t remaining = (uint32_t)got - offset;
-			if (afc_check(afc_file_write(afc, handle, buffer + offset, remaining, &written), "upload IPA") != 0)
-				goto out;
-			if (written == 0 || written > remaining) {
-				emit_error("The guest returned an invalid upload length.");
+		uint64_t part = ((total + (uint64_t)n - 1) / (uint64_t)n + UPLOAD_CHUNK - 1) / UPLOAD_CHUNK * UPLOAD_CHUNK;
+		uint64_t sent = 0;
+		int failed = 0, started = 0;
+		for (int i = 0; i < n; i++) {
+			parts[i].fd = fd;
+			parts[i].start = (uint64_t)i * part < total ? (uint64_t)i * part : total;
+			parts[i].end = (uint64_t)(i + 1) * part < total ? (uint64_t)(i + 1) * part : total;
+			parts[i].sent = &sent;
+			parts[i].failed = &failed;
+			if (pthread_create(&parts[i].thread, NULL, upload_part_run, &parts[i]) != 0) {
+				__atomic_store_n(&failed, 1, __ATOMIC_RELAXED);
+				break;
+			}
+			started++;
+		}
+		int last_percent = -1;
+		for (;;) {
+			uint64_t now_sent = __atomic_load_n(&sent, __ATOMIC_RELAXED);
+			int percent = (int)(now_sent * 100 / total);
+			if (percent != last_percent) {
+				struct buf b = {0};
+				buf_printf(&b, "{\"phase\":\"upload\",\"percent\":%d}", percent);
+				emit(&b);
+				last_percent = percent;
+			}
+			if (now_sent >= total || __atomic_load_n(&failed, __ATOMIC_RELAXED))
+				break;
+			struct timespec ts = {0, 100 * 1000 * 1000};
+			nanosleep(&ts, NULL);
+		}
+		for (int i = 0; i < started; i++)
+			pthread_join(parts[i].thread, NULL);
+		for (int i = 1; i < n; i++) {
+			afc_file_close(parts[i].afc, parts[i].handle);
+			afc_client_free(parts[i].afc);
+		}
+		for (int i = 0; i < n; i++) {
+			if (parts[i].error == -1) {
+				emit_error("Reading the IPA failed.");
 				goto out;
 			}
-			offset += written;
-			sent += written;
+			if (parts[i].error) {
+				afc_check((afc_error_t)parts[i].error, "upload IPA");
+				goto out;
+			}
 		}
-		if (sent > total) {
-			emit_error("The IPA changed while it was being uploaded.");
+		if (failed || sent != total) {
+			emit_error("The IPA upload did not complete.");
 			goto out;
 		}
-		int percent = (int)(sent * 100 / total);
-		if (percent != last_percent) {
-			struct buf b = {0};
-			buf_printf(&b, "{\"phase\":\"upload\",\"percent\":%d}", percent);
-			emit(&b);
-			last_percent = percent;
-		}
-	}
-	if (sent != total) {
-		emit_error("The IPA changed while it was being uploaded.");
-		goto out;
 	}
 	opened = 0;
 	if (afc_check(afc_file_close(afc, handle), "close staging upload") != 0)
@@ -1055,7 +1148,6 @@ out:
 		plist_free(apps);
 	if (client)
 		instproxy_client_free(client);
-	free(buffer);
 	if (opened)
 		afc_file_close(afc, handle);
 	afc_remove_path(afc, remote);

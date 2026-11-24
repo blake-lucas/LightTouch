@@ -6,6 +6,7 @@
 pub mod afc;
 pub mod apps;
 pub mod bridge;
+pub mod devinstall;
 pub mod instproxy;
 pub mod lockdown;
 mod pairing;

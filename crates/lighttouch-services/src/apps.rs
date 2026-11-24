@@ -40,6 +40,9 @@ const LOG_KEYWORDS: &[&str] = &[
 const STAGING: &str = "PublicStaging";
 /// One AFC write each, answered before the next: at 64 KiB the iPod touch 2G spent ~20 ms of every write waiting.
 const UPLOAD_CHUNK: usize = 1 << 20;
+/// AFC sessions writing the IPA at once (LT_UPLOAD_AFC overrides, for A/B; 1 is the old single stream). Each 1 MiB
+/// write waits for the guest to store it; several in flight keep the USB link busy meanwhile (docs/STORAGE.md).
+const UPLOAD_SESSIONS: u64 = 8;
 /// No status and no unpacking progress for this long: give up.
 const INSTALL_IDLE: Duration = Duration::from_secs(90);
 /// Plus the unpacked size at `UNPACK_FLOOR_BPS`.
@@ -128,6 +131,11 @@ impl Guest {
             }
         }
         Err(last)
+    }
+
+    /// A service connection for this crate's other modules (devinstall).
+    pub(crate) fn service_conn(&mut self, name: &str, timeout: Duration) -> Result<Conn> {
+        self.service(name, timeout)
     }
 
     /// Look the guest up again by its UDID, waiting up to `window` for it to reattach.
@@ -285,6 +293,99 @@ impl Guest {
             .ok_or_else(|| Error("The guest reported the install complete, but the app isn't in its list.".into()))
     }
 
+    /// Copy `ipa` to `remote` over `UPLOAD_SESSIONS` AFC sessions at once, each writing its own contiguous part of
+    /// the file: one session waits for the guest's reply to every 1 MiB write, so several keep the link busy.
+    fn upload(
+        &mut self,
+        afc: &mut Afc,
+        ipa: &Path,
+        remote: &str,
+        total: u64,
+        progress: &mut dyn FnMut(InstallProgress) -> bool,
+    ) -> Result<()> {
+        use std::io::{Seek, SeekFrom};
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let sessions =
+            std::env::var("LT_UPLOAD_AFC").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(UPLOAD_SESSIONS);
+        let sessions = sessions.clamp(1, 16).min(total.div_ceil(UPLOAD_CHUNK as u64).max(1));
+        let handle = afc.open(remote, Mode::WriteOnly)?;
+        // Extra sessions are a speed-up only: one that doesn't start (an iPhone 5's afcd is slow to launch) leaves
+        // the upload to the sessions that did.
+        let mut others = Vec::new();
+        for _ in 1..sessions {
+            let Ok(conn) = self.service(AFC, TIMEOUT) else { break };
+            let mut extra = Afc::new(conn);
+            let Ok(h) = extra.open(remote, Mode::ReadWrite) else { break };
+            others.push((extra, h));
+        }
+        let sessions = others.len() as u64 + 1;
+        let part = total.div_ceil(sessions).div_ceil(UPLOAD_CHUNK as u64) * UPLOAD_CHUNK as u64;
+        let (sent, abort) = (AtomicU64::new(0), AtomicBool::new(false));
+        let write_part = |afc: &mut Afc, handle: u64, index: u64| -> Result<()> {
+            let (start, end) = (index * part, ((index + 1) * part).min(total));
+            if start >= end {
+                return Ok(());
+            }
+            let mut file = std::fs::File::open(ipa)?;
+            file.seek(SeekFrom::Start(start))?;
+            if start > 0 {
+                afc.seek(handle, start)?;
+            }
+            let mut buffer = vec![0u8; UPLOAD_CHUNK];
+            let mut at = start;
+            while at < end {
+                if abort.load(Ordering::Relaxed) {
+                    return Err(Error("Cancelled.".into()));
+                }
+                let n = (end - at).min(UPLOAD_CHUNK as u64) as usize;
+                file.read_exact(&mut buffer[..n])?;
+                afc.write(handle, &buffer[..n])?;
+                at += n as u64;
+                sent.fetch_add(n as u64, Ordering::Relaxed);
+            }
+            Ok(())
+        };
+        let first = &mut *afc;
+        let run = |afc: &mut Afc, handle: u64, index: u64| {
+            let r = write_part(afc, handle, index);
+            if r.is_err() {
+                abort.store(true, Ordering::Relaxed);
+            }
+            r
+        };
+        let result = std::thread::scope(|scope| {
+            let abort_ref = &abort;
+            let run = &run;
+            let mut workers = vec![scope.spawn(move || run(first, handle, 0))];
+            for (i, (extra, h)) in others.iter_mut().enumerate() {
+                workers.push(scope.spawn(move || run(extra, *h, i as u64 + 1)));
+            }
+            // This thread reports everyone's progress, and stops the others when one fails or the user cancels.
+            progress(InstallProgress::Uploading { sent: 0, total });
+            while !workers.iter().all(|w| w.is_finished()) {
+                std::thread::sleep(Duration::from_millis(100));
+                if !progress(InstallProgress::Uploading { sent: sent.load(Ordering::Relaxed), total }) {
+                    abort_ref.store(true, Ordering::Relaxed);
+                }
+            }
+            let mut result = Ok(());
+            for w in workers {
+                let r = w.join().unwrap_or_else(|_| Err(Error("upload thread panicked".into())));
+                if result.is_ok() {
+                    result = r;
+                }
+            }
+            result
+        });
+        let _ = progress(InstallProgress::Uploading { sent: sent.load(Ordering::Relaxed), total });
+        for (mut extra, h) in others {
+            let _ = extra.close(h);
+        }
+        let closed = afc.close(handle);
+        result?;
+        closed
+    }
+
     fn stage_and_install(
         &mut self,
         afc: &mut Afc,
@@ -294,26 +395,7 @@ impl Guest {
         unpacked_total: Option<u64>,
         progress: &mut dyn FnMut(InstallProgress) -> bool,
     ) -> Result<()> {
-        let handle = afc.open(remote, Mode::WriteOnly)?;
-        let upload = (|| -> Result<()> {
-            let mut file = std::fs::File::open(ipa)?;
-            let mut buffer = vec![0u8; UPLOAD_CHUNK];
-            let mut sent = 0u64;
-            loop {
-                let read = file.read(&mut buffer)?;
-                if read == 0 {
-                    return Ok(());
-                }
-                afc.write(handle, &buffer[..read])?;
-                sent += read as u64;
-                if !progress(InstallProgress::Uploading { sent, total }) {
-                    return Err(Error("Cancelled.".into()));
-                }
-            }
-        })();
-        let closed = afc.close(handle);
-        upload?;
-        closed?;
+        self.upload(afc, ipa, remote, total, progress)?;
 
         let mut conn = self.service(INSTPROXY, Duration::from_secs(3600))?;
         progress(InstallProgress::Submitted);

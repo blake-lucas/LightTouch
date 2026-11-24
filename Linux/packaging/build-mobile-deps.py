@@ -70,6 +70,7 @@ def main():
                LD_LIBRARY_PATH=str(prefix / 'lib'), NOCONFIGURE='1')
     recipe = dict(schema=1, packages=packages, daemon_revision=DAEMON, daemon_patch_sha256=sha(APP / 'Linux/packaging/patches/usbmuxd-linux-standard-headers.patch'),
                   daemon_private_config_patch_sha256=sha(APP / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch'),
+                  daemon_large_transactions_patch_sha256=sha(APP / 'build-support/patches/usbmuxd-qemu-large-transactions.patch'),
                   recipe_sha256=sha(__file__),
                   patch_sha256=sha(APP / 'build-support/patches/libimobiledevice-sslv3-ios1.patch'),
                   limits_patch_sha256={n: sha(APP / 'build-support/patches' / n) for n in sorted(set(LIMIT_PATCHES.values()))},
@@ -118,6 +119,10 @@ def main():
         with (APP / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch').open('rb') as stream:
             subprocess.run(['patch', '-p1'], cwd=daemon, stdin=stream, check=True)
         (daemon / '.lighttouch-private-qemu-config').touch()
+    if not (daemon / '.lighttouch-large-transactions').exists():
+        with (APP / 'build-support/patches/usbmuxd-qemu-large-transactions.patch').open('rb') as stream:
+            subprocess.run(['patch', '-p1'], cwd=daemon, stdin=stream, check=True)
+        (daemon / '.lighttouch-large-transactions').touch()
     if not (daemon / 'configure').exists():
         run(['./autogen.sh'], daemon)
     if not (daemon / 'Makefile').exists():

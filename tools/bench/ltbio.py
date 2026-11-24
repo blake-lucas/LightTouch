@@ -21,6 +21,8 @@ p.add_argument("record")
 p.add_argument("--host", choices=["desktop", "android"], default="desktop",
                help="android: the LT_PKG app over ADB (debuggable build; ANDROID_SERIAL)")
 p.add_argument("--install")
+p.add_argument("--install-dir", help="desktop: an unpacked APP.app, uploaded over --afc N sessions, Developer install")
+p.add_argument("--afc", type=int, default=1)
 p.add_argument("--passes", type=int, default=1)
 p.add_argument("--recover", action="store_true", help="start a device that was not shut down cleanly")
 p.add_argument("--env", action="append", default=[])
@@ -37,7 +39,8 @@ for kv in a.env:
     os.environ[k] = v
 
 # Desktop runs LIGHTTOUCH run REC --control --no-audio; these ride on the end, through a wrapper script
-extra = (["--install", str(Path(a.install).resolve())] if a.install else []) + (["--recover"] if a.recover else [])
+extra = (["--install", str(Path(a.install).resolve())] if a.install else []) + (["--recover"] if a.recover else []) + \
+    (["--install-dir", str(Path(a.install_dir).resolve()), "--afc", str(a.afc)] if a.install_dir else [])
 if extra:
     wrapper = out / f"{a.tag}.wrap.sh"
     wrapper.write_text("#!/bin/sh\nexec " + bench.LIGHTTOUCH + ' "$@" ' + " ".join(bench.shlex.quote(x) for x in extra) + "\n")
@@ -158,7 +161,7 @@ try:
         r = bench.subprocess.run([str(bench.REPO / "tools/guestbench/android.sh"), "install", a.install],
                                  env={**os.environ, "LT_PKG": bench.PKG}, capture_output=True, text=True)
         print("install:", (r.stdout + r.stderr).strip()[-300:], flush=True)
-    elif a.install and not wait_for(r"installed |install failed", 600):
+    elif (a.install or a.install_dir) and not wait_for(r"installed |install failed", 1800):
         sys.exit("install did not finish")
     pid = worker_pid()
     if a.launch:
@@ -167,6 +170,7 @@ try:
               f"{s.guest(bench.GUEST_LAUNCH_APP, a.launch, timeout=20) is not None}", flush=True)
         c0, w0 = thread_cpu(pid) if pid else {}, time.monotonic()
         time.sleep(a.watch)
+        print(f"{a.tag} frontmost after {a.watch:.0f} s: {bench.frontmost(s)}", flush=True)
         if pid:
             c1, wall = thread_cpu(pid), time.monotonic() - w0
             busy = sorted(((c1.get(k, 0) - c0.get(k, 0), k) for k in c1), reverse=True)[:4]
