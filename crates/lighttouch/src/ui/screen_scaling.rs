@@ -134,6 +134,10 @@ pub struct ScreenScalingState {
     screen: Option<Screen>,
     squares: bool,
     sample: Sample,
+    /// The preview turned with its rotate button (the device page's rotation is its own).
+    rotation: Rotation,
+    /// The sample filling the display as full screen would show it, until Esc or a click.
+    fullscreen: Option<std::time::Instant>,
     pictures: HashMap<(Sample, Screen), (ColorImage, Scaled)>,
 }
 
@@ -228,6 +232,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
     ui.allocate_rect(area, Sense::hover());
 
+    if app.screen_scaling.fullscreen.is_some() {
+        full_preview(app, &ctx, draft);
+    }
     app.screen_scaling.draft = Some(draft);
     let s = &app.model.settings;
     if (s.scaling, s.integer_scale, s.real_size, s.display) != before {
@@ -630,6 +637,23 @@ fn preview(app: &mut App, ui: &mut Ui, rect: Rect, draft: f32, page: Rect) {
     } else {
         sample(app, ui, space, screen, draft, page)
     };
+    // Over the panel's top-right corner: Rotate (portrait, then each landscape, as the device page's Rotate does) and
+    // Full screen (the sample as full screen would show it).
+    let round_button = |ui: &mut Ui, right: f32, icon: &str, tip: &str| {
+        let r = Rect::from_min_size(egui::pos2(right - 38.0, panel.top() + 8.0), vec2(38.0, 38.0));
+        let response = ui.interact(r, ui.make_persistent_id(("scaling-preview-button", tip)), Sense::click());
+        let fill = if response.hovered() { p.container_highest } else { p.container_high };
+        ui.painter().circle_filled(r.center(), 19.0, fill.gamma_multiply(0.92));
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, icon, FontId::new(18.0, theme::icons()), p.on_surface);
+        response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
+    };
+    if round_button(ui, panel.right() - 8.0, icons::ROTATE, "Rotate") {
+        app.screen_scaling.rotation = app.screen_scaling.rotation.next();
+    }
+    if round_button(ui, panel.right() - 54.0, icons::FULLSCREEN, "Preview full screen") {
+        app.screen_scaling.fullscreen = Some(std::time::Instant::now());
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+    }
 
     let painter = ui.painter().with_clip_rect(clip);
     let rule = panel.bottom() + 12.0;
@@ -719,6 +743,66 @@ enum Picture {
     Squares,
 }
 
+/// The preview's sample over the whole display, black around it, drawn as full screen would draw it (the method,
+/// Pixel perfect's multiple or real size, the preview's rotation) until Esc or a click.
+fn full_preview(app: &mut App, ctx: &egui::Context, draft: f32) {
+    let full = ctx.content_rect();
+    let mut leave = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    egui::Area::new(egui::Id::unique("scaling-full-preview")).order(egui::Order::Foreground).fixed_pos(full.min).show(
+        ctx,
+        |ui| {
+            let (rect, response) = ui.allocate_exact_size(full.size(), Sense::click());
+            leave |= response.clicked();
+            ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+            let state = &app.screen_scaling;
+            let screen =
+                state.screen.unwrap_or_else(|| Screen::for_board(app.model.current().map(|d| d.board.as_str())));
+            let (skin, pixels, rotation) = (screen.skin(), screen.pixels(), state.rotation);
+            let mut settings = app.model.settings.clone();
+            if settings.real_size != RealSize::Off {
+                settings.display = Some(DisplayMeasure { px_per_mm: draft, monitor: None, estimate: true });
+            }
+            let shown = device_frame::place_for(&skin, rect, rotation, false, &settings, ctx, pixels).screen;
+            let ppp = ctx.pixels_per_point();
+            if state.squares {
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    "Pick a sample picture to preview full screen",
+                    FontId::new(15.0, theme::medium()),
+                    Color32::from_white_alpha(170),
+                );
+            } else {
+                let key = (state.sample, screen);
+                let (image, texture) = app.screen_scaling.pictures.entry(key).or_insert_with(|| {
+                    let decoded = image::load_from_memory(key.0.png(screen)).map(|i| i.to_rgba8());
+                    let image = match decoded {
+                        Ok(rgba) => {
+                            ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], &rgba)
+                        }
+                        Err(_) => ColorImage::filled([pixels[0] as usize, pixels[1] as usize], Color32::DARK_GRAY),
+                    };
+                    (image, Scaled::default())
+                });
+                let px = scaling::shown_px(shown, ppp);
+                texture.update(ctx, "scaling-preview", false, settings.scaling, image.size, px, || image.clone());
+                texture.paint(&ui.painter().with_clip_rect(rect), shown, rotation, false);
+            }
+            let since = app.screen_scaling.fullscreen.unwrap_or_else(std::time::Instant::now);
+            super::guest::hint_at(
+                ui,
+                egui::pos2(rect.center().x, rect.bottom() - 40.0),
+                since,
+                "Esc or click to leave",
+            );
+        },
+    );
+    if leave {
+        app.screen_scaling.fullscreen = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    }
+}
+
 /// "2×", "2.37×".
 fn times(x: f32) -> String {
     if (x - x.round()).abs() < 0.01 { format!("{}×", x.round()) } else { format!("{x:.2}×") }
@@ -741,19 +825,27 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     let [l, t, r, b] = app.device_view_insets.unwrap_or([24.0, 80.0, 24.0, 108.0]);
     let view = Rect::from_min_max(page.min + vec2(l, t), page.max - vec2(r, b));
     let frame = settings.device_frame;
-    let in_view = device_frame::place_for(&skin, view, Rotation::Portrait, frame, &settings, &ctx, pixels).screen;
-    let view_scale = in_view.width() * ppp / pixels[0] as f32;
+    let rotation = app.screen_scaling.rotation;
+    let in_view = device_frame::place_for(&skin, view, rotation, frame, &settings, &ctx, pixels).screen;
+    // The screen's pixels as shown: across, then down (turned in landscape).
+    let shown_px = if rotation.landscape() { [pixels[1], pixels[0]] } else { pixels };
+    let view_scale = in_view.width() * ppp / shown_px[0] as f32;
     // With the device drawn, what has to fit is the whole device: the screen's size times the body's share. (At real
     // size nothing is shrunk: the panel crops instead.)
-    let (bx, by) = if frame { (skin.width / skin.screen_width, skin.height / skin.screen_height) } else { (1.0, 1.0) };
+    let (bx, by) = match (frame, rotation.landscape()) {
+        (false, _) => (1.0, 1.0),
+        (true, false) => (skin.width / skin.screen_width, skin.height / skin.screen_height),
+        (true, true) => (skin.height / skin.screen_height, skin.width / skin.screen_width),
+    };
     let fits_in = |k: f32, bx: f32, by: f32| {
-        pixels[0] as f32 * k * bx <= space.width() * ppp + 0.5
-            && pixels[1] as f32 * k * by <= space.height() * ppp + 0.5
+        shown_px[0] as f32 * k * bx <= space.width() * ppp + 0.5
+            && shown_px[1] as f32 * k * by <= space.height() * ppp + 0.5
     };
     let fits = |k: f32| fits_in(k, bx, by);
-    let fit = (space.width() * ppp / (pixels[0] as f32 * bx)).min(space.height() * ppp / (pixels[1] as f32 * by));
+    let fit = (space.width() * ppp / (shown_px[0] as f32 * bx)).min(space.height() * ppp / (shown_px[1] as f32 * by));
     // The size the device view draws the screen at, in physical pixels.
-    let rendered = |k: f32| format!("{} × {} rendered", (pixels[0] as f32 * k).round(), (pixels[1] as f32 * k).round());
+    let rendered =
+        |k: f32| format!("{} × {} rendered", (shown_px[0] as f32 * k).round(), (shown_px[1] as f32 * k).round());
     let (scale, shown) = if settings.scaling == Scaling::PixelPerfect {
         let k = view_scale.round().max(1.0);
         // The largest multiple the device fits around here, else the largest the screen alone fits.
@@ -807,8 +899,9 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
         (scale, Shown { title, detail, factor: times(wanted) })
     };
     // The device (when it's shown) placed around the screen at this size, the screen on whole physical pixels.
-    let size = vec2(pixels[0] as f32, pixels[1] as f32) * scale / ppp;
-    let placed = device_frame::place(&skin, space, Rotation::Portrait, frame, Some(size.x / skin.screen_width));
+    let size = vec2(shown_px[0] as f32, shown_px[1] as f32) * scale / ppp;
+    let ppm = pixels[0] as f32 * scale / ppp / skin.screen_width;
+    let placed = device_frame::place(&skin, space, rotation, frame, Some(ppm));
     let corner = placed.screen.min;
     let rect = Rect::from_min_size(egui::pos2((corner.x * ppp).round() / ppp, (corner.y * ppp).round() / ppp), size);
     let key = (app.screen_scaling.sample, screen);
@@ -827,7 +920,7 @@ fn sample(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32, p
     if let Some(layout) = &placed.device {
         device_frame::paint(&painter, &skin, layout, |_| false);
     }
-    texture.paint(&painter, rect, Rotation::Portrait, false);
+    texture.paint(&painter, rect, rotation, false);
     // Only a cropped screen is worth a note: the device around it is often cut off by design.
     if !space.expand(0.5).contains_rect(rect) {
         crop_note(ui, space, "Cropped to fit here");
@@ -840,7 +933,8 @@ fn squares(app: &mut App, ui: &mut Ui, space: Rect, screen: Screen, draft: f32) 
     let ctx = ui.ctx().clone();
     let ppm = real_size::points_per_mm(draft, ctx.pixels_per_point());
     let skin = screen.skin();
-    let placed = device_frame::place(&skin, space, Rotation::Portrait, app.model.settings.device_frame, Some(ppm));
+    let rotation = app.screen_scaling.rotation;
+    let placed = device_frame::place(&skin, space, rotation, app.model.settings.device_frame, Some(ppm));
     let painter = ui.painter().with_clip_rect(space.intersect(ui.clip_rect()));
     if let Some(layout) = &placed.device {
         device_frame::paint(&painter, &skin, layout, |_| false);
