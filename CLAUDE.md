@@ -42,6 +42,21 @@ There is no single test runner: run what covers the code you changed. Outputs go
 NDK, `LT_GUEST_TOOLS`, `LT_MAC` for the Mac-only guest-package/ltbench/firmware-tools targets) come from the
 environment or an untracked `scripts/build.env`; `docs/BUILDING.md` lists them.
 
+**macOS CI replaces the Mac for Mac-only builds**, so no local Mac is needed:
+
+```sh
+gh workflow run guest-package.yml -R blake-lucas/LightTouch -f engine_ref=<qemu-ios sha or branch>   # guest tools
+gh run download <run id> -R blake-lucas/LightTouch -n guest-tools -D DIR   # the set LT_GUEST_TOOLS takes
+gh workflow run release-build.yml -R blake-lucas/LightTouch --ref develop -f engine_ref=<sha> \
+    -f guest_tools_run=<guest-package run id> -f platforms=android,desktop,macos
+gh workflow run ltbench.yml -R blake-lucas/LightTouch     # LTBench.ipa
+```
+
+`guest-package.yml` builds `armv6.itpack`/`armv7.itpack` and the full guest-tools set (artifact `guest-tools`) from
+any engine commit on a macOS runner; a release or test build takes a run's set through `guest_tools_run` (CI) or
+`LT_GUEST_TOOLS` (local, after `gh run download`). A guest-side change is: engine commit (bump
+`contrib/guest-package/VERSION`'s serial), push, a `guest-package.yml` run, then app builds with that set.
+
 End-to-end checks without the UI (see `docs/DESKTOP.md`):
 
 ```sh
@@ -91,8 +106,8 @@ modified; each device's writable state is a separate overlay.
 `n45_recipe.rs`, `n42_recipe.rs` with the `a6_*` modules for the iPhone 5). UI names/models are in
 `crates/lighttouch-catalog` and `FirmwareCatalog.kt` on Android. A new board's firmware is catalog entries.
 
-**Guest package**: the tools inside iOS (GL shim, agent, `it_boot`, …) are armv6/armv7 `.itpack` files built on a Mac
-from qemu-ios. A device gets one only through its record (`records/ID/assets/guest.itpack`, pinned by
+**Guest package**: the tools inside iOS (GL shim, agent, `it_boot`, …) are armv6/armv7 `.itpack` files built on macOS
+from qemu-ios (by the `guest-package.yml` CI workflow, or `scripts/build.sh guest-package` with `LT_MAC`). A device gets one only through its record (`records/ID/assets/guest.itpack`, pinned by
 `guest_package_sha256` in `record.json`); the runtime's verdicts are in `Portable/src/GuestPackageJudge.hpp`.
 
 ## Rules and style
