@@ -475,6 +475,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 startGuest()
             }
             override fun stop() = stopGuest()
+            override fun scaling(method: ScreenScaling, multiple: Int) { settings.scaling = method; settings.integerScale = multiple; applySettings() }
+            override fun fullscreen(on: Boolean) = navigate(if (on) Screen.FULLSCREEN else Screen.HOME)
         }, File(filesDir, "bench"))
     }
     private fun benchIntent(intent: Intent?) {

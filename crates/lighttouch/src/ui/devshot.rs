@@ -6,7 +6,8 @@
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
 //! saved, and closes once they are written. `LIGHTTOUCH_UI_TRANSFER=export:ID:FILE` or `import:FILE` starts a device
-//! export or import (no file dialog).
+//! export or import (no file dialog). `LIGHTTOUCH_UI_LOG_SCREEN=1` logs the guest screen's size and place in physical
+//! pixels each time it changes (Screen scaling checks).
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -45,6 +46,12 @@ impl DevShot {
     }
 }
 
+/// Whether to log where the guest screen is drawn (`LIGHTTOUCH_UI_LOG_SCREEN`).
+pub fn log_screen() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIGHTTOUCH_UI_LOG_SCREEN").is_some())
+}
+
 pub fn window_size() -> Option<[f32; 2]> {
     let text = std::env::var("LIGHTTOUCH_UI_SIZE").ok()?;
     let (w, h) = text.split_once('x')?;
@@ -58,7 +65,7 @@ pub fn start_page() -> Option<Page> {
         "licenses" => Some(Page::Licenses),
         "network" => Some(Page::Network),
         "carrier" => Some(Page::Carrier),
-        "ipad-size" => Some(Page::IpadSize),
+        "screen-scaling" | "ipad-size" => Some(Page::ScreenScaling),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,

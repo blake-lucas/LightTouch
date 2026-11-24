@@ -32,6 +32,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
     if (networkOpen) { NetworkSettingsScreen(host) { networkOpen = false }; return }
     var carrierOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     if (carrierOpen) { CarrierScreen(host) { carrierOpen = false }; return }
+    var scalingOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (scalingOpen) { ScreenScalingScreen(host) { scalingOpen = false }; return }
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
@@ -83,8 +85,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 }
                 SettingsGroup("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
-                    ChoiceRow(LtIcons.Layers, "Screen scaling", ScreenScaling.entries, s.scaling, { it.label },
-                        if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
+                    ActionRow(LtIcons.Layers, "Screen scaling", s.scaling.label + if (s.scaling == ScreenScaling.PIXEL_PERFECT && s.integerScale > 0) ", ${s.integerScale}×" else "",
+                        tag = "open_scaling") { scalingOpen = true }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
                 SettingsGroup("Performance") {

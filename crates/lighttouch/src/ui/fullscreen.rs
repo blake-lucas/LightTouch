@@ -23,15 +23,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let board = app.model.current().map(|d| d.board.clone());
     let skin = Skin::for_board(board.as_deref());
     let rotation = app.model.settings.rotation;
-    let real = device_frame::real_scale(&skin, &app.model.settings, ui.ctx());
-    let fit = device_frame::place(&skin, full, rotation, false, real).screen;
+    let pixels = app.guest.shown_pixels().unwrap_or_else(|| device_frame::screen_pixels(board.as_deref()));
+    let place =
+        |space| device_frame::place_for(&skin, space, rotation, false, &app.model.settings, &ctx, pixels).screen;
+    let fit = place(full);
     let controls = app.model.settings.fullscreen_controls;
     let docked = controls && (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
-    let screen = if docked {
-        device_frame::place(&skin, full.shrink2(vec2(0.0, BAR)), rotation, false, real).screen
-    } else {
-        fit
-    };
+    let screen = if docked { place(full.shrink2(vec2(0.0, BAR))) } else { fit };
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
     let editing = app.model.gamepads.editing;

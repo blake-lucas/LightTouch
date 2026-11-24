@@ -13,10 +13,11 @@ import java.io.File
  *       -a org.lighttouch.android.BENCH --es cmd CMD [--es arg ARG]
  *
  * CMD: select RECORD | start | stop | status | button "N down|up|press" | tap "X Y" | swipe "X0 Y0 X1 Y1 MS" |
- * launch BUNDLE_ID | frontmost | lockstatus | frames "start NAME" | frames stop. Coordinates are the guest screen's, normalized
- * (0..1, y down). Every command answers with one logcat line, tag LTBench: "CMD -> RESULT". `frames start NAME` keeps
- * appending the engine's frame timeline (`sequence published_ns presented_ns`, CLOCK_MONOTONIC) to
- * files/bench/NAME.frames until `frames stop`.
+ * launch BUNDLE_ID | frontmost | lockstatus | frames "start NAME" | frames stop | scaling "METHOD [MULTIPLE]" |
+ * view device|fullscreen. Coordinates are the guest screen's, normalized (0..1, y down). Every command answers with
+ * one logcat line, tag LTBench: "CMD -> RESULT". `frames start NAME` keeps appending the engine's frame timeline
+ * (`sequence published_ns presented_ns present_work_ns`, CLOCK_MONOTONIC) to files/bench/NAME.frames until `frames
+ * stop`. `scaling` sets Settings › Screen scaling (SMOOTH, SHARP, CRISP or PIXEL_PERFECT).
  */
 class BenchControl(private val host: Host, private val dir: File) {
     interface Host {
@@ -26,6 +27,8 @@ class BenchControl(private val host: Host, private val dir: File) {
         fun select(id: String)
         fun start()
         fun stop()
+        fun scaling(method: ScreenScaling, multiple: Int)
+        fun fullscreen(on: Boolean)
     }
 
     @Volatile private var recording: Thread? = null
@@ -74,6 +77,12 @@ class BenchControl(private val host: Host, private val dir: File) {
         "frontmost" -> guest(FRONTMOST, "", 5000)
         "lockstatus" -> guest(LOCK_STATUS, "", 5000)
         "frames" -> frames(arg)
+        "scaling" -> {
+            val parts = arg.split(" ")
+            val method = ScreenScaling.entries.firstOrNull { it.name == parts[0] } ?: return "error: no method ${parts[0]}"
+            onMain { host.scaling(method, parts.getOrNull(1)?.toIntOrNull() ?: 0) }; "ok"
+        }
+        "view" -> { onMain { host.fullscreen(arg == "fullscreen") }; "ok" }
         else -> "error: unknown command"
     }.ifEmpty { "ok" }
 
@@ -115,7 +124,7 @@ class BenchControl(private val host: Host, private val dir: File) {
                         // quads: sequence, published, presented, presenter work; the first poll only sets the start
                         var i = 0
                         while (i + 3 < frames.size) {
-                            if (since != Long.MAX_VALUE) out.write("${frames[i]} ${frames[i + 1]} ${frames[i + 2]}\n")
+                            if (since != Long.MAX_VALUE) out.write("${frames[i]} ${frames[i + 1]} ${frames[i + 2]} ${frames[i + 3]}\n")
                             i += 4
                         }
                         if (frames.size >= 4) since = frames[frames.size - 4]

@@ -11,6 +11,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     // A soft glow behind the device, under the header and the dock too: its place is held before they're drawn and
     // filled once the device's room is known.
     let glow_slot = ui.painter().add(egui::Shape::Noop);
+    let page = ui.max_rect();
     top_bar(app, ui);
     let active = app.model.session_active();
     // The dock's room stays while a device is selected, so starting, stopping or failing never resizes the device.
@@ -21,9 +22,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let board = app.model.current().map(|d| d.board.clone());
     let skin = Skin::for_board(board.as_deref());
     let device_space = space.shrink2(vec2(24.0, 16.0));
+    app.device_view_insets = Some([
+        device_space.left() - page.left(),
+        device_space.top() - page.top(),
+        page.right() - device_space.right(),
+        page.bottom() - device_space.bottom(),
+    ]);
     let rotation = app.model.settings.rotation;
-    let real = device_frame::real_scale(&skin, &app.model.settings, ui.ctx());
-    let placed = device_frame::place(&skin, device_space, rotation, app.model.settings.device_frame, real);
+    let pixels = app.guest.shown_pixels().unwrap_or_else(|| device_frame::screen_pixels(board.as_deref()));
+    let frame = app.model.settings.device_frame;
+    let placed = device_frame::place_for(&skin, device_space, rotation, frame, &app.model.settings, ui.ctx(), pixels);
     // A device at its real size can be larger than the room: it is cropped to it (buttons cut off can't be
     // pressed), and touches still land where they would on the whole screen.
     let mut view = ui.new_child(egui::UiBuilder::new().id_salt("device-view").max_rect(space));
