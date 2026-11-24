@@ -42,6 +42,11 @@ repeatable figure, a median well above it means interference).
 | `fs-read` | 1 KiB of that file, read 64 KiB at a time in order, first byte of each 4 KiB checked | the flash read path, as a game loads one big asset file; `unavailable` if the bytes are not what `fs-write` wrote |
 | `fs-check` | the same read of the file a previous launch wrote, without writing it first | whether written data survives a restart (run it alone, after a pass and a reboot) |
 | `fs-read-16k` | `pread` of 16 KiB at a scattered offset in the file | an engine pulling textures and sounds out of a pack file |
+| `fs-write-big` | 1 KiB of a 16 MiB file, written uncached 256 KiB at a time, then `fsync` | a sustained stream, past any write buffer (its own file, `ltb-w.dat`, so `fs-check` keeps working) |
+| `fs-write-cached` | 1 KiB of an 8 MiB file written through iOS's cache, 64 KiB at a time, then `fsync` | how an app saves |
+| `fs-rand-4k` | an uncached 4 KiB `pwrite` at a scattered slot of the 8 MiB file; one `fsync` at the end | random small writes |
+| `fs-fsync-4k` / `fs-fullfsync-4k` | a 4 KiB `pwrite`, then `fsync` / `F_FULLFSYNC` | a database commit; `F_FULLFSYNC` also asks the flash layer to flush |
+| `fs-create` | create a new file, write 16 KiB, close it (removed afterwards, untimed) | an install's or a game's small files |
 | `gl-get` | `glGetError()` | a GL call that returns a value: the guest waits for the host each time (QEMU_CALL round trip plus the host driver) |
 | `gl-state` | `glEnable` / `glDisable(GL_BLEND)` in turn | a GL call with no reply, which the guest shim may queue |
 | `gl-draw` | `glDrawArrays` of the same 32×32 textured quad | the draw call alone: fetching the client arrays from guest memory, the host draw |
@@ -81,7 +86,8 @@ vanishing at the first call.
 ## Running it
 
 Build (needs a Mac with Xcode and `ldid` for the armv6 link; no iOS SDK needed, the link stub
-is generated from the imports):
+is generated from the imports; the `LT Bench` GitHub workflow builds it on a macOS runner on every push that
+changes `tools/guestbench/`, the full app plus storage-only and single-test variants):
 
 ```sh
 LT_MAC=user@mac tools/guestbench/build.sh OUT_DIR     # from Linux; on a Mac just build.sh OUT_DIR
@@ -99,7 +105,9 @@ tools/guestbench/android.sh results          # the newest pass's lines from the 
 Poco F3 layout preset: `python3 tools/perf/fcbench.py APK 0 ltbench` boots, unlocks and taps the icon
 without sampling fps on the static results screen.
 
-On the desktop, install the IPA through the app's Install IPA path (or headless: `lighttouch run ID --install
+Headless on the desktop: `tools/bench/ltbio.py RECORD --install LTBench.ipa` boots the device, unlocks it, launches
+the app and prints one line per test (plus per-thread CPU, and the engine's storage counters in `TAG.storage.tsv`).
+Or install the IPA through the app's Install IPA path (or headless: `lighttouch run ID --install
 LTBench.ipa`), tap the icon, and read the `[ltbench]` lines from the engine log (`lighttouch run` prints it to the
 console).
 

@@ -278,6 +278,15 @@ jobs:
           mkdir -p "$B/mobile-android"
           cp -a "$RUNNER_TEMP/mobile-android/arm64-v8a" "$B/mobile-android/"
           ls -la "$B/mobile-android/arm64-v8a"
+      # Gradle's downloaded plugins and libraries: without this every run fetches them all from Maven Central again,
+      # which rate-limits shared runners (HTTP 429 on kotlin-reflect's POM failed run 45277541232).
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: lt-gradle-${{ hashFiles(format('release-{0}/app/Android/**/*.gradle*', env.VER), format('release-{0}/app/Android/gradle/**', env.VER)) }}
+          restore-keys: lt-gradle-
       - name: Signing key
         env:
           KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
