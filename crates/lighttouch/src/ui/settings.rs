@@ -66,6 +66,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 widgets::setting_row(
                     ui,
                     &p,
+                    icons::CAMERA,
+                    "Screenshot button",
+                    "Adds Screenshot to the controls under the device. Full screen's More menu always has it",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.screenshot_button);
+                    },
+                );
+                widgets::setting_row(
+                    ui,
+                    &p,
                     icons::PAUSE,
                     "Pause when minimized",
                     "Resumes when the window comes back",

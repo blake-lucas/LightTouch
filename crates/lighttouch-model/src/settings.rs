@@ -145,6 +145,9 @@ pub struct Settings {
     pub overlay_in_device_view: bool,
     /// Show the frame inspector button.
     pub inspect_button: bool,
+    /// Show Screenshot in the device view's controls (off by default, for settings saved before it too; full screen's
+    /// More menu always has it).
+    pub screenshot_button: bool,
     pub detailed_timing: bool,
     /// Settings → Network. Off by default; a section that doesn't parse or validate is off.
     #[serde(deserialize_with = "crate::network::lenient")]
@@ -185,6 +188,7 @@ impl Default for Settings {
             overlay_opacity: 0.55,
             overlay_in_device_view: true,
             inspect_button: false,
+            screenshot_button: false,
             detailed_timing: false,
             network: Default::default(),
             rotation: crate::rotation::Rotation::Portrait,

@@ -311,8 +311,9 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     // While a shutdown is under way the same button forces it.
     let stop_label = if matches!(phase, Phase::Stopping) { "Force stop" } else { "Stop" };
     let show_inspect = app.model.settings.inspect_button;
+    let show_screenshot = app.model.settings.screenshot_button;
     let show_carrier = super::carrier::wants_dock_button(app);
-    let count = 7.0 + show_inspect as u8 as f32 + show_carrier as u8 as f32;
+    let count = 6.0 + show_screenshot as u8 as f32 + show_inspect as u8 as f32 + show_carrier as u8 as f32;
     let width = count * 72.0 + 32.0;
     let dock = Rect::from_center_size(area.center() - vec2(0.0, 6.0), vec2(width, 70.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(dock), |ui| {
@@ -347,7 +348,9 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                     if show_carrier {
                         super::carrier::dock_button(app, ui);
                     }
-                    if widgets::dock_button(ui, &p, icons::CAMERA, "Screenshot", running || paused, None).clicked() {
+                    if show_screenshot
+                        && widgets::dock_button(ui, &p, icons::CAMERA, "Screenshot", running || paused, None).clicked()
+                    {
                         app.model.screenshot();
                     }
                     if show_inspect

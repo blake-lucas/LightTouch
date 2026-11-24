@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -82,7 +81,8 @@ internal data class DeviceSkin(
 internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boolean) -> Unit, screen: @Composable (Modifier) -> Unit,
                          modifier: Modifier = Modifier, haptics: Boolean = true, pixels: IntSize? = null, multiple: Int = 0,
                          realPxPerMm: Float? = null) {
-    BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
+    // Not clipped: the device page lets the drawn device run under its dock and off the screen's edges.
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val density = LocalDensity.current.density
         // The room, for the Screen scaling preview's prediction of this view.
         val room = IntSize((maxWidth.value * density).toInt(), (maxHeight.value * density).toInt())

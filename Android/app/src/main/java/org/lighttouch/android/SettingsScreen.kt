@@ -87,6 +87,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
                     ActionRow(LtIcons.Layers, "Screen scaling", s.scaling.label + if (s.scaling == ScreenScaling.PIXEL_PERFECT && s.integerScale > 0) ", ${s.integerScale}×" else "",
                         tag = "open_scaling") { scalingOpen = true }
+                    SwitchRow(LtIcons.Camera, "Screenshot button", "Adds Screenshot to the controls under the device. Full screen's menu always has it",
+                        s.screenshotButton, "screenshot_toggle") { s.screenshotButton = it }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
                 SettingsGroup("Performance") {
