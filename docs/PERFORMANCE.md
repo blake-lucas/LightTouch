@@ -105,6 +105,8 @@ cache misses (the jump-cache entry, then the TB), because both caches that avoid
 | --- | --- | --- |
 | Cross-page TB chaining on the iPhone 5 too, as on the other boards (`LT_CROSS_PAGE_CHAIN=off` for A/B) | app | 31.9 → 36.6 fps (4 boots, every round faster), core 0 CPU per frame 29.0 → 25.0 ms (host-side) |
 | The indirect-branch site cache and return-address stack in TBs both AP cores share: fills serialized and ordered, hits re-read the key (`LT_INDIRECT_CACHE=off`, engine `LT_IBTC_PARALLEL=off`) | `69a8275a85`, app | With chaining on in both arms: 36.2 → 39.9 fps, core 0 CPU per frame 25.3 → 22.9 ms; TB lookups ~31% → ~7% of core 0's samples, translated code 24% → 42% (both rows) |
+| ↳ Both rows, boot | | Boot to the lock screen 82–88 → 67–68 s (host-side, 2 boots each). **Poco** F3, Epic Citadel: 15/17 → 22/21 fps |
+| A broadcast TLBI by ASID flushes only that address space on each AP core, as the local TLBIASID does (`LT_TLBIASID_IS=off` for A/B) | `d58b981bde` | It was a full flush of both cores (TLBs, every address space's jump cache, the indirect-branch contexts). ~5 a second in the game: 39.8 → 41.2 fps, core 0 CPU per frame 22.7 → 22.0 ms (2 boots each, every round but one faster) |
 | ↳ Not a lead: the TLB shootdown mode in-game (`LT_TLB_SHOOTDOWN=queued`) | | Broadcasts fall to ~100/s in the game: 32.3 → 31.4 fps, within noise. GL calls with the BQL again (`LT_A6_GL_UNLOCKED=off`) 32.3 → 30.0 fps, BQL waits 7.1 → 10.2% of wall |
 
 Left after these: ~8% of core 0 waiting for the GL thread on synchronous calls (`glq_wait_idle`, spinning on
