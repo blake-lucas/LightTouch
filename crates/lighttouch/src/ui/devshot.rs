@@ -1,6 +1,6 @@
 //! Developer hook for checking the UI where nothing can capture the screen (over ssh on macOS or Windows):
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
-//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
+//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
@@ -66,7 +66,7 @@ pub fn start_page() -> Option<Page> {
         "licenses" => Some(Page::Licenses),
         "network" => Some(Page::Network),
         "carrier" => Some(Page::Carrier),
-        "screen-scaling" | "ipad-size" => Some(Page::ScreenScaling),
+        "screen-scaling" | "ipad-size" | "scaling-full" => Some(Page::ScreenScaling),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,
@@ -77,6 +77,10 @@ pub fn start_page() -> Option<Page> {
 pub fn start(app: &mut App) {
     if std::env::var_os("LIGHTTOUCH_UI_START").is_some() {
         app.model.start(false);
+    }
+    // LIGHTTOUCH_UI_PAGE=scaling-full opens Screen scaling's full screen preview.
+    if std::env::var("LIGHTTOUCH_UI_PAGE").is_ok_and(|p| p == "scaling-full") {
+        app.screen_scaling.fullscreen = Some(Instant::now());
     }
     if let Some(firmware) = std::env::var("LIGHTTOUCH_UI_FIRMWARE")
         .ok()

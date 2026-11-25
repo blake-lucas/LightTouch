@@ -137,7 +137,7 @@ pub struct ScreenScalingState {
     /// The preview turned with its rotate button (the device page's rotation is its own).
     rotation: Rotation,
     /// The sample filling the display as full screen would show it, until Esc or a click.
-    fullscreen: Option<std::time::Instant>,
+    pub(super) fullscreen: Option<std::time::Instant>,
     pictures: HashMap<(Sample, Screen), (ColorImage, Scaled)>,
 }
 
@@ -800,19 +800,50 @@ fn full_preview(app: &mut App, ctx: &egui::Context, draft: f32) {
                 texture.update(ctx, "scaling-preview", false, settings.scaling, image.size, px, || image.clone());
                 texture.paint(&ui.painter().with_clip_rect(rect), shown, rotation, false);
             }
-            let since = app.screen_scaling.fullscreen.unwrap_or_else(std::time::Instant::now);
-            super::guest::hint_at(
-                ui,
-                egui::pos2(rect.center().x, rect.bottom() - 40.0),
-                since,
-                "Esc or click to leave",
+            // What's applied, as Android's full screen preview says it: the method and its factor, the size rendered.
+            let across = if rotation.landscape() { pixels[1] } else { pixels[0] };
+            let factor = times(shown.width() * ppp / across as f32);
+            let title = match settings.scaling {
+                Scaling::PixelPerfect => format!("Pixel perfect {factor}"),
+                method => format!("{} scaling {factor}", method.label()),
+            };
+            let real =
+                settings.scaling != Scaling::PixelPerfect && device_frame::real_scale(&skin, &settings, ctx).is_some();
+            let detail = format!(
+                "{:.0} × {:.0} rendered{} · Esc or click to leave",
+                shown.width() * ppp,
+                shown.height() * ppp,
+                if real { " · real size" } else { "" },
             );
+            scaling_label(ui, rect, &title, &detail);
         },
     );
     if leave {
         app.screen_scaling.fullscreen = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
+}
+
+/// The full screen preview's label: a dark pill near the bottom with the method and factor over the size rendered.
+fn scaling_label(ui: &Ui, full: Rect, title: &str, detail: &str) {
+    let painter = ui.painter();
+    let title = painter.layout_no_wrap(title.into(), FontId::new(16.0, theme::medium()), Color32::WHITE);
+    let detail = painter.layout_no_wrap(
+        detail.into(),
+        FontId::new(13.0, egui::FontFamily::Proportional),
+        Color32::from_white_alpha(200),
+    );
+    let below = title.size().y + 4.0;
+    let size = vec2(title.size().x.max(detail.size().x) + 40.0, below + detail.size().y + 24.0);
+    let pill = Rect::from_center_size(egui::pos2(full.center().x, full.bottom() - 32.0 - size.y / 2.0), size);
+    painter.rect_filled(pill, CornerRadius::same(18), Color32::from_black_alpha(190));
+    let top = pill.top() + 12.0;
+    painter.galley(egui::pos2(pill.center().x - title.size().x / 2.0, top), title, Color32::WHITE);
+    painter.galley(
+        egui::pos2(pill.center().x - detail.size().x / 2.0, top + below),
+        detail,
+        Color32::from_white_alpha(200),
+    );
 }
 
 /// "2×", "2.37×".
