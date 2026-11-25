@@ -188,10 +188,12 @@ pub fn ipad(d: &IPad, hardware: &DeviceInfo, serial: &str) -> BootConfig {
         machine += ",baseband=on";
     }
     machine += &options(&d.machine_options);
-    let mut argv: Vec<String> = ["LightTouchMac", "-M", &machine, "-display", "none", "-monitor", "none", "-no-reboot"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let accel = accel(false);
+    let mut argv: Vec<String> =
+        ["LightTouchMac", "-M", &machine, "-accel", &accel, "-display", "none", "-monitor", "none", "-no-reboot"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     argv.extend(["-audio", "driver=none", "-serial", serial].iter().map(|s| s.to_string()));
     BootConfig { argv, machine: board.clone() }
 }
@@ -234,8 +236,12 @@ pub fn ipod(d: &IPod, hardware: &DeviceInfo, serial: &str, extra: &[String]) -> 
         machine += &format!(",gid-blobs={}", escape(b));
     }
     machine += &options(&d.machine_options);
+    let accel = accel(false);
     let mut argv: Vec<String> =
-        ["LightTouchMac", "-M", &machine, "-m", &d.memory, "-display", "none", "-no-shutdown"].iter().map(|s| s.to_string()).collect();
+        ["LightTouchMac", "-M", &machine, "-accel", &accel, "-m", &d.memory, "-display", "none", "-no-shutdown"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     argv.extend(["-audio", "driver=none", "-serial", serial].iter().map(|s| s.to_string()));
     argv.extend(extra.iter().cloned());
     BootConfig { argv, machine: hardware.machine.clone() }
@@ -265,6 +271,8 @@ pub fn ipod1g(d: &IPod1G, hardware: &DeviceInfo, serial: &str) -> BootConfig {
         "LightTouchMac".into(),
         "-M".into(),
         machine,
+        "-accel".into(),
+        accel(false),
         "-drive".into(),
         format!("if=pflash,format=raw,file={}", escape(&d.writable_nor)),
         "-display".into(),
@@ -278,14 +286,17 @@ pub fn ipod1g(d: &IPod1G, hardware: &DeviceInfo, serial: &str) -> BootConfig {
     BootConfig { argv, machine: hardware.machine.clone() }
 }
 
-/// The iPhone 5's TCG options, as the app's runtime sets them for the prepared device (`boot_route` in
-/// Portable/src/Storage.cpp): its four cores on threads, jumps chained across guest pages and indirect branches
-/// cached in their TBs (iOS never remaps a code page to other code in place). The restore and seal boots are guest
-/// CPU-bound once their fixed waits are out; the same `LT_CROSS_PAGE_CHAIN=off` / `LT_INDIRECT_CACHE=off` switches
-/// turn the two off for A/B runs.
-fn iphone5_accel() -> String {
+/// The TCG options the app's runtime starts the prepared device with (`boot_route` in Portable/src/Storage.cpp), so
+/// the preparation boots run as fast as the device later does: jumps chained across guest pages and indirect branches
+/// cached in their TBs (iOS never remaps a code page to other code in place), and on the iPhone 5 (`multi`) its cores
+/// on threads. The restore, keybag and first boots are guest CPU-bound once their fixed waits are out;
+/// `LT_CROSS_PAGE_CHAIN=off` / `LT_INDIRECT_CACHE=off` turn the two off for A/B runs, as they do in the app.
+pub fn accel(multi: bool) -> String {
     let on = |key: &str| std::env::var(key).as_deref() != Ok("off");
-    let mut accel = String::from("tcg,thread=multi");
+    let mut accel = String::from("tcg");
+    if multi {
+        accel += ",thread=multi";
+    }
     if on("LT_CROSS_PAGE_CHAIN") {
         accel += ",cross-page-chain=on";
     }
@@ -344,7 +355,7 @@ pub fn iphone5_net(
         "-M".into(),
         machine,
         "-accel".into(),
-        iphone5_accel(),
+        accel(true),
         "-display".into(),
         "none".into(),
         "-monitor".into(),
@@ -395,6 +406,8 @@ mod tests {
                 "LightTouchMac",
                 "-M",
                 "iPod-Touch-4G,kboot=/a/kboot.bin,nor-rw=/a/nor,,1.bin,nand=/a/nand,die-id=0x1:0x2",
+                "-accel",
+                "tcg,cross-page-chain=on,indirect-cache=on",
                 "-display",
                 "none",
                 "-monitor",
