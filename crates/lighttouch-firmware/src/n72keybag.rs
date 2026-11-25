@@ -72,10 +72,13 @@ pub fn run(
         file("gid-blobs.bin"),
         boot::options(machine),
     );
+    let accel = boot::accel(false);
     let argv: Vec<String> = [
         "LightTouchDevice",
         "-M",
         &m,
+        "-accel",
+        &accel,
         "-m",
         "128M",
         "-display",

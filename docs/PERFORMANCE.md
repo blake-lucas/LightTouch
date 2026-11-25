@@ -135,6 +135,14 @@ interleaved pairs with `LT_HEADPHONES=1/0` on one engine. vCPU busy is host-side
 | --- | --- | --- |
 | Headphones in the iPhone 4's and iPad's jack (`headphones=on`, both apps' default; `LT_HEADPHONES=0/1` overrides) | `05526e8d07`, `c324156a4e` | The jack is the CD3282 Mikey's (0x0c bit 3, type detect through the PMU's vector 0x17/0x29, 0x0c bit 0 HeadphonesOnly), not the codec's; iOS's volume HUD then reads "headphones" (iPhone 4 4.2.1 and 4.3.5: "ringer (headphones)"). In-guest, mediaserverd on the speaker route: iPhone 4 6.1.3 Doodle Jump 11.3% of samples (`QuadBiquad` 6.3%, `SingleBiquad` 1.4%, BoostClip, `vDSP_maxmgv`) → 1.9% (no filters); iPad 5.1.1 Jetpack title 6.2% (`QuadBiquad` 3.5%) → 1.7%. Host-side vCPU busy: **iPhone 4 Doodle Jump (60 fps either way) 44.3/37.4/40.5 → 42.6/37.2/35.4%; iPad Jetpack title 77.7/80.7/85.9 → 74.5/66.0/75.8% at 42.6/28.5/26.8 → 47.1/52.8/30.0 fps** (3 pairs each; llvmpipe frame rates swing a lot between runs). On the Headphones route iOS leaves the PCM at full scale and sets the volume in the CS42L61's 0x22, which the codec model now applies (falling back to the speaker's PCM while that is muted and the speaker plays). Detect, HUD and host sound also checked on iPhone 4 4.2.1/4.3.5 and iPad 3.2.2/4.2.1. Phones not measured. |
 
+### Other boards: the iPhone 5's speedups (engine `dev/a6-backport`, 2026-11-25)
+
+The Proxmox host (Ryzen 7 3700X, RTX 2070 Super, shared with other services: load 3–10 during these runs), headless.
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Preparation's keybag and first boots on every other board (`firmwarekit`: the S5L8920/8930 one-shots and the iPod touch 2G's keybag boot) with the app's single-threaded TCG options, chaining and the indirect caches (`LT_CROSS_PAGE_CHAIN=off` / `LT_INDIRECT_CACHE=off` for A/B) | app | Host-side, clean preparations, interleaved: **iPad 5.1.1 87.9/85.4 → 71.5/72.3 s** (first boot 55.0/56.0 → 44.5/44.0 s), **iPhone 3GS 5.1.1 83.4/78.8 → 68.9/68.5 s** (53.5/52.5 → 43.5/42.5 s), 2 pairs each; iPod touch 4G 6.1.6, 3 pairs: 97.6/94.6/92.8 → 93.9/89.6/93.3 s, the keybag boot 11.1–12.6 → 9.1–9.6 s but the first boot unchanged (63–66.5 s either way; it waits more than it runs); iPod touch 2G 4.2.1, 1 pair: 21.4 → 21.5 s (keybag boot 7.5 → 6.5 s). All four prepared devices start to their home screens. Phones not measured |
+
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
 Guest `n81ap-10B500` on the Poco F3 (`fcbench.py APK 30 n81-doodlejump`, `n81-jetpack`,
