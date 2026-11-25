@@ -6,6 +6,7 @@ use super::guest::ButtonControl;
 use super::{App, Dialog, Page, icons, overlay, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
+use lighttouch_model::settings::Scaling;
 use std::time::{Duration, Instant};
 
 const BAR: f32 = 88.0;
@@ -38,8 +39,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         |space| device_frame::place_for(&skin, space, rotation, false, &app.model.settings, &ctx, pixels).screen;
     let fit = place(full);
     let controls = app.model.settings.fullscreen_controls;
-    let docked = controls && (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
-    let screen = if docked { place(full.shrink2(vec2(0.0, BAR))) } else { fit };
+    let mut docked = controls && (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
+    let mut screen = if docked { place(full.shrink2(vec2(0.0, BAR))) } else { fit };
+    // Pixel perfect never steps down a multiple for the bar (a 2x landscape iPod touch 4G on a 1440-pixel display
+    // became 1x): the bar takes room at the bottom only, the screen moving up, or it floats over the screen instead.
+    if docked && app.model.settings.scaling == Scaling::PixelPerfect && screen.width() < fit.width() - 0.5 {
+        let raised = place(Rect::from_min_max(full.min, full.max - vec2(0.0, BAR)));
+        (screen, docked) = if raised.width() >= fit.width() - 0.5 { (raised, true) } else { (fit, false) };
+    }
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
     let editing = app.model.gamepads.editing;
