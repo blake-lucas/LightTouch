@@ -114,7 +114,9 @@ cache misses (the jump-cache entry, then the TB), because both caches that avoid
 
 Measured and rejected: queueing `glBindFramebuffer` when the share group has no IOSurface-backed textures (it waited
 for the whole GL queue): core 0's GL time 10–20% → 3–5% of wall, but 46.6 → 43.4 fps over 3 pairs, two rounds
-pinned at 30 fps with core 0 idle 30% of the time; the GL thread became the pace-setter.
+pinned at 30 fps with core 0 idle 30% of the time; the GL thread became the pace-setter. Reading the queued
+present back into a pixel buffer behind a fence, so the GL thread doesn't wait for the GPU: core 0's GL time 17% →
+5% and the vCPUs' wait behind the queue ~110 → ~17 ms/s, but 44.2 → 43.3 fps over 3 pairs (within noise).
 
 Left after these: the GL thread's queue behind `glBindFramebuffer`, a sync call (~5% of core 0 waiting), Neon float
 helpers ~7.5%, and the guest itself 39% in the kernel.
