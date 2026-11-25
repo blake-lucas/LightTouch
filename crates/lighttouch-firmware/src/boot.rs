@@ -278,6 +278,23 @@ pub fn ipod1g(d: &IPod1G, hardware: &DeviceInfo, serial: &str) -> BootConfig {
     BootConfig { argv, machine: hardware.machine.clone() }
 }
 
+/// The iPhone 5's TCG options, as the app's runtime sets them for the prepared device (`boot_route` in
+/// Portable/src/Storage.cpp): its four cores on threads, jumps chained across guest pages and indirect branches
+/// cached in their TBs (iOS never remaps a code page to other code in place). The restore and seal boots are guest
+/// CPU-bound once their fixed waits are out; the same `LT_CROSS_PAGE_CHAIN=off` / `LT_INDIRECT_CACHE=off` switches
+/// turn the two off for A/B runs.
+fn iphone5_accel() -> String {
+    let on = |key: &str| std::env::var(key).as_deref() != Ok("off");
+    let mut accel = String::from("tcg,thread=multi");
+    if on("LT_CROSS_PAGE_CHAIN") {
+        accel += ",cross-page-chain=on";
+    }
+    if on("LT_INDIRECT_CACHE") {
+        accel += ",indirect-cache=on";
+    }
+    accel
+}
+
 /// The iPhone 5 (-M iPhone-5, S5L8950): kboot on its PPN store, the modem always
 /// (baseband=on, its cell0 netdev and IMEI), Wi-Fi a BCM4334 on the HSIC port (the machine has no
 /// wifi=) with the unit's MAC, and no die-id or USB keyboard. Its four cores run multi-threaded TCG.
@@ -327,7 +344,7 @@ pub fn iphone5_net(
         "-M".into(),
         machine,
         "-accel".into(),
-        "tcg,thread=multi".into(),
+        iphone5_accel(),
         "-display".into(),
         "none".into(),
         "-monitor".into(),
