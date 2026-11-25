@@ -72,7 +72,7 @@ tools/perf/pgo-collect.sh build/android/LightTouch-debug.apk engine-arm64.profda
 `pgo-collect.sh` runs each `tools/perf/fcbench.py` preset once and has the engine write its counters for a
 window of gameplay (`LT_PGO_RESET`, `LT_PGO_DUMP`; the default is 150 to 250 s after start). Functions
 changed since the profile was taken are compiled without it, so refresh the profile after large engine
-changes. Configure options must match those of the instrumented build. The raw profile of each game stays in `OUT.d`, so a game can be weighted when merging (`llvm-profdata merge -weighted-input=3,jetpack.profraw ...`); the shipped profile weights Jetpack Joyride 3×.
+changes. Configure options must match those of the instrumented build. The raw profile of each game stays in `OUT.d`, so a game can be weighted when merging (`llvm-profdata merge -weighted-input=3,jetpack.profraw ...`); the shipped profile weights Jetpack Joyride 3×. Collect from a build in the release layout (`release-VER/app` beside `release-VER/engine`): clang finds a file's functions by their path relative to the build directory, and a profile taken from `~/git-projects/qemu-ios` left the static functions of release and CI builds without one.
 
 ## Inputs that are not in this repository
 
@@ -192,7 +192,8 @@ Where the inputs come from:
   whose `usbmuxd` LightTouch.app carries (as `LT_MAC_VENDOR` is locally).
 - **Pinned copies of this machine's inputs**, in the `ci-inputs-1` pre-release: the AppImage tool and runtime
   (upstream publishes them only as "continuous"), the desktop notices, and for Android the ANGLE libraries, the frontend
-  notices and the engine PGO profile. To change one, upload a new `ci-inputs-N` release and update the manifest.
+  notices and the engine PGO profile (its version 2 is in `ci-inputs-2`). To change one, upload a new `ci-inputs-N`
+  release and update the manifest.
 
 The APK is signed with the `ANDROID_DEBUG_KEYSTORE` repository secret (base64 of the keystore the releases are signed
 with) if set; otherwise with a key made for the run, and that APK doesn't install over a published one.

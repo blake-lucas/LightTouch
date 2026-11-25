@@ -32,8 +32,9 @@
       "extract": true
     },
     "android-engine-pgo": {
-      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-1/engine-arm64-pgo.tar.gz",
-      "sha256": "0c3cbb3f010acab8d608b10856539a5fc0e9bfda1ca99b88266cb77762beaf9f",
+      "comment": "Version 2 (ci-inputs-2): the ci-inputs-1 profile with its paths in the release layout, merged with Epic Citadel on the iPhone 5",
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-2/engine-arm64-pgo-v2.tar.gz",
+      "sha256": "13a1a4a45fcc3927f76e294c08234114b6f3c3a735bb1948ad3f127ce812272f",
       "extract": true
     },
     "macos-usb-bridge": {
