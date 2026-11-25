@@ -9,6 +9,16 @@ use lighttouch_model::session::Phase;
 use std::time::{Duration, Instant};
 
 const BAR: f32 = 88.0;
+/// The bar's padding beyond its outermost button.
+const PAD: f32 = 36.0;
+
+/// How far the buttons reach left of Home's centre (Volume down's edge).
+const LEFT: f32 = 150.0 + 24.0;
+
+/// How far the buttons reach right of Home's centre (More's edge, or the frame inspector's past it).
+fn right(app: &App) -> f32 {
+    if app.model.settings.inspect_button { 205.0 + 22.0 } else { 150.0 + 24.0 }
+}
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
@@ -73,15 +83,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         ctx.request_repaint_after(Duration::from_millis(500));
     }
     if visible {
+        // As wide as its buttons need, or the window allows (the buttons then move closer together).
+        let width = (LEFT + right(app) + 2.0 * PAD).min(full.width() - 32.0);
         let bar = if docked {
-            Rect::from_center_size(
-                egui::pos2(full.center().x, screen.bottom() + BAR / 2.0),
-                vec2(420.0f32.min(full.width() - 32.0), 64.0),
-            )
+            Rect::from_center_size(egui::pos2(full.center().x, screen.bottom() + BAR / 2.0), vec2(width, 64.0))
         } else {
             Rect::from_center_size(
                 egui::pos2(full.center().x, full.bottom() - BAR / 2.0 - 12.0),
-                vec2(420.0f32.min(full.width() - 32.0), BAR - 16.0),
+                vec2(width, BAR - 16.0),
             )
         };
         if !docked {
@@ -92,7 +101,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 }
 
 fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
-    let center = bar.center();
+    // Home's centre, placed so the buttons keep the same padding on both ends of the bar.
+    let scale = ((bar.width() - 2.0 * PAD) / (LEFT + right(app))).clamp(0.0, 1.0);
+    let center = egui::pos2(bar.left() + PAD + LEFT * scale, bar.center().y);
     let keys = [
         (device_frame::VOLUME_DOWN, icons::VOLUME_DOWN, -150.0, 24.0, "Volume down"),
         (device_frame::VOLUME_UP, icons::VOLUME_UP, -95.0, 24.0, "Volume up"),
@@ -100,7 +111,7 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         (device_frame::POWER, icons::POWER, 95.0, 24.0, "Sleep/Wake"),
     ];
     for (button, icon, dx, radius, label) in keys {
-        let c = center + vec2(dx, 0.0);
+        let c = center + vec2(dx * scale, 0.0);
         let rect = Rect::from_center_size(c, vec2(radius * 2.0, radius * 2.0));
         let response =
             ui.interact(rect, ui.scope_id().with(("fs-key", button)), Sense::click_and_drag()).on_hover_text(label);
@@ -143,7 +154,7 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
     }
     // The frame inspector, when its button is on (as on the home view's dock).
     if app.model.settings.inspect_button {
-        let c = center + vec2(205.0, 0.0);
+        let c = center + vec2(205.0 * scale, 0.0);
         let rect = Rect::from_center_size(c, vec2(44.0, 44.0));
         let response =
             ui.interact(rect, ui.scope_id().with("fs-inspect"), Sense::click()).on_hover_text("Inspect frames");
@@ -154,7 +165,7 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         }
     }
     // More: leave full screen, pause, stop.
-    let more = Rect::from_center_size(center + vec2(150.0, 0.0), vec2(44.0, 44.0));
+    let more = Rect::from_center_size(center + vec2(150.0 * scale, 0.0), vec2(44.0, 44.0));
     let response = ui.interact(more, ui.scope_id().with("fs-more"), Sense::click()).on_hover_text("More");
     ui.painter().circle_filled(
         more.center(),
