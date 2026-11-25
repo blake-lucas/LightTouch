@@ -100,6 +100,10 @@ pub const TESTED: &[&str] = &[
     "k48ap-9B206",  // iPad 5.1.1
 ];
 
+/// Firmwares that work on LightTouch but stay Experimental (the iPhone 5 runs what it was tried with, slower than the
+/// other boards): the prepare screens list their device with the tested ones. Android's workingFirmwares is the same.
+pub const WORKING: &[&str] = &["n42ap-14G61"];
+
 /// Boards that stop at a white screen after preparation (the S5L8900's iBoot never boots the kernel): every
 /// version shows as not starting, whatever the catalog says. Android's DOESNT_START_BOARDS is the same list.
 pub const DOESNT_START: &[&str] = &["n45ap", "m68ap"];
@@ -300,6 +304,11 @@ impl DeviceGroup<'_> {
         self.firmwares.iter().copied().filter(|f| f.support().tested()).collect()
     }
 
+    /// Listed under "Tested on LightTouch": a version is tested, or works there as an experiment (`WORKING`).
+    pub fn works(&self) -> bool {
+        self.firmwares.iter().any(|f| f.support().tested() || WORKING.contains(&f.id.as_str()))
+    }
+
     /// "Tested: iOS 3.1.3, 4.2.1 · 23 more to try", or "iOS 1.0 to 3.1.3".
     pub fn summary(&self) -> String {
         let tested = self.tested();
@@ -423,6 +432,11 @@ mod tests {
         }
         assert_eq!(catalog.find("n45ap-4B1").unwrap().support(), Support::DoesntStart);
         assert_eq!(catalog.find("m68ap-1A543a").unwrap().support(), Support::DoesntStart);
+        // The iPhone 5 is listed with the tested devices, right after the iPhone 4, still marked Experimental.
+        let works: Vec<&str> = devices.iter().filter(|d| d.works()).map(|d| d.product_type.as_str()).collect();
+        let at = |product: &str| works.iter().position(|p| *p == product).unwrap();
+        assert_eq!(at("iPhone5,2"), at("iPhone3,1") + 1, "{works:?}");
+        assert_eq!(catalog.find("n42ap-14G61").unwrap().support(), Support::Experimental);
     }
 
     #[test]

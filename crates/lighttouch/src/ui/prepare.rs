@@ -156,8 +156,7 @@ fn device_step(app: &mut App, ui: &mut Ui) {
         }
     });
     let groups = Catalog::get().devices();
-    let (tested, untested): (Vec<&DeviceGroup>, Vec<&DeviceGroup>) =
-        groups.iter().partition(|g| !g.tested().is_empty());
+    let (tested, untested): (Vec<&DeviceGroup>, Vec<&DeviceGroup>) = groups.iter().partition(|g| g.works());
     for (title, list) in [("Tested on LightTouch", tested), ("Not tested on LightTouch yet", untested)] {
         if list.is_empty() {
             continue;
