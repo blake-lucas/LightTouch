@@ -120,7 +120,10 @@ present back into a pixel buffer behind a fence, so the GL thread doesn't wait f
 5% and the vCPUs' wait behind the queue ~110 → ~17 ms/s, but 44.2 → 43.3 fps over 3 pairs (within noise).
 
 Left after these: the GL thread's queue behind `glBindFramebuffer`, a sync call (~5% of core 0 waiting), Neon float
-helpers ~7.5%, and the guest itself 39% in the kernel.
+helpers ~7.5%, and the guest itself 39% in the kernel. Most of the float work is mediaserverd's speaker
+protection on the speaker route (named from the 14G61 shared cache's symbols): `clsp::CLSPKernel_v1::Process` 2.6%
+and the speaker EQ's `vDSP_biquadm` 3.1% of both AP cores' samples, the work a headphone route removed on the iPod
+touch 4G; the iPhone 5's CS42L65 model has no jack detect yet.
 
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
