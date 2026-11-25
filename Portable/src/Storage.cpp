@@ -1742,7 +1742,7 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         const std::string board = d->lock.at("board").string();
         const auto route = lt::boot_route(board, d->lock);
         const bool n72 = route.family == lt::BootFamily::S5L8720, s5l8900 = route.family == lt::BootFamily::S5L8900;
-        // The iPhone 5 (Light Touch for Mac's BootRecipe.iPhone5): no die-id or headphones option, its Wi-Fi a USB
+        // The iPhone 5 (Light Touch for Mac's BootRecipe.iPhone5): no die-id option, its Wi-Fi a USB
         // HSIC device given the identity's MAC, its modem's IMEI a -global, and multi-threaded TCG for its two cores.
         const bool a6 = board == "n42ap";
         std::string wifi_mac;
@@ -1843,8 +1843,9 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                        v.second.kind == lt::Json::Boolean ? (v.second.text == "true" ? "on" : "off") : v.second.text);
             }
         }
-        // iOS then routes sound to the jack: stereo, without its speaker EQ and limiter (which cost guest CPU).
-        if (c->headphones && !a6)
+        // iOS then routes sound to the jack: stereo, without its speaker EQ and limiter (which cost guest CPU). The
+        // iPhone 5 plays through its codec's port instead of the speaker amplifier's (engine hw/arm/cs42l65.c).
+        if (c->headphones)
             option("headphones", "on");
         d->args = {"LightTouch", "-M", machine};
         lt::require(c->network_mode <= 2, "Invalid network mode");
