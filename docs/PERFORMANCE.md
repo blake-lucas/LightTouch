@@ -112,6 +112,10 @@ cache misses (the jump-cache entry, then the TB), because both caches that avoid
 | **Poco**: the second AP core spins on a contended BQL as the first does (Android; `LT_BQL_SPIN_CPU1=off` for A/B) | `e3a5935990` | 4 boots ABBA: 22/21 and 15/17 → 25/24 and 19/19 fps (the phone warmed over the run), BQL waits 13–14% → 9% of wall, waits over 100 µs ~2.4K → ~0.5K a round |
 | ↳ Not a lead: the TLB shootdown mode in-game (`LT_TLB_SHOOTDOWN=queued`) | | Broadcasts fall to ~100/s in the game: 32.3 → 31.4 fps, within noise. GL calls with the BQL again (`LT_A6_GL_UNLOCKED=off`) 32.3 → 30.0 fps, BQL waits 7.1 → 10.2% of wall |
 
+Measured and rejected: queueing `glBindFramebuffer` when the share group has no IOSurface-backed textures (it waited
+for the whole GL queue): core 0's GL time 10–20% → 3–5% of wall, but 46.6 → 43.4 fps over 3 pairs, two rounds
+pinned at 30 fps with core 0 idle 30% of the time; the GL thread became the pace-setter.
+
 Left after these: the GL thread's queue behind `glBindFramebuffer`, a sync call (~5% of core 0 waiting), Neon float
 helpers ~7.5%, and the guest itself 39% in the kernel.
 
