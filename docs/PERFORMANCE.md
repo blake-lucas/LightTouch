@@ -93,6 +93,48 @@ Measured and rejected on the iPhone 5: reading each H5P layer page table once pe
 4 KiB page (`c9e5d9da7a`, reverted in `f691204f0e`): not visible in a desktop profile of the main loop, and on the
 Poco the main loop's BQL hold time stayed at ~26 ms/s.
 
+### iPhone 5, iOS 10.3.4: guest CPU in Epic Citadel (engine `dev/a6-bql`, 2026-11-24)
+
+Epic Citadel at a still street view on the Proxmox host (Ryzen 7 3700X, RTX 2070 Super, headless `run --control`),
+one boot per arm, interleaved, two 30 s rounds each. Both AP cores run ~92% of the time and core 0 is on-CPU the whole
+frame, so the frame rate follows the guest CPU. An engine sampler (`LT_SAMPLE=1000`, `c6e657437c`: host PC per vCPU
+thread with the guest's mode, process and thread) found ~30% of each AP core's host time in TB lookups, mostly two
+cache misses (the jump-cache entry, then the TB), because both caches that avoid lookups were off on this board.
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Cross-page TB chaining on the iPhone 5 too, as on the other boards (`LT_CROSS_PAGE_CHAIN=off` for A/B) | app | 31.9 → 36.6 fps (4 boots, every round faster), core 0 CPU per frame 29.0 → 25.0 ms (host-side) |
+| The indirect-branch site cache and return-address stack in TBs both AP cores share: fills serialized and ordered, hits re-read the key (`LT_INDIRECT_CACHE=off`, engine `LT_IBTC_PARALLEL=off`) | `69a8275a85`, app | With chaining on in both arms: 36.2 → 39.9 fps, core 0 CPU per frame 25.3 → 22.9 ms; TB lookups ~31% → ~7% of core 0's samples, translated code 24% → 42% (both rows) |
+| ↳ Both rows, boot | | Boot to the lock screen 82–88 → 67–68 s (host-side, 2 boots each). **Poco** F3, Epic Citadel: 15/17 → 22/21 fps |
+| A broadcast TLBI by ASID flushes only that address space on each AP core, as the local TLBIASID does (`LT_TLBIASID_IS=off` for A/B) | `d58b981bde` | It was a full flush of both cores (TLBs, every address space's jump cache, the indirect-branch contexts). ~5 a second in the game: 39.8 → 41.2 fps, core 0 CPU per frame 22.7 → 22.0 ms (2 boots each, every round but one faster) |
+| Desktop Linux: the present is queued on the GL thread, which reads the frame back and copies it into the guest's surface; the display, scaler and a stopping machine wait for it (`LT_PRESENT_ASYNC=off` for A/B) | `4fbfd3e596` | The vCPU waited ~5 ms a frame for `glFinish` + readback in the GL thread's sync call. 5 interleaved pairs: GL time on core 0 27% → 9% of wall, 38.4 → 41.3 fps without the pair host load disturbed; async arms 40.1–42.6 fps, sync 35.0–41.0 as the host's load moved |
+| The accelerometer's (LIS3DSH) FIFO watermark flag needs more than WTM samples (`LT_LIS3DSH_WTM_STRICT=off` for A/B) | `f056b2415a` | iOS sets WTM 1 on a level INT1 and drains only at two samples, so at one sample the AP core took the interrupt, read FIFO_SRC over I2C and returned ~90 times a sample (FIFO_SRC reads ~890 → 15/s, sample reads unchanged). 3 pairs: 39.5 → 48.4 fps, core 0 CPU per frame 24.3 → 15.7 ms and no longer saturated, all vCPUs' BQL waits 11% → 3.3% of wall, BQL takes 300K → 80K/s. **Poco** F3, 4 boots ABBA: 24/26 and 17/18 → 35/33 and 28/29 fps (the phone warmed over the run), BQL takes ~65K → ~24K/s per AP core, waits 8.6–9.5% → 4.8–5.3% of wall |
+| **Poco**: the second AP core spins on a contended BQL as the first does (Android; `LT_BQL_SPIN_CPU1=off` for A/B) | `e3a5935990` | 4 boots ABBA: 22/21 and 15/17 → 25/24 and 19/19 fps (the phone warmed over the run), BQL waits 13–14% → 9% of wall, waits over 100 µs ~2.4K → ~0.5K a round |
+| Preparation's restore and first boots (`firmwarekit`) with the app's TCG options: chaining and the indirect caches, as above (`LT_CROSS_PAGE_CHAIN=off` / `LT_INDIRECT_CACHE=off` for A/B) | app | Host-side, 5 clean preparations ABBA: 618–623 → 528–549 s; the first boot ("Finishing setup") 374–380 → 296–310 s, the restore 208 → 198–202 s. The prepared device starts to its home screen. Phones not measured |
+| Headphones in the iPhone 5's jack (`headphones=on`, both apps' default; `LT_HEADPHONES=0/1` overrides) | `60b57dcd34`, `1284eae8f6`, app | The jack is the CS42L65's Mikey block at 0x6a, the iPod touch 4G's driver (0x71 bit 7 plugged after a jack interrupt on GPIO 210, 0x72 bit 0 no mic); iOS's volume HUD then reads "Headphones" ("Ringer" without), and iOS plays through i2s0 instead of the speaker amplifier's MCA0. The A6's i2s ports now carry it with or without the jack (CTRL-bit-0 start, frame clock from the codec's 0x12), and i2s0 applies the headphone level iOS sets in 0x246. In-guest, mediaserverd's `CLSPKernel_v1::Process` 2.6% and `vDSP_biquadm` 3.1% of the AP samples → none. 3 interleaved pairs (the first speaker boot, under heavier host load, left out): 44.8 → 47.5 fps, core 0 CPU per frame 18.0 → 16.0 ms. **Poco**, Epic Citadel, arms started at 28–31 °C: speaker 28/32 and 32/34 → headphones 39/41 and 42/41 fps; a headphone arm straight after a speaker arm, uncooled, 31/31 |
+| ↳ Not a lead: the TLB shootdown mode in-game (`LT_TLB_SHOOTDOWN=queued`) | | Broadcasts fall to ~100/s in the game: 32.3 → 31.4 fps, within noise. GL calls with the BQL again (`LT_A6_GL_UNLOCKED=off`) 32.3 → 30.0 fps, BQL waits 7.1 → 10.2% of wall |
+
+Measured and rejected: queueing `glBindFramebuffer` when the share group has no IOSurface-backed textures (it waited
+for the whole GL queue): core 0's GL time 10–20% → 3–5% of wall, but 46.6 → 43.4 fps over 3 pairs, two rounds
+pinned at 30 fps with core 0 idle 30% of the time; the GL thread became the pace-setter. Reading the queued
+present back into a pixel buffer behind a fence, so the GL thread doesn't wait for the GPU: core 0's GL time 17% →
+5% and the vCPUs' wait behind the queue ~110 → ~17 ms/s, but 44.2 → 43.3 fps over 3 pairs (within noise).
+
+Left after these: the GL thread's queue behind `glBindFramebuffer`, a sync call (~5% of core 0 waiting), Neon float
+helpers ~7.5%, and the guest itself 39% in the kernel. mediaserverd was ~8% of both AP cores' samples (4.7%
+float helpers; the game's own float is 5.6%), most of it speaker protection and filtering, which the headphone row
+above removes.
+
+### iPhone 4 and iPad: headphones (engine `dev/a6-bql`, 2026-11-25)
+
+Desktop Linux VM (llvmpipe), headless `lighttouch run --control`, one 30 s capture per run after the game settles,
+interleaved pairs with `LT_HEADPHONES=1/0` on one engine. vCPU busy is host-side; the guest shares are in-guest
+(`LT_SAMPLE=1000`, symbols from each build's shared cache).
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Headphones in the iPhone 4's and iPad's jack (`headphones=on`, both apps' default; `LT_HEADPHONES=0/1` overrides) | `05526e8d07`, `c324156a4e` | The jack is the CD3282 Mikey's (0x0c bit 3, type detect through the PMU's vector 0x17/0x29, 0x0c bit 0 HeadphonesOnly), not the codec's; iOS's volume HUD then reads "headphones" (iPhone 4 4.2.1 and 4.3.5: "ringer (headphones)"). In-guest, mediaserverd on the speaker route: iPhone 4 6.1.3 Doodle Jump 11.3% of samples (`QuadBiquad` 6.3%, `SingleBiquad` 1.4%, BoostClip, `vDSP_maxmgv`) → 1.9% (no filters); iPad 5.1.1 Jetpack title 6.2% (`QuadBiquad` 3.5%) → 1.7%. Host-side vCPU busy: **iPhone 4 Doodle Jump (60 fps either way) 44.3/37.4/40.5 → 42.6/37.2/35.4%; iPad Jetpack title 77.7/80.7/85.9 → 74.5/66.0/75.8% at 42.6/28.5/26.8 → 47.1/52.8/30.0 fps** (3 pairs each; llvmpipe frame rates swing a lot between runs). On the Headphones route iOS leaves the PCM at full scale and sets the volume in the CS42L61's 0x22, which the codec model now applies (falling back to the speaker's PCM while that is muted and the speaker plays). Detect, HUD and host sound also checked on iPhone 4 4.2.1/4.3.5 and iPad 3.2.2/4.2.1. Phones not measured. |
+
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
 Guest `n81ap-10B500` on the Poco F3 (`fcbench.py APK 30 n81-doodlejump`, `n81-jetpack`,
