@@ -107,10 +107,11 @@ cache misses (the jump-cache entry, then the TB), because both caches that avoid
 | The indirect-branch site cache and return-address stack in TBs both AP cores share: fills serialized and ordered, hits re-read the key (`LT_INDIRECT_CACHE=off`, engine `LT_IBTC_PARALLEL=off`) | `69a8275a85`, app | With chaining on in both arms: 36.2 → 39.9 fps, core 0 CPU per frame 25.3 → 22.9 ms; TB lookups ~31% → ~7% of core 0's samples, translated code 24% → 42% (both rows) |
 | ↳ Both rows, boot | | Boot to the lock screen 82–88 → 67–68 s (host-side, 2 boots each). **Poco** F3, Epic Citadel: 15/17 → 22/21 fps |
 | A broadcast TLBI by ASID flushes only that address space on each AP core, as the local TLBIASID does (`LT_TLBIASID_IS=off` for A/B) | `d58b981bde` | It was a full flush of both cores (TLBs, every address space's jump cache, the indirect-branch contexts). ~5 a second in the game: 39.8 → 41.2 fps, core 0 CPU per frame 22.7 → 22.0 ms (2 boots each, every round but one faster) |
+| Desktop Linux: the present is queued on the GL thread, which reads the frame back and copies it into the guest's surface; the display, scaler and a stopping machine wait for it (`LT_PRESENT_ASYNC=off` for A/B) | `4fbfd3e596` | The vCPU waited ~5 ms a frame for `glFinish` + readback in the GL thread's sync call. 5 interleaved pairs: GL time on core 0 27% → 9% of wall, 38.4 → 41.3 fps without the pair host load disturbed; async arms 40.1–42.6 fps, sync 35.0–41.0 as the host's load moved |
 | ↳ Not a lead: the TLB shootdown mode in-game (`LT_TLB_SHOOTDOWN=queued`) | | Broadcasts fall to ~100/s in the game: 32.3 → 31.4 fps, within noise. GL calls with the BQL again (`LT_A6_GL_UNLOCKED=off`) 32.3 → 30.0 fps, BQL waits 7.1 → 10.2% of wall |
 
-Left after these: ~8% of core 0 waiting for the GL thread on synchronous calls (`glq_wait_idle`, spinning on
-`clock_gettime`), Neon float helpers ~7.5%, and the guest itself 39% in the kernel.
+Left after these: the GL thread's queue behind `glBindFramebuffer`, a sync call (~5% of core 0 waiting), Neon float
+helpers ~7.5%, and the guest itself 39% in the kernel.
 
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
