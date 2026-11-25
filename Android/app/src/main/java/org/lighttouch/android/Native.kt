@@ -22,7 +22,7 @@ internal object Native {
     external fun rename(libraryRoot: String, id: String, name: String): String
     external fun remove(libraryRoot: String, id: String): String
     /** A device's carrier settings: [error, carrier, mccMnc, registered, simPresent, bars, latitude, longitude,
-     *  dockButton, lastCaller, lastSender] ("1"/"0" for flags; error "" when it worked). */
+     *  lastCaller, lastSender] ("1"/"0" for flags; error "" when it worked). */
     external fun carrierGet(libraryRoot: String, id: String): Array<String>
     /** Check and save them (the same fields without the error); returns the error or "". */
     external fun carrierSet(libraryRoot: String, id: String, fields: Array<String>): String

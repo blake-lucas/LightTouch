@@ -61,6 +61,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let sent = app.model.session.as_ref().map(|s| s.sent_texts.clone()).unwrap_or_default();
     let gps = device.board == "n88ap" || device.board == "n42ap" || status.as_ref().is_some_and(|s| s.gps);
     let mut edited = saved.clone();
+    let mut button = app.model.settings.carrier_button;
     let mut problem: Option<String> = None;
     egui::ScrollArea::vertical().id_salt("carrier-page").auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(18.0);
@@ -220,9 +221,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::PHONE_CALL,
                     "Show Carrier button",
-                    "A dock button for calling the device, sending it texts and these settings",
+                    "On every iPhone: a dock button for calling the device, sending it texts and these settings",
                     |ui| {
-                        widgets::switch(ui, &p, &mut edited.dock_button);
+                        widgets::switch(ui, &p, &mut button);
                     },
                 );
             });
@@ -240,7 +241,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     .filter(|s| s.in_call() && !s.last_dialed.is_empty() && s.can_answer())
                     .map(|s| format!("{call}: {}", s.last_dialed))
                     .unwrap_or_else(|| call.to_string());
-                let how = if saved.dock_button {
+                let how = if button {
                     "The dock's Carrier button calls the device, sends it texts, answers and hangs up"
                 } else {
                     "Turn on Show Carrier button to call and text the device from the dock"
@@ -265,6 +266,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             ui.add_space(28.0);
         });
     });
+    if button != app.model.settings.carrier_button {
+        app.model.settings.carrier_button = button;
+        app.model.save_settings();
+    }
     if edited != saved {
         if let Err(e) = app.model.set_carrier(edited) {
             problem = Some(e);
@@ -302,9 +307,9 @@ fn note(ui: &mut Ui, p: &theme::Palette, text: &str) {
     });
 }
 
-/// Whether the session dock shows the Carrier button: the running device has a modem and its setting is on.
+/// Whether the session dock shows the Carrier button: the running device has a modem and the setting is on.
 pub fn wants_dock_button(app: &mut App) -> bool {
-    app.model.carrier_live() && app.model.carrier_settings().is_some_and(|s| s.dock_button)
+    app.model.settings.carrier_button && app.model.carrier_live()
 }
 
 /// The dock's Carrier button and its menu.

@@ -111,6 +111,9 @@ class AppSettings(private val context: Context) {
     /* Screenshot in the device page's dock: off by default, also for phones that had it before (full screen's menu keeps it). */
     private val screenshotButtonState = mutableStateOf(prefs.getBoolean("screenshotButton", false))
     var screenshotButton: Boolean get() = screenshotButtonState.value; set(v) { screenshotButtonState.value = v; prefs.edit().putBoolean("screenshotButton", v).apply() }
+    /* The Carrier button on every device with a modem (each device's own setting in 0.0.15's test builds). */
+    private val carrierButtonState = mutableStateOf(prefs.getBoolean("carrierButton", false))
+    var carrierButton: Boolean get() = carrierButtonState.value; set(v) { carrierButtonState.value = v; prefs.edit().putBoolean("carrierButton", v).apply() }
     /* The device page's dock tucked away to a tab at the right edge, so it doesn't cover the device. */
     private val dockHiddenState = mutableStateOf(prefs.getBoolean("dockHidden", false))
     var dockHidden: Boolean get() = dockHiddenState.value; set(v) { dockHiddenState.value = v; prefs.edit().putBoolean("dockHidden", v).apply() }

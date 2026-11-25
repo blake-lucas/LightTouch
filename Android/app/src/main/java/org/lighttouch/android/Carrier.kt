@@ -29,7 +29,7 @@ import org.json.JSONObject
 /** A device's carrier settings (Portable lt_carrier). */
 data class CarrierSettings(
     val carrier: String, val mccMnc: String, val registered: Boolean, val simPresent: Boolean, val bars: Int,
-    val latitude: Double, val longitude: Double, val dockButton: Boolean, val lastCaller: String, val lastSender: String,
+    val latitude: Double, val longitude: Double, val lastCaller: String, val lastSender: String,
 ) {
     val mcc get() = mccMnc.take(3)
     val mnc get() = mccMnc.drop(3)
@@ -42,12 +42,12 @@ data class CarrierSettings(
     fun toBundle() = Bundle().apply {
         putString("carrier", carrier); putString("mccMnc", mccMnc); putBoolean("registered", registered)
         putBoolean("simPresent", simPresent); putInt("bars", bars); putDouble("latitude", latitude); putDouble("longitude", longitude)
-        putBoolean("dockButton", dockButton); putString("lastCaller", lastCaller); putString("lastSender", lastSender)
+        putString("lastCaller", lastCaller); putString("lastSender", lastSender)
     }
 
     companion object {
         fun of(b: Bundle) = CarrierSettings(b.getString("carrier") ?: "", b.getString("mccMnc") ?: "", b.getBoolean("registered"),
-            b.getBoolean("simPresent"), b.getInt("bars"), b.getDouble("latitude"), b.getDouble("longitude"), b.getBoolean("dockButton"),
+            b.getBoolean("simPresent"), b.getInt("bars"), b.getDouble("latitude"), b.getDouble("longitude"),
             b.getString("lastCaller") ?: "", b.getString("lastSender") ?: "")
         val APPLE_PARK = 37.3349 to -122.0090
     }
@@ -251,8 +251,8 @@ private fun CarrierMenuItems(host: GuestHost, close: () -> Unit, ask: (CarrierDi
         onClick = { close(); host.navigate(Screen.CARRIER) }, modifier = Modifier.testTag("carrier_menu_settings"))
 }
 
-/** Whether the session shows the Carrier button: the device runs, has a modem, and its setting is on. */
-internal val GuestHost.carrierButton get() = active && selected?.cellular == true && carrier.settings?.dockButton == true
+/** Whether the session shows the Carrier button: the device runs, has a modem, and the (app-wide) setting is on. */
+internal val GuestHost.carrierButton get() = active && selected?.cellular == true && settings.carrierButton
 
 /** The dock's Carrier button and its menu. */
 @Composable
@@ -308,8 +308,8 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 if (device.board == "n88ap" || device.board == "n42ap" || carrier.status?.gps == true) LocationGroup(saved, carrier::save)
                 SettingsGroup("Session dock") {
-                    SwitchRow(LtIcons.Signal, "Show Carrier button", "A dock button for calling the device, sending it texts and these settings",
-                        saved.dockButton, "carrier_dock_toggle") { carrier.save(saved.copy(dockButton = it)) }
+                    SwitchRow(LtIcons.Signal, "Show Carrier button", "On every iPhone: a dock button for calling the device, sending it texts and these settings",
+                        host.settings.carrierButton, "carrier_dock_toggle") { host.settings.carrierButton = it }
                 }
                 // The calls and texts themselves are the dock button's (one control per action): this shows how they stand.
                 SettingsGroup("This session") {
@@ -323,7 +323,7 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
                             Column(Modifier.weight(1f)) {
                                 Text(status?.let { if (it.canAnswer && it.lastDialed.isNotEmpty()) "${it.callLabel}: ${it.lastDialed}" else it.callLabel } ?: "No call",
                                     style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("carrier_page_call_state"))
-                                Text(if (saved.dockButton) "The dock's Carrier button calls the device, sends it texts, answers and hangs up"
+                                Text(if (host.settings.carrierButton) "The dock's Carrier button calls the device, sends it texts, answers and hangs up"
                                     else "Turn on Show Carrier button to call and text the device from the dock",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }

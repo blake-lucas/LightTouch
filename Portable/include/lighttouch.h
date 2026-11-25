@@ -73,7 +73,6 @@ typedef struct {
     uint32_t registered, sim_present;
     uint32_t bars;        /* signal, 0-5 */
     double latitude, longitude; /* where a modem with a GPS receiver (the 3GS's) says the phone is, in degrees */
-    uint32_t dock_button; /* the app shows a Carrier button in the session dock */
     char last_caller[32], last_sender[32]; /* the numbers the app's Call and Send text last used ("" for none) */
 } lt_carrier;
 /* 1 when the board (lt_record_info.board) has a modem: only those devices take carrier settings. */

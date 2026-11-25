@@ -19,8 +19,6 @@ pub struct CarrierSettings {
     /// Where a modem with a GPS receiver (the 3GS's) says the phone is, in degrees.
     pub latitude: f64,
     pub longitude: f64,
-    /// A Carrier button in the session dock.
-    pub dock_button: bool,
     /// What Call… and Send text… last used.
     pub last_caller: String,
     pub last_sender: String,
@@ -56,7 +54,6 @@ impl CarrierSettings {
             bars: raw.bars,
             latitude: raw.latitude,
             longitude: raw.longitude,
-            dock_button: raw.dock_button != 0,
             last_caller: chars(&raw.last_caller),
             last_sender: chars(&raw.last_sender),
         }
@@ -72,7 +69,6 @@ impl CarrierSettings {
         raw.bars = self.bars;
         raw.latitude = self.latitude;
         raw.longitude = self.longitude;
-        raw.dock_button = self.dock_button as u32;
         put(&mut raw.last_caller, &self.last_caller).map_err(|_| long("The caller"))?;
         put(&mut raw.last_sender, &self.last_sender).map_err(|_| long("The sender"))?;
         Ok(raw)

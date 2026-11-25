@@ -23,8 +23,7 @@ struct Settings {
     int bars = 5;  // 0-5
     // Where a modem with a GPS receiver (the 3GS's) says the phone is; every modem takes it.
     double latitude = 37.3349, longitude = -122.0090;
-    // The app's Carrier button in the session dock, and the numbers its Call... and Send text... last used.
-    bool dock_button = false;
+    // The numbers the app's Call... and Send text... last used.
     std::string last_caller = "+15555550100", last_sender = "+15555550100";
 };
 
@@ -190,8 +189,7 @@ inline std::string to_json(const Settings &s) {
     return std::string("{\"schema\":1,\"carrier\":") + json_string(s.carrier) +
            ",\"mcc_mnc\":" + json_string(s.mcc_mnc) + ",\"registered\":" + (s.registered ? "true" : "false") +
            ",\"sim_present\":" + (s.sim_present ? "true" : "false") + ",\"bars\":" + std::to_string(s.bars) +
-           ",\"latitude\":" + location + ",\"dock_button\":" + (s.dock_button ? "true" : "false") +
-           ",\"last_caller\":" + json_string(s.last_caller) + ",\"last_sender\":" + json_string(s.last_sender) +
+           ",\"latitude\":" + location + ",\"last_caller\":" + json_string(s.last_caller) + ",\"last_sender\":" + json_string(s.last_sender) +
            "}\n";
 }
 
@@ -223,7 +221,6 @@ inline Settings load(const fs::path &path) {
         s.bars = bars >= 0 && bars <= 5 ? int(bars) : -1;
         number("latitude", s.latitude);
         number("longitude", s.longitude);
-        flag("dock_button", s.dock_button);
         text("last_caller", s.last_caller);
         text("last_sender", s.last_sender);
     } catch (const std::exception &) {
@@ -251,7 +248,6 @@ inline Settings from_abi(const lt_carrier *c) {
     s.bars = c->bars > 5 ? -1 : int(c->bars);
     s.latitude = c->latitude;
     s.longitude = c->longitude;
-    s.dock_button = c->dock_button != 0;
     s.last_caller = field(c->last_caller, sizeof c->last_caller);
     s.last_sender = field(c->last_sender, sizeof c->last_sender);
     return s;
@@ -267,7 +263,6 @@ inline void to_abi(const Settings &s, lt_carrier *c) {
     c->bars = uint32_t(s.bars);
     c->latitude = s.latitude;
     c->longitude = s.longitude;
-    c->dock_button = s.dock_button;
     field(c->last_caller, sizeof c->last_caller, s.last_caller);
     field(c->last_sender, sizeof c->last_sender, s.last_sender);
 }

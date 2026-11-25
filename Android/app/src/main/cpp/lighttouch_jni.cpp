@@ -781,7 +781,7 @@ JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *en
     return string(env,result(status,error));
 }
 // Carrier settings (lt_carrier), as strings: carrier, mcc_mnc, registered, sim_present, bars, latitude, longitude,
-// dock_button, last_caller, last_sender. carrierGet puts the error first ("" when it worked).
+// last_caller, last_sender. carrierGet puts the error first ("" when it worked).
 JNI(carrierGet) jobjectArray JNICALL Java_org_lighttouch_android_Native_carrierGet(JNIEnv *env,jobject,jstring root,jstring id) {
     std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
     lt_carrier c=LT_INIT(lt_carrier);
@@ -789,25 +789,25 @@ JNI(carrierGet) jobjectArray JNICALL Java_org_lighttouch_android_Native_carrierG
     char latitude[32],longitude[32];
     snprintf(latitude,sizeof latitude,"%.7f",c.latitude);snprintf(longitude,sizeof longitude,"%.7f",c.longitude);
     std::vector<std::string> values{result(status,error),c.carrier,c.mcc_mnc,c.registered?"1":"0",c.sim_present?"1":"0",
-        std::to_string(c.bars),latitude,longitude,c.dock_button?"1":"0",c.last_caller,c.last_sender};
+        std::to_string(c.bars),latitude,longitude,c.last_caller,c.last_sender};
     auto out=env->NewObjectArray(jsize(values.size()),env->FindClass("java/lang/String"),nullptr);
     for(size_t i=0;i<values.size();++i)env->SetObjectArrayElement(out,jsize(i),string(env,values[i]));
     return out;
 }
 JNI(carrierSet) jstring JNICALL Java_org_lighttouch_android_Native_carrierSet(JNIEnv *env,jobject,jstring root,jstring id,jobjectArray fields) {
-    if(!fields||env->GetArrayLength(fields)!=10)return string(env,"Invalid carrier settings");
+    if(!fields||env->GetArrayLength(fields)!=9)return string(env,"Invalid carrier settings");
     std::vector<std::string> v;
-    for(jsize i=0;i<10;++i) {
+    for(jsize i=0;i<9;++i) {
         auto item=static_cast<jstring>(env->GetObjectArrayElement(fields,i));Utf text(env,item);v.push_back(text.text);
         env->DeleteLocalRef(item);
     }
     lt_carrier c=LT_INIT(lt_carrier);
     auto put=[](char *out,size_t n,const std::string &value){ if(value.size()>=n)return false;memcpy(out,value.c_str(),value.size()+1);return true; };
-    if(!put(c.carrier,sizeof c.carrier,v[0])||!put(c.mcc_mnc,sizeof c.mcc_mnc,v[1])||!put(c.last_caller,sizeof c.last_caller,v[8])||
-       !put(c.last_sender,sizeof c.last_sender,v[9]))
+    if(!put(c.carrier,sizeof c.carrier,v[0])||!put(c.mcc_mnc,sizeof c.mcc_mnc,v[1])||!put(c.last_caller,sizeof c.last_caller,v[7])||
+       !put(c.last_sender,sizeof c.last_sender,v[8]))
         return string(env,"A carrier setting is too long");
     c.registered=v[2]=="1";c.sim_present=v[3]=="1";c.bars=uint32_t(strtoul(v[4].c_str(),nullptr,10));
-    c.latitude=strtod(v[5].c_str(),nullptr);c.longitude=strtod(v[6].c_str(),nullptr);c.dock_button=v[7]=="1";
+    c.latitude=strtod(v[5].c_str(),nullptr);c.longitude=strtod(v[6].c_str(),nullptr);
     std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_set_carrier(library,record.value,&c,&error);
     return string(env,result(status,error));

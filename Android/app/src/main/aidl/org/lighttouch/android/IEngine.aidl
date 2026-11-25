@@ -64,7 +64,7 @@ interface IEngine {
     /** Reload the atomic saved network document and apply to this session. */
     void applyNetworkSettings();
     /** A device's carrier settings (devices with a modem): carrier, mccMnc, registered, simPresent, bars, latitude,
-     *  longitude, dockButton, lastCaller, lastSender, and error ("" when read). */
+     *  longitude, lastCaller, lastSender, and error ("" when read). */
     Bundle carrier(String recordId);
     /** Check and save them; this worker's running session takes what changed. Returns the error or "". */
     String setCarrier(String recordId, in Bundle settings);

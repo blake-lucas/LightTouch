@@ -148,6 +148,8 @@ pub struct Settings {
     /// Show Screenshot in the device view's controls (off by default, for settings saved before it too; full screen's
     /// More menu always has it).
     pub screenshot_button: bool,
+    /// Show the Carrier button on every device with a modem (it was each device's own setting in 0.0.15's test builds).
+    pub carrier_button: bool,
     pub detailed_timing: bool,
     /// Settings → Network. Off by default; a section that doesn't parse or validate is off.
     #[serde(deserialize_with = "crate::network::lenient")]
@@ -189,6 +191,7 @@ impl Default for Settings {
             overlay_in_device_view: true,
             inspect_button: false,
             screenshot_button: false,
+            carrier_button: false,
             detailed_timing: false,
             network: Default::default(),
             rotation: crate::rotation::Rotation::Portrait,

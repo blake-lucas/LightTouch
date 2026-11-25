@@ -252,7 +252,6 @@ abi_struct!(lt_carrier {
     bars: u32,
     latitude: f64,
     longitude: f64,
-    dock_button: u32,
     last_caller: [c_char; 32],
     last_sender: [c_char; 32],
 });

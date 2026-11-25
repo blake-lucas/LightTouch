@@ -427,7 +427,7 @@ int main() {
         lt_record_info phone_record{sizeof(phone_record), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
         assert(lt_library_import(l, &phone, &phone_record, &e) == LT_OK);
         assert(lt_library_carrier(l, phone_record.id, &carrier, &e) == LT_OK);
-        assert(std::string(carrier.carrier) == "Light Touch" && carrier.bars == 5 && !carrier.dock_button);
+        assert(std::string(carrier.carrier) == "Light Touch" && carrier.bars == 5);
         snprintf(carrier.carrier, sizeof carrier.carrier, "Carrier, \"quoted\"");
         assert(lt_carrier_check(&carrier, &e) == LT_INVALID);
         assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_INVALID);
@@ -439,7 +439,6 @@ int main() {
         assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_INVALID);
         carrier.bars = 2;
         carrier.registered = 0;
-        carrier.dock_button = 1;
         snprintf(carrier.last_caller, sizeof carrier.last_caller, "+4420");
         assert(lt_library_set_carrier(l, phone_record.id, &carrier, &e) == LT_OK);
         lt_carrier back{};
@@ -447,7 +446,7 @@ int main() {
         back.version = 1;
         assert(lt_library_carrier(l, phone_record.id, &back, &e) == LT_OK);
         assert(std::string(back.carrier) == "Fake, Inc." && std::string(back.mcc_mnc) == "310410" && back.bars == 2);
-        assert(!back.registered && back.sim_present && back.dock_button && std::string(back.last_caller) == "+4420");
+        assert(!back.registered && back.sim_present && std::string(back.last_caller) == "+4420");
         assert(lt_library_device_open(l, phone_record.id, 0, &d, &e) == LT_OK);
         lt_boot_config phone_boot{sizeof(phone_boot), 1, "iPhone-4", nullptr, nullptr, nullptr, 0};
         assert(lt_device_boot_argv(d, &phone_boot, &argc, &argv, &e) == LT_OK);

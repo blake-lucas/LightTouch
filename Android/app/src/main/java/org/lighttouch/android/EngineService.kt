@@ -70,7 +70,7 @@ class EngineService : Service() {
                 putString("error", v[0]); putString("carrier", v[1]); putString("mccMnc", v[2])
                 putBoolean("registered", v[3] == "1"); putBoolean("simPresent", v[4] == "1"); putInt("bars", v[5].toIntOrNull() ?: 5)
                 putDouble("latitude", v[6].toDoubleOrNull() ?: 0.0); putDouble("longitude", v[7].toDoubleOrNull() ?: 0.0)
-                putBoolean("dockButton", v[8] == "1"); putString("lastCaller", v[9]); putString("lastSender", v[10])
+                putString("lastCaller", v[8]); putString("lastSender", v[9])
             }
         }
         override fun setCarrier(recordId: String, settings: Bundle): String {
@@ -78,7 +78,7 @@ class EngineService : Service() {
             val error = Native.carrierSet(File(filesDir, "library").absolutePath, recordId, arrayOf(
                 settings.getString("carrier") ?: "", settings.getString("mccMnc") ?: "", flag("registered"), flag("simPresent"),
                 settings.getInt("bars").toString(), settings.getDouble("latitude").toString(), settings.getDouble("longitude").toString(),
-                flag("dockButton"), settings.getString("lastCaller") ?: "", settings.getString("lastSender") ?: ""))
+                settings.getString("lastCaller") ?: "", settings.getString("lastSender") ?: ""))
             // A running device takes what changed at once (or once its engine is ready).
             return if (error.isEmpty() && recordId == sessionRecord && started.isConsumed() && !stopping.get()) Native.reloadCarrier() else error
         }
