@@ -1887,14 +1887,17 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         const char *indirect = getenv("LT_INDIRECT_CACHE");
         std::string accel = "tcg";
         if (a6) {
-            // Its two application cores on two threads; this engine's chaining and indirect caches were measured on
-            // the single-core boards only, so the A6 runs without them (LT_A6_TCG adds options for A/B runs).
+            // Its two application cores on two threads. Their TBs share the indirect caches, which the engine allows
+            // on this board only (tcg_indirect_cache_parallel). Epic Citadel on a Ryzen 3700X, interleaved pairs:
+            // 31.9 fps -> 36.6 with chaining, 39.9 with both.
             accel += ",thread=multi";
+        }
+        if (!chain || strcmp(chain, "off") != 0) accel += ",cross-page-chain=on";
+        if (!indirect || strcmp(indirect, "off") != 0) accel += ",indirect-cache=on";
+        if (a6) {
+            // More options for A/B runs, last so that they win (e.g. LT_A6_TCG=thread=single).
             if (const char *extra = getenv("LT_A6_TCG"); extra && *extra)
                 accel += std::string(",") + extra;
-        } else {
-            if (!chain || strcmp(chain, "off") != 0) accel += ",cross-page-chain=on";
-            if (!indirect || strcmp(indirect, "off") != 0) accel += ",indirect-cache=on";
         }
         if (accel != "tcg") {
             d->args.push_back("-accel");

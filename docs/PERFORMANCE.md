@@ -93,6 +93,23 @@ Measured and rejected on the iPhone 5: reading each H5P layer page table once pe
 4 KiB page (`c9e5d9da7a`, reverted in `f691204f0e`): not visible in a desktop profile of the main loop, and on the
 Poco the main loop's BQL hold time stayed at ~26 ms/s.
 
+### iPhone 5, iOS 10.3.4: guest CPU in Epic Citadel (engine `dev/a6-bql`, 2026-11-24)
+
+Epic Citadel at a still street view on the Proxmox host (Ryzen 7 3700X, RTX 2070 Super, headless `run --control`),
+one boot per arm, interleaved, two 30 s rounds each. Both AP cores run ~92% of the time and core 0 is on-CPU the whole
+frame, so the frame rate follows the guest CPU. An engine sampler (`LT_SAMPLE=1000`, `c6e657437c`: host PC per vCPU
+thread with the guest's mode, process and thread) found ~30% of each AP core's host time in TB lookups, mostly two
+cache misses (the jump-cache entry, then the TB), because both caches that avoid lookups were off on this board.
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Cross-page TB chaining on the iPhone 5 too, as on the other boards (`LT_CROSS_PAGE_CHAIN=off` for A/B) | app | 31.9 → 36.6 fps (4 boots, every round faster), core 0 CPU per frame 29.0 → 25.0 ms (host-side) |
+| The indirect-branch site cache and return-address stack in TBs both AP cores share: fills serialized and ordered, hits re-read the key (`LT_INDIRECT_CACHE=off`, engine `LT_IBTC_PARALLEL=off`) | `69a8275a85`, app | With chaining on in both arms: 36.2 → 39.9 fps, core 0 CPU per frame 25.3 → 22.9 ms; TB lookups ~31% → ~7% of core 0's samples, translated code 24% → 42% (both rows) |
+| ↳ Not a lead: the TLB shootdown mode in-game (`LT_TLB_SHOOTDOWN=queued`) | | Broadcasts fall to ~100/s in the game: 32.3 → 31.4 fps, within noise. GL calls with the BQL again (`LT_A6_GL_UNLOCKED=off`) 32.3 → 30.0 fps, BQL waits 7.1 → 10.2% of wall |
+
+Left after these: ~8% of core 0 waiting for the GL thread on synchronous calls (`glq_wait_idle`, spinning on
+`clock_gettime`), Neon float helpers ~7.5%, and the guest itself 39% in the kernel.
+
 ### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
 
 Guest `n81ap-10B500` on the Poco F3 (`fcbench.py APK 30 n81-doodlejump`, `n81-jetpack`,
