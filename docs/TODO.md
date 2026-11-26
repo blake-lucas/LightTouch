@@ -28,6 +28,17 @@ touch 1G and the original iPhone (white screen, see COMPATIBILITY.md). iOS 7 ski
   upstream pull). Left out of our engine for now; pull it in, with its catalog and firmwarekit side, when we add the
   device.
 - [ ] iPhone 3GS microphone records silence (the setting attaches the mic only to the A4 devices).
+- [ ] Framebuffer fetch on the SGX boards (3G, 3GS, 4G, iPhone 4, iPad): their ES 2 driver listed
+  `GL_EXT_shader_framebuffer_fetch`, but the front end offers it only on the iPhone 5 (`GLES_CAP_FRAMEBUFFER_FETCH`,
+  engine `contrib/gles-public/opengles.c`). Apps that see it missing take their own non-fetch path, and no A4 app has
+  been seen to need it. Look at it only when an iOS 5/6 app draws wrong or refuses for lack of it. Offering it is host-side,
+  but only hosts with fetch can (CGL copies, ES hosts with the driver extension), so it would make what the guest
+  draws depend on the host.
+- [ ] iPhone 5 on desktop Mesa 25: one iOS 10 shader with `#extension GL_EXT_separate_shader_objects` fails to compile
+  under the GLSL 1.20 translation (`unexpected NEW_IDENTIFIER`), so one program doesn't link; the Home screen still
+  draws (`release-0.0.15/gl-port/REPORT.md`).
+- [ ] iPhone 5: Tiny Wings 2.3 (armv7, iOS 8+) installed at preparation but SpringBoard refused to launch it
+  (standard test device `n42ap-14G61-20261126`); check whether the install landed.
 - [ ] A validation run per target that a person doesn't have to watch, extending LT Bench and the
   compat harness (`tools/compat/`):
   1. Machine-readable results: LT Bench writes its results as JSON to its Documents folder, and the
