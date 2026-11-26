@@ -66,7 +66,8 @@ pub fn plan(dirs: &DataDirs, picked: &Path) -> Result<Choice, String> {
     if resolved.starts_with(&here) || here.starts_with(&resolved) {
         return Err("Choose a folder outside the one your devices are in now".into());
     }
-    if is_library(&target) {
+    // A library with no devices (left by "Don't move them") takes a move like an empty folder.
+    if is_library(&target) && device_count(&target) > 0 {
         return Ok(Choice::Existing { devices: device_count(&target), target });
     }
     let mut bytes = LIBRARY_ENTRIES.iter().map(|name| files::stored_bytes(&current.join(name))).sum();
@@ -178,15 +179,7 @@ pub fn run(m: Move, reporter: &Reporter) -> Result<Finished, String> {
     // starting one.
     let _library_lock = lock(&m.from.join(LIBRARY_LOCK), true)
         .map_err(|_| "Another LightTouch window is changing your devices. Try again when it's done.".to_string())?;
-    let mut leases = Vec::new();
-    for record in std::fs::read_dir(m.from.join("records")).into_iter().flatten().flatten() {
-        let lease = record.path().join("state").join(LEASE);
-        match lock(&lease, false) {
-            Ok(Some(file)) => leases.push(file),
-            Ok(None) => {}
-            Err(_) => return Err("A device is running in another LightTouch window. Stop it first.".into()),
-        }
-    }
+    let mut leases = leases(&m.from)?;
 
     let mut items: Vec<Item> = Vec::new();
     for name in LIBRARY_ENTRIES.iter().filter(|n| **n != DOWNLOADS) {
@@ -202,6 +195,13 @@ pub fn run(m: Move, reporter: &Reporter) -> Result<Finished, String> {
             if !to.exists() {
                 items.push(Item { from: entry.path(), to, renamed: false, copied: false });
             }
+        }
+    }
+    // Never into anything already there: a failed move removes what it wrote, and that must be only its own. A
+    // library left without devices has only empty folders, which make way.
+    for item in &items {
+        if std::fs::remove_dir(&item.to).is_err() && item.to.exists() {
+            return Err(format!("{} already has LightTouch files in it. Choose an empty folder.", m.to.display()));
         }
     }
     let created_to = !m.to.exists();
@@ -258,15 +258,27 @@ fn move_items(
             .map_err(|e| format!("Couldn't create {}: {e}", to_downloads.display()))?;
     }
     // On the same drive a rename moves everything at once. Windows can't rename a folder with a file open in it, the
-    // leases included; nothing can start a device in the moment between.
+    // leases included; nothing can start a device in the moment between. A first rename that fails for any reason
+    // turns the move into a copy, with the leases taken again.
     if m.rename && same_drive(&m.from, &m.to) {
         leases.clear();
+        let mut any = false;
         for item in items.iter_mut() {
             match std::fs::rename(&item.from, &item.to) {
-                Ok(()) => item.renamed = true,
+                Ok(()) => {
+                    item.renamed = true;
+                    any = true;
+                }
                 Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {}
+                Err(e) if !any => {
+                    app_log!("renaming {} failed ({e}); copying instead", item.from.display());
+                    break;
+                }
                 Err(e) => return Err(format!("Couldn't move {}: {e}", item.from.display())),
             }
+        }
+        if items.iter().any(|i| !i.renamed) {
+            *leases = self::leases(&m.from)?;
         }
     }
     let to_copy: Vec<usize> = (0..items.len()).filter(|&i| !items[i].renamed).collect();
@@ -340,6 +352,19 @@ fn lock(path: &Path, create: bool) -> io::Result<Option<File>> {
     Ok(Some(file))
 }
 
+/// The leases of every device in the library `from`, or why not (one is running).
+fn leases(from: &Path) -> Result<Vec<File>, String> {
+    let mut leases = Vec::new();
+    for record in std::fs::read_dir(from.join("records")).into_iter().flatten().flatten() {
+        match lock(&record.path().join("state").join(LEASE), false) {
+            Ok(Some(file)) => leases.push(file),
+            Ok(None) => {}
+            Err(_) => return Err("A device is running in another LightTouch window. Stop it first.".into()),
+        }
+    }
+    Ok(leases)
+}
+
 /// Whether a rename can move `from` into `to` (or its nearest existing parent): the same drive.
 #[cfg(unix)]
 fn same_drive(from: &Path, to: &Path) -> bool {
@@ -348,10 +373,18 @@ fn same_drive(from: &Path, to: &Path) -> bool {
     device(from).is_some() && device(from) == device(to)
 }
 
-/// Windows says by failing the rename (`CrossesDevices`), which `move_items` handles item by item.
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn same_drive(from: &Path, to: &Path) -> bool {
+    let volume = |path: &Path| {
+        let existing = path.ancestors().find(|p| p.exists())?;
+        lighttouch_core::files::volume(existing).map(|v| v.to_lowercase())
+    };
+    volume(from).is_some() && volume(from) == volume(to)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn same_drive(_from: &Path, _to: &Path) -> bool {
-    true
+    false
 }
 
 fn size(bytes: u64) -> String {
@@ -502,6 +535,29 @@ mod tests {
         let started = Instant::now();
         let result = run_move(m).unwrap();
         eprintln!("{result:?} in {:.1} s", started.elapsed().as_secs_f64());
+    }
+
+    #[test]
+    fn a_move_never_writes_over_what_is_there() {
+        let root = scratch("occupied");
+        let dirs = DataDirs::new(root.join("data"));
+        library(&dirs.library(), &["a"]);
+        // Another library's devices: refused, and left alone.
+        let other = root.join("other");
+        library(&other, &["b"]);
+        assert!(run_move(Move::new(&dirs, &Settings::default(), &other)).is_err());
+        assert!(other.join("records/b/record.json").is_file() && dirs.library().join("records/a").is_dir());
+        // A library with no devices (from "Don't move them") takes the move.
+        let empty = root.join("empty");
+        std::fs::create_dir_all(empty.join("records")).unwrap();
+        assert!(matches!(plan(&dirs, &empty), Ok(Choice::New { .. })));
+        run_move(Move::new(&dirs, &Settings::default(), &empty)).unwrap();
+        assert!(empty.join("records/a/record.json").is_file());
+        // A chosen folder that isn't there counts as missing until it has its library.
+        let moved = dirs.clone().with_library(Some(root.join("unplugged")));
+        assert_eq!(moved.missing_library(), Some(root.join("unplugged").as_path()));
+        assert_eq!(dirs.clone().with_library(Some(empty.clone())).missing_library(), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

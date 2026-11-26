@@ -66,6 +66,11 @@ impl DataDirs {
     pub fn custom_library(&self) -> Option<&Path> {
         self.custom_library.as_deref()
     }
+    /// The chosen folder, when it isn't there as a library (a drive not connected, or only its empty mount point):
+    /// it must not be opened, which would create an empty library in its place.
+    pub fn missing_library(&self) -> Option<&Path> {
+        self.custom_library().filter(|library| !library.join("records").is_dir())
+    }
     pub fn settings(&self) -> PathBuf {
         self.root.join("settings.json")
     }

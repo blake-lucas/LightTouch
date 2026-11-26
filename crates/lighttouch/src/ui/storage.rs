@@ -63,6 +63,13 @@ pub fn offer(app: &mut App, dir: &Path) {
     }
 }
 
+/// Off the welcome page once devices are found.
+fn settle_page(app: &mut App) {
+    if !app.model.devices.is_empty() && matches!(app.page, super::Page::Setup(_)) {
+        app.page = super::Page::Device;
+    }
+}
+
 /// A folder on a line of its own, so a long path doesn't bury the sentence around it.
 fn path_line(ui: &mut Ui, p: &super::theme::Palette, path: &Path) {
     ui.add_space(4.0);
@@ -146,6 +153,7 @@ pub fn choice_dialog(app: &mut App, ui: &mut Ui, choice: &Choice) -> bool {
             widgets::dialog_buttons(ui, |ui| {
                 if widgets::primary(ui, &p, "Switch").clicked() {
                     app.model.use_library(Some(target.clone()));
+                    settle_page(app);
                     close = true;
                 }
                 if widgets::text_button(ui, &p, "Cancel").clicked() {
@@ -177,6 +185,7 @@ pub fn missing_dialog(app: &mut App, ui: &mut Ui) -> bool {
         if widgets::primary(ui, &p, "Try again").clicked() {
             app.model.retry_library();
             close = app.model.missing_library.is_none();
+            settle_page(app);
         }
         if widgets::text_button(ui, &p, "Choose another").clicked() {
             close = true;
@@ -184,6 +193,7 @@ pub fn missing_dialog(app: &mut App, ui: &mut Ui) -> bool {
         }
         if widgets::text_button(ui, &p, "Use default").clicked() {
             app.model.use_library(None);
+            settle_page(app);
             close = true;
         }
     });

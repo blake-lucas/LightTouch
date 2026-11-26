@@ -391,7 +391,7 @@ impl Model {
     fn open_library(&mut self) -> bool {
         self.library = None;
         self.missing_library = None;
-        if let Some(custom) = self.dirs.custom_library().filter(|p| !p.is_dir()) {
+        if let Some(custom) = self.dirs.missing_library() {
             app_log!("the devices folder {} isn't there", custom.display());
             self.missing_library = Some(custom.to_path_buf());
             self.devices.clear();
@@ -467,7 +467,7 @@ impl Model {
             target.as_deref().map_or_else(|| default.display().to_string(), |t| t.display().to_string())
         );
         if let Some(dir) = &target {
-            if let Err(e) = std::fs::create_dir_all(dir) {
+            if let Err(e) = std::fs::create_dir_all(dir.join("records")) {
                 self.error = Some(format!("Couldn't use {}: {e}", dir.display()));
                 return;
             }
@@ -534,7 +534,7 @@ impl Model {
 
     /// Start the selected device. `recover` cold-boots state that was not shut down cleanly.
     pub fn start(&mut self, recover: bool) {
-        if self.session_active() {
+        if self.session_active() || matches!(self.task, Some((Activity::MovingLibrary { .. }, _))) {
             return;
         }
         let Some(device) = self.selected().cloned() else {

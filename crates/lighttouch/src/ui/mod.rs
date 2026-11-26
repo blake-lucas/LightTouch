@@ -611,6 +611,11 @@ impl App {
         let Some((activity, progress)) = self.model.busy() else { return };
         let Some(title) = lighttouch_model::transfer::title(activity) else { return };
         let exporting = matches!(activity, lighttouch_model::Activity::Exporting { .. });
+        let icon = match activity {
+            lighttouch_model::Activity::MovingLibrary { .. } => icons::HARD_DRIVES,
+            _ if exporting => icons::UPLOAD,
+            _ => icons::DOWNLOAD,
+        };
         let cancelled = self.model.task_cancelled();
         let p = self.palette;
         let modal =
@@ -622,9 +627,7 @@ impl App {
             );
         modal.show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(
-                widgets::icon_text(if exporting { icons::UPLOAD } else { icons::DOWNLOAD }, 26.0).color(p.primary),
-            );
+            ui.label(widgets::icon_text(icon, 26.0).color(p.primary));
             ui.add_space(6.0);
             ui.label(RichText::new(title).font(theme::title()));
             ui.add_space(10.0);

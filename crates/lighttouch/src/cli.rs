@@ -43,6 +43,10 @@ pub fn handles(command: &str) -> bool {
 
 pub fn main(args: &[String]) -> i32 {
     let dirs = lighttouch_model::data_dirs();
+    if let Some(missing) = dirs.missing_library().filter(|_| args[0] != "guest") {
+        eprintln!("error: the devices folder {} isn't there (Settings > Storage)", missing.display());
+        return 1;
+    }
     let result = match args[0].as_str() {
         "list" => list(&dirs),
         "run" => run(&dirs, &args[1..]),

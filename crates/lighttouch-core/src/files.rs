@@ -12,7 +12,7 @@ pub fn stored_bytes(path: &Path) -> u64 {
     if meta.is_dir() {
         std::fs::read_dir(path).into_iter().flatten().flatten().map(|e| stored_bytes(&e.path())).sum()
     } else if meta.is_file() {
-        allocated(&meta)
+        allocated_at(path, &meta)
     } else {
         0
     }
@@ -24,10 +24,42 @@ fn allocated(meta: &Metadata) -> u64 {
     meta.blocks() * 512
 }
 
-/// Windows doesn't say without opening the file; the length is the most it can take.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn allocated(meta: &Metadata) -> u64 {
     meta.len()
+}
+
+/// The bytes a file takes on an NTFS drive, holes left out (`GetCompressedFileSizeW`), else its length.
+#[cfg(windows)]
+fn allocated_at(path: &Path, meta: &Metadata) -> u64 {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut high = 0u32;
+    // SAFETY: a NUL-terminated path and an out-parameter for the high half.
+    let low = unsafe { GetCompressedFileSizeW(wide.as_ptr(), &mut high) };
+    if low == u32::MAX && std::io::Error::last_os_error().raw_os_error().unwrap_or(0) != 0 {
+        return meta.len();
+    }
+    (u64::from(high) << 32) | u64::from(low)
+}
+
+#[cfg(not(windows))]
+fn allocated_at(_path: &Path, meta: &Metadata) -> u64 {
+    allocated(meta)
+}
+
+/// The volume `path` (which exists) is on: `C:\`, or a mount folder's path.
+#[cfg(windows)]
+pub fn volume(path: &Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumePathNameW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut out = vec![0u16; 1024];
+    // SAFETY: a NUL-terminated path and a buffer of the length passed.
+    let ok = unsafe { GetVolumePathNameW(wide.as_ptr(), out.as_mut_ptr(), out.len() as u32) };
+    let end = out.iter().position(|&c| c == 0)?;
+    (ok != 0).then(|| String::from_utf16_lossy(&out[..end]))
 }
 
 /// Names [`copy_tree`] leaves out.
