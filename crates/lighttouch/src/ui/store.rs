@@ -856,6 +856,8 @@ fn app_icon(app: &mut App, ui: &mut Ui, url: Option<&str>, fallback: Option<&str
     let radius = CornerRadius::same((size / 4.5) as u8);
     ui.painter().rect_filled(rect, radius, p.container_highest);
     match url {
+        // Only icons on screen are fetched: a long list doesn't ask the store for every row at once.
+        Some(_) if !ui.is_rect_visible(rect) => {}
         Some(url) => {
             if let Icon::Ready(bytes) = app.model.store.icon(url) {
                 egui::Image::from_bytes(format!("bytes://store-icon/{url}"), egui::load::Bytes::Shared(bytes))

@@ -42,6 +42,8 @@ internal class InstalledList(private val apps: GuestApps, private val muxSocket:
     /** An installed app the catalog doesn't know (or hasn't answered for yet), shown on a page of its own. */
     var plain by mutableStateOf<InstalledApp?>(null)
     private var lookupGeneration = 0
+    /** A sweep is running: another would ask the store the same questions at the same time. */
+    private var looking = false
     private var refreshGeneration = 0
     private var lastRefresh = 0L
 
@@ -78,9 +80,9 @@ internal class InstalledList(private val apps: GuestApps, private val muxSocket:
     fun lookUp() {
         val t = target() ?: return
         val pending = list?.map { it.bundleId }?.filter { it !in lookups } ?: return
-        if (!confirmed() || pending.isEmpty()) return
+        if (!confirmed() || pending.isEmpty() || looking) return
         val generation = ++lookupGeneration
-        lookupError = null
+        lookupError = null; looking = true
         background("store-lookup") {
             for (id in pending) {
                 val outcome = runCatching { LegacyStore.lookup(id, t) }
@@ -91,6 +93,12 @@ internal class InstalledList(private val apps: GuestApps, private val muxSocket:
                 }
                 if (outcome.isFailure || generation != lookupGeneration) break
             }
+            post {
+                if (generation != lookupGeneration) return@post
+                looking = false
+                // Apps installed while the sweep ran; not after a failure, which waits for Retry.
+                if (lookupError == null) lookUp()
+            }
         }
     }
 
@@ -98,7 +106,7 @@ internal class InstalledList(private val apps: GuestApps, private val muxSocket:
     fun update(app: InstalledApp): String? = (lookups[app.bundleId] as? Lookup.Found)?.let { StoreVersions.updateTo(app.version, it.known.newest) }
 
     /** What the catalog knew changes with the device (what runs on it) and its apps; the list itself only with the guest. */
-    fun forgetLookups() { lookupGeneration++; lookups = emptyMap(); lookupError = null }
+    fun forgetLookups() { lookupGeneration++; lookups = emptyMap(); lookupError = null; looking = false }
 
     /** Another guest (or none) is behind the socket: its list is gone. */
     fun guestChanged() { refreshGeneration++; loading = false; list = null; error = null; plain = null }

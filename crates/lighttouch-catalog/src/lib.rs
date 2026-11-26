@@ -6,6 +6,7 @@ pub mod guest_tools;
 pub mod ipa;
 pub mod store;
 pub mod target;
+mod throttle;
 
 pub use catalog::{Catalog, Firmware, Support};
 pub use download::Bootrom;
