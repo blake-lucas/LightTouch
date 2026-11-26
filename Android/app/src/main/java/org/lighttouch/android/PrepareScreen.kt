@@ -196,23 +196,26 @@ private fun DeviceStep(state: PrepareState, onImport: () -> Unit) {
         TextButton(onClick = onImport, modifier = Modifier.testTag("prepare_import_device")) { Text("Import") }
     }
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
-    val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested } }
-    for ((product, firmwares) in tested.sortedBy { (_, firmwares) -> firmwares.minOf { it.support } }) {
+    val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested || it.id in workingFirmwares } }
+    for ((product, firmwares) in tested) {
         val versions = firmwares.filter { it.support.tested }.sortedWith(versionOrder).joinToString(", ") { "iOS ${it.label}" }
         val more = firmwares.count { !it.support.tested && it.prerelease.isEmpty() }
-        DeviceRow(state, product, "Tested: $versions" + if (more > 0) " · $more more to try" else "", firmwares.minOf { it.support })
+        DeviceRow(state, product, if (versions.isEmpty()) range(firmwares) else "Tested: $versions" + if (more > 0) " · $more more to try" else "",
+            firmwares.minOf { it.support })
     }
     if (others.isNotEmpty()) {
         SectionLabel("Not tested on LightTouch yet")
         Text("These may not start, or may not work fully. Try them and see.", Modifier.padding(bottom = 6.dp),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        for ((product, firmwares) in others) {
-            val sorted = firmwares.filter { it.prerelease.isEmpty() }.sortedWith(versionOrder).ifEmpty { firmwares.sortedWith(versionOrder) }
-            val range = if (sorted.size == 1) "iOS ${sorted.first().label}" else "iOS ${sorted.first().version} to ${sorted.last().version}"
-            DeviceRow(state, product, range, firmwares.minOf { it.support })
-        }
+        for ((product, firmwares) in others) DeviceRow(state, product, range(firmwares), firmwares.minOf { it.support })
     }
     if (state.catalog.isEmpty()) Text("Loading the firmware list…", style = MaterialTheme.typography.bodyMedium)
+}
+
+/** "iOS 1.0 to 3.1.3", or "iOS 10.3.4" for a device with one release. */
+private fun range(firmwares: List<CatalogFirmware>): String {
+    val sorted = firmwares.filter { it.prerelease.isEmpty() }.sortedWith(versionOrder).ifEmpty { firmwares.sortedWith(versionOrder) }
+    return if (sorted.size == 1) "iOS ${sorted.first().label}" else "iOS ${sorted.first().version} to ${sorted.last().version}"
 }
 
 @Composable

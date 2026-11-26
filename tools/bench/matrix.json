@@ -273,6 +273,24 @@
    "name": "Epic Citadel",
    "bundle": "com.epicgames.EpicCitadel",
    "settle": 150
+  },
+  {
+   "name": "LT Bench",
+   "bundle": "org.lighttouch.ltbench",
+   "settle": 40,
+   "note": "our guest benchmark app (armv6, not on the iPhone 5); build: scripts/build.sh ltbench or ltbench.yml"
+  },
+  {
+   "name": "Real Racing HD",
+   "bundle": "com.firemint.RealRacingHD",
+   "settle": 60,
+   "note": "the iPad's edition of Real Racing"
+  },
+  {
+   "name": "Tiny Wings HD",
+   "bundle": "com.andreasilliger.tinywingshd",
+   "settle": 30,
+   "note": "the iPad's edition of Tiny Wings"
   }
  ]
 }

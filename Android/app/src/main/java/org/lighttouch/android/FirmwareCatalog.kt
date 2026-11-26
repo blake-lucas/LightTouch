@@ -66,6 +66,9 @@ internal val testedFirmwares = setOf(
     "k48ap-9B206",  // iPad 5.1.1
 )
 
+/** Firmwares that work on LightTouch but stay Experimental (the iPhone 5): listed with the tested devices (the desktop's WORKING). */
+internal val workingFirmwares = setOf("n42ap-14G61")
+
 /** Boards that stop at a white screen after preparation, whatever the catalog says (the desktop's DOESNT_START). */
 internal val doesntStartBoards = setOf("n45ap", "m68ap")
 
