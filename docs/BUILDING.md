@@ -80,6 +80,14 @@ at `/pgo`. It is recorded from an instrumented build made in the same image (`to
 `tools/bench/pgo_desktop.py`, one board at a time, and merged with `gcov-tool merge` in the image. Functions changed
 since then are compiled without it (`-Wno-coverage-mismatch`), so refresh it after large engine changes.
 
+The Windows engine (MinGW GCC 13) takes one too: `scripts/build-release.sh` passes `LT_WIN_PGO` (default
+`$LT_INPUTS/backend/pgo/engine-windows-gcc13`; `off` builds without) to `Windows/tools/build-engine.sh` as
+`LT_ENGINE_PGO`, which names the profile's files relative to the build folder (`-fprofile-prefix-path`), so one
+profile serves every workspace and CI. Record it on a Windows PC over ssh: build with `LT_ENGINE_PGO=gen` and relink
+with `make-shared-windows.py`, put that DLL into a copy of a release exe's unpacked runtime, import the standard test
+devices there, and run `tools/bench/pgo_windows.py` (its docstring has the layout). Merge the boards' folders with
+`x86_64-w64-mingw32-gcov-tool merge`.
+
 ## Inputs that are not in this repository
 
 Set these in the environment or in `scripts/build.env`, which the script sources if present (not
@@ -199,7 +207,7 @@ Where the inputs come from:
 - **Pinned copies of this machine's inputs**, in the `ci-inputs-1` pre-release: the AppImage tool and runtime
   (upstream publishes them only as "continuous"), the desktop notices, and for Android the ANGLE libraries, the frontend
   notices and the engine PGO profile (its version 2 is in `ci-inputs-2`); the Linux engine's GCC profile is in
-  `ci-inputs-3`. To change one, upload a new `ci-inputs-N` release and update the manifest.
+  `ci-inputs-3` and the Windows engine's in `ci-inputs-4`. To change one, upload a new `ci-inputs-N` release and update the manifest.
 
 The APK is signed with the `ANDROID_DEBUG_KEYSTORE` repository secret (base64 of the keystore the releases are signed
 with) if set; otherwise with a key made for the run, and that APK doesn't install over a published one.

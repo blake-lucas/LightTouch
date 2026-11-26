@@ -55,4 +55,21 @@ profiles must be recorded and used from builds in that image too.
 ## Windows
 
 The Windows engine is MinGW GCC 13 (cross-built). GCC profiles depend on compiler version and object paths, so a
-Linux GCC 10 profile can't serve it. It needs its own instrumented `.exe` run on Windows.
+Linux GCC 10 profile can't serve it; it is recorded on a real Windows PC.
+
+- **Instrumented:** `LT_ENGINE_PGO=gen Windows/tools/build-engine.sh ENGINE DEPS OUT FFMPEG` (a fresh copy of the
+  MinGW sysroot as DEPS), then `make-shared-windows.py OUT/engine DLLDIR`. Names are relative to the build folder
+  (`-fprofile-prefix-path`), so the profile applies to release and CI builds made anywhere.
+- **On the PC** (OpenSSH Server, key login): a release or test exe as `ROOT\lighttouch.exe`; run it once with
+  `LIGHTTOUCH_DATA=ROOT\data` so it unpacks to `ROOT\data\runtime\<hash>`, copy that folder to
+  `ROOT\runtime-gen` and put the instrumented DLL in it; `lighttouch import` the standard set into `ROOT\data`.
+  A session started over ssh still draws with the PC's GPU (the engine log's `[gles-wgl]` line names it).
+- **Collect:** `tools/bench/pgo_windows.py` (bench.py's harness with stdin/stdout through ssh), then `scp -r` the
+  `ROOT\pgo\<board>` folders back.
+- **Merge** with `x86_64-w64-mingw32-gcov-tool merge -o OUT A B`, pairwise; the result goes to
+  `$LT_INPUTS/backend/pgo/engine-windows-gcc13` (`LT_WIN_PGO`).
+- PowerShell over ssh: send scripts as `.ps1` files (`-File`); `-Command -` on stdin runs each line on its own.
+- The profile build sets `-fno-tracer`: GCC's tail duplication copies MinGW's `__except1` asm, whose `.l_endw` label
+  then appears twice.
+- The standard iPhone 5 device auto-locked about a minute into a game, which bench.py reports as the game quitting
+  ("front: com.apple.springboard ... Lock Screen"); use the device file with auto-lock off.

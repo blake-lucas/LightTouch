@@ -43,6 +43,12 @@
       "sha256": "3f47537e573c284c1db554b4589ae965f032a8a38e4cc7450fd6bfbd2664f79d",
       "extract": true
     },
+    "windows-engine-pgo": {
+      "comment": "The Windows engine's MinGW GCC 13 profile, version 1 (ci-inputs-4): .gcda files from every board's games, recorded on a Windows PC, named relative to the build folder (LT_WIN_PGO)",
+      "url": "https://github.com/blake-lucas/LightTouch/releases/download/ci-inputs-4/engine-windows-gcc13-pgo-v1.tar.gz",
+      "sha256": "a906700079cca9a2893bb3ba03332e71574c27d1a7ed88336fdf69c62f1d3ab0",
+      "extract": true
+    },
     "macos-usb-bridge": {
       "comment": "The LightTouchMac app, whose usbmuxd (Contents/MacOS/usbmuxd) and the libraries it loads LightTouch.app carries",
       "url": "https://github.com/samhenrigold/LightTouchMac/releases/download/v1.0-2026.11.16/LightTouchMac-universal.zip",

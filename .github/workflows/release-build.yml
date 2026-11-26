@@ -123,7 +123,7 @@ jobs:
           grep -q udp_refuse_dns subprojects/slirp/src/udp.c
       - name: Pinned inputs
         run: |
-          python3 release-$VER/app/scripts/release/fetch-inputs.py "$CI_ROOT" ffmpeg appimagetool desktop-notices msys2 linux-engine-pgo
+          python3 release-$VER/app/scripts/release/fetch-inputs.py "$CI_ROOT" ffmpeg appimagetool desktop-notices msys2 linux-engine-pgo windows-engine-pgo
           gh run download "${{ needs.setup.outputs.guest_run }}" -R "$GITHUB_REPOSITORY" -n guest-tools -D "$CI_ROOT/guest-tools"
           cat "$CI_ROOT/guest-tools/VERSION"
       - name: Linux build image

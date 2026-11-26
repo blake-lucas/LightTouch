@@ -35,6 +35,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
 : "${LT_LINUX_PGO:=$LT_INPUTS/backend/pgo/engine-linux-gcc10}"   # the Linux engine's GCC profile (.gcda folder); off: none
+: "${LT_WIN_PGO:=$LT_INPUTS/backend/pgo/engine-windows-gcc13}"  # the Windows engine's GCC profile (.gcda folder); off: none
 : "${LT_LINUX_CPUS:=$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"     # the Linux build container's CPUs and jobs
 : "${LT_WIN_DEPS:=$D/win-inputs/win-deps}"   # MinGW sysroot (fetch-inputs.py $D/win-inputs msys2; copied, FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (an older prebuilt USB bridge, for LT_WIN_USB)
@@ -119,8 +120,10 @@ step_windows() {
     need "$LT_WIN_DEPS/sysroot" "Windows dependency sysroot"; need "$LT_FFMPEG_ARCHIVE" "FFmpeg 9.0.1 archive"
     rm -rf "$R/win-cross" "$R/win-deps"
     cp -a "$LT_WIN_DEPS" "$R/win-deps"
-    bash "$R/app/Windows/tools/build-engine.sh" "$R/engine" "$R/win-deps" "$R/win-cross" "$LT_FFMPEG_ARCHIVE" \
-        > "$R/windows-engine.log" 2>&1 || { tail -30 "$R/windows-engine.log" >&2; exit 1; }
+    local pgo=
+    [ "$LT_WIN_PGO" != off ] && [ -d "$LT_WIN_PGO" ] && pgo=$LT_WIN_PGO
+    LT_ENGINE_PGO=$pgo bash "$R/app/Windows/tools/build-engine.sh" "$R/engine" "$R/win-deps" "$R/win-cross" \
+        "$LT_FFMPEG_ARCHIVE" > "$R/windows-engine.log" 2>&1 || { tail -30 "$R/windows-engine.log" >&2; exit 1; }
     need "$R/win-cross/engine/qemu-system-arm.exe.rsp" "the engine's link (keeprsp)"
     echo "$R/win-cross/engine"
 }
