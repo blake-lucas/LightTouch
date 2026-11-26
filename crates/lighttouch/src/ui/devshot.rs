@@ -154,18 +154,25 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
     static FROM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     static BACK: AtomicBool = AtomicBool::new(false);
     if let Ok(id) = std::env::var("LIGHTTOUCH_UI_SWITCH") {
-        let first = app.model.session.as_ref().filter(|s| s.started_at.elapsed() > Duration::from_secs(20));
+        let secs = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        let first = app
+            .model
+            .session
+            .as_ref()
+            .filter(|s| s.started_at.elapsed() > Duration::from_secs(secs("LIGHTTOUCH_UI_SWITCH_AFTER", 20)));
         if SWITCHED.get().is_none() && first.is_some_and(|s| s.record_id != id) {
             let back = first.map(|s| s.record_id.clone()).unwrap_or_default();
             let _ = SWITCHED.set(Instant::now());
             eprintln!("switch: to {id}, leaving {back} running");
             app.model.select(&id);
-            app.model.start(false);
+            if std::env::var_os("LIGHTTOUCH_UI_SWITCH_STOPPED").is_none() {
+                app.model.start(false);
+            }
             let _ = FROM.set(back);
         }
         if let Some(at) = SWITCHED.get() {
             if std::env::var_os("LIGHTTOUCH_UI_SWITCH_BACK").is_some()
-                && at.elapsed() > Duration::from_secs(40)
+                && at.elapsed() > Duration::from_secs(secs("LIGHTTOUCH_UI_SWITCH_BACK_AFTER", 40))
                 && !BACK.swap(true, Ordering::AcqRel)
             {
                 let back = FROM.get().cloned().unwrap_or_default();

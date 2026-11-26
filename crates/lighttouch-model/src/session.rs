@@ -366,6 +366,12 @@ impl Session {
         }
     }
 
+    /// Have the next `read_frame` copy the newest frame even if it was read before (a device back on screen whose
+    /// guest isn't drawing shows its last picture at once).
+    pub fn redraw(&mut self) {
+        self.last_sequence = 0;
+    }
+
     /// Copy the newest frame, converted to tightly packed RGBA, into `rgba` if it is newer than the last one read.
     pub fn read_frame(&mut self, rgba: &mut Vec<u8>) -> Option<FrameMeta> {
         let meta = self.frames.read(self.last_sequence, &mut self.bgra)?;

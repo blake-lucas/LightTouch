@@ -138,6 +138,8 @@ pub struct Model {
     pub background: Vec<Session>,
     /// The devices `set_hidden` paused, to resume.
     paused_for_hidden: Vec<String>,
+    /// Closing: every device stops, those installing an app once it finishes (`stop_all`).
+    stopping_all: bool,
     /// A message to show briefly ("Renamed to …").
     pub notice: Option<(String, Instant)>,
     /// A problem to show until dismissed.
@@ -190,6 +192,7 @@ impl Model {
             session: None,
             background: Vec::new(),
             paused_for_hidden: Vec::new(),
+            stopping_all: false,
             notice: None,
             error: None,
             missing_library: None,
@@ -260,9 +263,14 @@ impl Model {
                 ended = true;
             }
         }
+        if self.stopping_all {
+            self.stop_idle();
+        }
         let mut background_ended = false;
+        let syncing_held = self.store.uploading_or_installing();
         for session in &mut self.background {
             session.poll();
+            session.hold_storage_sync(syncing_held);
             session.kill_if_overdue();
             if let Phase::Ended { clean, dirty, message } = &session.phase {
                 app_log!(
@@ -404,9 +412,14 @@ impl Model {
     /// Stop every running device (closing the window). Whether any is still shutting down or refused (an app
     /// install is changing the device on screen).
     pub fn stop_all(&mut self) {
-        self.stop();
-        for session in &mut self.background {
-            if session.phase.active() && !session.stopping() {
+        self.stopping_all = true;
+        self.stop_idle();
+    }
+
+    /// For `stop_all`: stop every running device that isn't installing an app; the rest stop once their installs end.
+    fn stop_idle(&mut self) {
+        for session in self.session.iter_mut().chain(&mut self.background) {
+            if session.phase.active() && !session.stopping() && !self.store.mutating_on(session.usb_socket.as_deref()) {
                 session.stop();
             }
         }
@@ -429,6 +442,11 @@ impl Model {
             }
             !paused.is_empty()
         }
+    }
+
+    /// iOS on the device on screen is changing its apps (an install it can't be stopped during).
+    pub fn installing_on_screen(&self) -> bool {
+        self.store.mutating_on(self.session.as_ref().and_then(|s| s.usb_socket.as_deref()))
     }
 
     pub fn session_active(&self) -> bool {
@@ -556,10 +574,6 @@ impl Model {
     /// Select a device, which is the one on screen. A device running on screen keeps running in the background, and
     /// a device already running in the background comes back on screen.
     pub fn select(&mut self, id: &str) {
-        if self.session.as_ref().is_some_and(|s| s.record_id != id) && self.store.mutating() {
-            self.notify("An app is being installed; switch devices once it finishes.");
-            return;
-        }
         let result = self.library().and_then(|l| l.select(id).map_err(|e| e.to_string()));
         match result {
             Ok(()) => {
@@ -587,6 +601,7 @@ impl Model {
         }
         if let Some(at) = self.background.iter().position(|s| s.record_id == id) {
             let mut session = self.background.remove(at);
+            session.redraw();
             session.set_muted(self.settings.muted);
             session.set_microphone(self.settings.microphone);
             app_log!("{} is back on screen", session.name);
@@ -738,7 +753,7 @@ impl Model {
     }
 
     pub fn stop(&mut self) {
-        if self.store.mutating() {
+        if self.store.mutating_on(self.session.as_ref().and_then(|s| s.usb_socket.as_deref())) {
             self.notify("An app is being installed; stop the device once it finishes.");
             return;
         }

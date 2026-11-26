@@ -96,6 +96,14 @@ pub enum InstallRequest {
     Local(PathBuf),
 }
 
+/// A queued install and the device it is for (its guest's usbmux socket when it was queued): switching to another
+/// device, which leaves this one running in the background, neither moves nor stops it.
+#[derive(Debug, Clone)]
+struct Queued {
+    request: InstallRequest,
+    socket: PathBuf,
+}
+
 /// The apps the running guest has, and what the Legacy Store knows of each (its page, its icon, a newer version
 /// that runs here). The catalog is asked once per app, one request at a time and cached, and stops at the first
 /// failure rather than retrying every app.
@@ -287,10 +295,9 @@ pub struct Store {
     pub remove_error: Option<String>,
     /// Why the running device has no USB link for installs.
     pub usb_problem: Option<String>,
-    installer: InstallQueue<InstallRequest>,
+    installer: InstallQueue<Queued>,
     /// Installs talking to the guest now.
     busy: Arc<std::sync::atomic::AtomicUsize>,
-    socket: Arc<Mutex<Option<PathBuf>>>,
     icons: HashMap<String, Icon>,
     guest_socket: Option<PathBuf>,
     search_generation: u64,
@@ -345,16 +352,9 @@ impl Store {
 
     pub fn new(scratch: PathBuf, waker: Waker) -> Self {
         let (tx, rx) = channel();
-        let socket: Arc<Mutex<Option<PathBuf>>> = Arc::default();
         let busy: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
-        let work = Installer {
-            socket: socket.clone(),
-            busy: busy.clone(),
-            exact: Mutex::new(None),
-            scratch,
-            tx: tx.clone(),
-            waker: waker.clone(),
-        };
+        let work =
+            Installer { busy: busy.clone(), exact: Mutex::new(None), scratch, tx: tx.clone(), waker: waker.clone() };
         let wake = waker.clone();
         Self {
             record: String::new(),
@@ -384,7 +384,6 @@ impl Store {
             usb_problem: None,
             installer: InstallQueue::new(work, move || wake()),
             busy,
-            socket,
             icons: HashMap::new(),
             guest_socket: None,
             search_generation: 0,
@@ -416,6 +415,13 @@ impl Store {
     /// iOS is changing its apps: it shouldn't be stopped until it finishes.
     pub fn mutating(&self) -> bool {
         self.queue.iter().any(|i| i.state == QueueState::Installing && i.committed)
+    }
+
+    /// iOS on the device with this usbmux socket is changing its apps (installs follow the device they were queued
+    /// for, which may be running in the background).
+    pub fn mutating_on(&self, socket: Option<&Path>) -> bool {
+        let Some(socket) = socket else { return false };
+        self.installer.any(|i, q| i.state == QueueState::Installing && i.committed && q.socket == socket)
     }
 
     /// Whether app installs can reach the guest: it has attached over USB and answered.
@@ -452,7 +458,6 @@ impl Store {
         }
         if socket != self.guest_socket.as_deref() {
             self.guest_socket = socket.map(Path::to_path_buf);
-            *self.socket.lock().unwrap() = self.guest_socket.clone();
             self.installed.clear();
             self.installed_apps.refresh_generation += 1;
             self.installed_apps.loading = false;
@@ -780,11 +785,11 @@ impl Store {
             self.message = lighttouch_catalog::target::NO_INSTALLS.into();
             return;
         }
-        if self.guest_socket.is_none() {
+        let Some(socket) = self.guest_socket.clone() else {
             self.message = "Start the device to install apps.".into();
             return;
-        }
-        self.installer.enqueue(&key, name, request);
+        };
+        self.installer.enqueue(&key, name, Queued { request, socket });
         self.queue = self.installer.snapshot();
     }
 
@@ -1245,7 +1250,6 @@ impl UploadLog {
 }
 
 struct Installer {
-    socket: Arc<Mutex<Option<PathBuf>>>,
     /// Installs talking to the guest now (`Store::uploading_or_installing`).
     busy: Arc<std::sync::atomic::AtomicUsize>,
     /// What the running guest is, asked once per guest.
@@ -1256,15 +1260,15 @@ struct Installer {
 }
 
 impl Installer {
-    fn guest(&self, stopped: &str) -> Result<(Guest, Target), String> {
-        let socket = self.socket.lock().unwrap().clone().ok_or(stopped)?;
-        let mut guest = Guest::connect(&socket, Duration::from_secs(30)).map_err(service_error)?;
+    /// The guest the install was queued for, and what it is.
+    fn guest(&self, socket: &Path) -> Result<(Guest, Target), String> {
+        let mut guest = Guest::connect(socket, Duration::from_secs(30)).map_err(service_error)?;
         let mut exact = self.exact.lock().unwrap();
-        let target = match exact.as_ref().filter(|(s, _)| *s == socket) {
+        let target = match exact.as_ref().filter(|(s, _)| s == socket) {
             Some((_, target)) => target.clone(),
             None => {
                 let target = guest.target().map_err(service_error)?;
-                *exact = Some((socket, target.clone()));
+                *exact = Some((socket.to_path_buf(), target.clone()));
                 target
             }
         };
@@ -1272,17 +1276,12 @@ impl Installer {
     }
 }
 
-impl queue::Work<InstallRequest> for Installer {
-    fn fetch(
-        &self,
-        payload: &InstallRequest,
-        report: &dyn Report,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<PathBuf, String> {
+impl queue::Work<Queued> for Installer {
+    fn fetch(&self, payload: &Queued, report: &dyn Report, cancelled: &dyn Fn() -> bool) -> Result<PathBuf, String> {
         report.update("Preparing", Some(0.0));
-        match payload {
+        match &payload.request {
             InstallRequest::Catalog(app) => {
-                let (_, target) = self.guest("Start the device to install apps.")?;
+                let (_, target) = self.guest(&payload.socket)?;
                 let mut reported: Option<Instant> = None;
                 store::download(app, &target, &self.scratch, &mut |done, total| {
                     if reported.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) || Some(done) == total {
@@ -1316,16 +1315,16 @@ impl queue::Work<InstallRequest> for Installer {
 
     fn install(
         &self,
-        payload: &InstallRequest,
+        payload: &Queued,
         file: &PathBuf,
         report: &dyn Report,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<(), String> {
-        let (mut guest, target) = self.guest("The device stopped. Start it to install apps.")?;
+        let (mut guest, target) = self.guest(&payload.socket)?;
         report.update("Checking the app", None);
         let prepared = file.with_file_name("Install.ipa");
         let info = ipa::prepare(file, &prepared, &target).map_err(|e| e.to_string())?;
-        if matches!(payload, InstallRequest::Local(_)) {
+        if matches!(payload.request, InstallRequest::Local(_)) {
             report.rename(&info.name);
         }
         if cancelled() {
