@@ -57,6 +57,7 @@ fn copy_dir(
     done: &mut u64,
     progress: &mut dyn FnMut(u64) -> bool,
 ) -> io::Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
