@@ -34,6 +34,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_INPUTS:=$LT_INPUTS/linux-desktop/bullseye-build01}"    # deps-full/ crypto/ mobile-private-runtime-ui15/
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
+: "${LT_LINUX_PGO:=$LT_INPUTS/backend/pgo/engine-linux-gcc10}"   # the Linux engine's GCC profile (.gcda folder); off: none
 : "${LT_LINUX_CPUS:=$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"     # the Linux build container's CPUs and jobs
 : "${LT_WIN_DEPS:=$D/win-inputs/win-deps}"   # MinGW sysroot (fetch-inputs.py $D/win-inputs msys2; copied, FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # services-mobile01/ (an older prebuilt USB bridge, for LT_WIN_USB)
@@ -147,6 +148,8 @@ step_linux() {
             while read -r a; do mounts+=(--mount "type=bind,src=$a,dst=$a,readonly"); done < "$d/objects/info/alternates"
         fi
     done
+    # The engine profile (scripts/release/linux-inner.sh uses it when /pgo is there).
+    [ "$LT_LINUX_PGO" != off ] && [ -d "$LT_LINUX_PGO" ] && mounts+=(--mount "type=bind,src=$LT_LINUX_PGO,dst=/pgo,readonly")
     # Earlier runs leave root-owned files.
     [ -d "$b" ] && docker run --rm -v "$b:/b" "$LT_LINUX_IMAGE" sh -c 'rm -rf /b/* /b/.[!.]*'
     mkdir -p "$b"

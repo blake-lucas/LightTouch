@@ -47,7 +47,7 @@ profiles must be recorded and used from builds in that image too.
   DIR. On the desktop, `bench.py`'s `Desktop` class drives the games. Keep each board's DIR separate so they can be
   re-weighted.
 - **Merge** inside the same image (`gcov-tool merge [-w a,b] -o OUT DIR1 DIR2`, pairwise).
-- **Use:** `--cflags='-fprofile-use=/pgo -fprofile-correction -fprofile-partial-training -Wno-missing-profile'` with
+- **Use:** `--cflags='-fprofile-use=/pgo -fprofile-correction -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch'` with
   the merged folder mounted at `/pgo`. Partial training keeps code no game reached (preparation, installs, video)
   optimized normally instead of for size.
 - **Measure:** host A/B against a plain container build, not against a local build with another compiler.

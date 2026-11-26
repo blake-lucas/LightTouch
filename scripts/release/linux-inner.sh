@@ -19,9 +19,17 @@ git -C /build/qemu-source checkout -q --detach "$EXPECTED_QEMU_REV"
 # The subprojects meson would download (no network here), slirp with its patches already applied.
 for p in berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb dtc slirp; do cp -a "$Q/subprojects/$p" /build/qemu-source/subprojects/; done
 [ -z "$(git -C /build/qemu-source status --porcelain=v1 --untracked-files=all)" ]
+# A profile recorded from this image's own instrumented build (object paths under /build/engine, GCC 10): partial
+# training keeps code no game reached (preparation, installs) optimized for speed rather than size. A function changed
+# since the profile was recorded is compiled without it (GCC's coverage-mismatch is otherwise an error).
+set --
+if [ -d /pgo ]; then
+    echo "=== ENGINE PROFILE /pgo ($(find /pgo -name '*.gcda' | wc -l) files)"
+    set -- "--cflags=-fprofile-use=/pgo -fprofile-correction -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch"
+fi
 echo "=== ENGINE (LDFLAGS=-ldl: glibc 2.31 keeps dladdr in libdl)"
 LDFLAGS=-ldl python3 /build/qemu-source/contrib/portable/build-engine.py /build/engine --cpp-standard=gnu++17 \
-    --prefix /build/deps-full/prefix --crypto-prefix /build/crypto/prefix
+    --prefix /build/deps-full/prefix --crypto-prefix /build/crypto/prefix "$@"
 echo "=== RUNTIME (the engine, the USB bridge and the libraries they load beyond the base system)"
 rm -rf /build/runtime; mkdir -p /build/runtime/lib
 cp /build/engine/libqemu-arm.so /build/mobile-private-runtime-ui15/prefix/bin/usbmuxd-qemu /build/runtime/

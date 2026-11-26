@@ -53,3 +53,17 @@ first-run prompts differ by version takes `"steps": {"<firmware id>": [...], "*"
 Environment: `LT_BENCH_WORK` (default `~/Documents/LightTouch-Development/bench`: ipa/, ipsw/, data/, devices.json,
 results/), `LT_BENCH_LIGHTTOUCH` (the desktop command, default `WORK/lt-dev.sh`), `LT_BENCH_IPSW` (folders searched
 for IPSWs, else `prepare` downloads them), `ANDROID_SERIAL`, `LT_PKG`.
+
+## Engine A/B and profiles
+
+Scripts on top of `bench.py` (each one's docstring has its usage):
+
+- `ab_desktop.py` / `ab_android.py`: an engine A/B per board, arms in a given order (`base,new,new,base`). The desktop
+  one reports fps and the session's host CPU per frame. On Android the arms are APKs, and each run waits for the
+  phone to cool to 35 °C.
+- `pgo_desktop.py` / `pgo_android.py`: record an instrumented engine's profile per board over a window of gameplay
+  (boot left out, through `LT_PGO_TRIGGER`).
+- `linux-engine.sh base|gen|use`: the Linux release engine built in the release image, plain, instrumented, or
+  with a profile.
+
+The `lighttouch-testing` skill's `references/pgo.md` explains the merging.
