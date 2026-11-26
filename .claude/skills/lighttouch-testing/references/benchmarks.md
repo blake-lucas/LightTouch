@@ -23,6 +23,10 @@ question and what keeps an A/B honest.
 - **Interleave** arms in one session: A B B A, or A B A B with three or more pairs. Phones drift 1–2 fps between
   sessions and throttle on the charger. The first boot after an install can misbehave, so don't let it be one arm's
   only run.
+- **Throw away a warm-up run.** On the desktop the first run of a session has repeatedly been the slowest by 10–40%
+  (cold page cache, host clocks), so A B B A charges it to A. Start with a discarded run, or compare only runs 2 onward.
+- **A killed run leaves a torn record** ("needs recovery"): the next starts fail at once. Desktop: `lighttouch run
+  --recover`. Android: the app's "Recover and start", then a clean stop, before rerunning.
 - **Heat:**
   - Cool the phone to the same starting temperature before each arm (`thermal_zone0` in m°C, or battery
     temperature).
