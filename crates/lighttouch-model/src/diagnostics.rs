@@ -113,8 +113,13 @@ pub fn export(request: &ExportRequest, dest: &Path) -> Result<(), String> {
         "LightTouch hasn't looked for controllers this run",
     );
 
-    // Paths with the user's name: the data folder first (it is usually inside the home folder).
-    let mut private = vec![(request.dirs.root.clone(), "<data>")];
+    // Paths with the user's name: the devices' folder (Settings → Storage) and the data folder first (they are
+    // usually inside the home folder).
+    let mut private = Vec::new();
+    if let Some(library) = request.dirs.custom_library() {
+        private.push((library.to_path_buf(), "<devices>"));
+    }
+    private.push((request.dirs.root.clone(), "<data>"));
     if let Some(home) = home_dir() {
         private.push((home, "~"));
     }
@@ -222,7 +227,7 @@ fn summary(request: &ExportRequest, entries: &[(String, Vec<u8>)], missing: &[St
         lighttouch_core::COMMIT,
         std::env::consts::OS
     );
-    for (label, value) in lighttouch_core::host::describe(&request.dirs.root) {
+    for (label, value) in lighttouch_core::host::describe(&request.dirs.root, &request.dirs.library()) {
         let _ = writeln!(out, "{label}: {value}");
     }
     if let Some(gpu) = &request.gpu {

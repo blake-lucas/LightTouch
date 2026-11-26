@@ -7,7 +7,8 @@
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
 //! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
 //! saved, and closes once they are written. `LIGHTTOUCH_UI_TRANSFER=export:ID:FILE` or `import:FILE` starts a device
-//! export or import (no file dialog). `LIGHTTOUCH_UI_LOG_SCREEN=1` logs the guest screen's size and place in physical
+//! export or import (no file dialog). `LIGHTTOUCH_UI_LIBRARY=DIR` asks what to do with DIR as the devices' folder
+//! (Settings → Storage), `move:DIR` moves them there. `LIGHTTOUCH_UI_LOG_SCREEN=1` logs the guest screen's size and place in physical
 //! pixels each time it changes (Screen scaling checks).
 use super::{App, Page};
 use eframe::egui;
@@ -127,6 +128,13 @@ pub fn start(app: &mut App) {
             }
             Some(("import", file)) => app.model.import_device(PathBuf::from(file)),
             _ => eprintln!("LIGHTTOUCH_UI_TRANSFER is export:ID:FILE or import:FILE"),
+        }
+    }
+    // LIGHTTOUCH_UI_LIBRARY=DIR asks what to do with DIR as Settings → Storage's Change does; move:DIR moves there.
+    if let Some(spec) = std::env::var_os("LIGHTTOUCH_UI_LIBRARY").map(PathBuf::from) {
+        match spec.to_str().and_then(|s| s.strip_prefix("move:")) {
+            Some(dir) => app.model.move_library(PathBuf::from(dir)),
+            None => super::storage::offer(app, &spec),
         }
     }
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {

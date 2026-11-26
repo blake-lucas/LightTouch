@@ -35,26 +35,52 @@ fn home() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Folders inside the data root.
+/// Folders inside the data root, and the device library, which can be elsewhere (Settings → Storage).
 #[derive(Debug, Clone)]
 pub struct DataDirs {
     pub root: PathBuf,
+    /// Where the user keeps their devices instead of `root/library` (settings.json's `library`).
+    custom_library: Option<PathBuf>,
 }
 
 impl DataDirs {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self { root, custom_library: None }
+    }
+    /// These folders with the device library at `library` (`None`, a relative path or the default: in the data
+    /// folder).
+    pub fn with_library(mut self, library: Option<PathBuf>) -> Self {
+        let default = self.default_library();
+        self.custom_library = library.filter(|p| p.is_absolute() && *p != default);
+        self
     }
     /// The device library (records with their bases, state and assets).
     pub fn library(&self) -> PathBuf {
+        self.custom_library.clone().unwrap_or_else(|| self.default_library())
+    }
+    /// The library's own place in the data folder, used unless the user chose another.
+    pub fn default_library(&self) -> PathBuf {
         self.root.join("library")
+    }
+    /// The folder the user chose for their devices, if they did.
+    pub fn custom_library(&self) -> Option<&Path> {
+        self.custom_library.as_deref()
+    }
+    /// The chosen folder, when it isn't there as a library (a drive not connected, or only its empty mount point):
+    /// it must not be opened, which would create an empty library in its place.
+    pub fn missing_library(&self) -> Option<&Path> {
+        self.custom_library().filter(|library| !library.join("records").is_dir())
     }
     pub fn settings(&self) -> PathBuf {
         self.root.join("settings.json")
     }
-    /// Downloaded IPSWs, kept until a preparation succeeds.
+    /// Downloaded IPSWs, kept until a preparation succeeds. Beside a library the user moved: they're gigabytes too,
+    /// and a preparation's output lands in the library.
     pub fn downloads(&self) -> PathBuf {
-        self.root.join("downloads")
+        match &self.custom_library {
+            Some(library) => library.join(".downloads"),
+            None => self.root.join("downloads"),
+        }
     }
     /// Preparation jobs. On the library's filesystem so finished output is moved in, not copied.
     pub fn prepared(&self) -> PathBuf {

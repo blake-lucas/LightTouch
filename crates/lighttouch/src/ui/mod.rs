@@ -18,12 +18,13 @@ mod screen_scaling;
 mod settings;
 mod setup;
 mod sidebar;
+mod storage;
 mod store;
 pub mod theme;
 mod widgets;
 
 use eframe::egui::{self, Align2, Color32, CornerRadius, Frame, Margin, RichText, vec2};
-use lighttouch_core::paths::{DataDirs, Resources, data_root};
+use lighttouch_core::paths::{DataDirs, Resources};
 use lighttouch_model::settings::Theme;
 use lighttouch_model::{Finished, Model};
 use std::sync::Arc;
@@ -81,6 +82,10 @@ pub enum Dialog {
         number: String,
         text: String,
     },
+    /// Settings → Storage: what to do with the folder chosen for the devices.
+    Library(lighttouch_model::library_move::Choice),
+    /// The folder chosen for the devices isn't there (shown at start).
+    MissingLibrary,
 }
 
 pub struct App {
@@ -119,14 +124,14 @@ static GPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Open this run's app log (docs/LOGS.md) with what LightTouch and this computer are, and send panics to it too.
 fn start_logging() {
-    let dirs = DataDirs::new(data_root());
+    let dirs = lighttouch_model::data_dirs();
     let mut header = format!(
         "LightTouch {} (commit {}), desktop, {}\n",
         env!("CARGO_PKG_VERSION"),
         lighttouch_core::COMMIT,
         std::env::consts::OS
     );
-    for (label, value) in lighttouch_core::host::describe(&dirs.root) {
+    for (label, value) in lighttouch_core::host::describe(&dirs.root, &dirs.library()) {
         header.push_str(&format!("{label}: {value}\n"));
     }
     let t = lighttouch_core::local_time();
@@ -243,7 +248,7 @@ fn linux_backend() -> Option<eframe::EventLoopBuilderHook> {
 fn ready_app(ctx: &egui::Context) -> App {
     let ctx = ctx.clone();
     let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
-    let mut model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
+    let mut model = Model::new(DataDirs::new(lighttouch_core::paths::data_root()), Resources::locate(), waker);
     model.gpu = GPU.get().cloned();
     let mut app = App::new(model);
     devshot::start(&mut app);
@@ -390,11 +395,12 @@ impl App {
                 page = Page::Prepare;
             }
         }
+        let dialog = model.missing_library.is_some().then_some(Dialog::MissingLibrary);
         Self {
             model,
             guest: guest::GuestView::default(),
             page,
-            dialog: None,
+            dialog,
             fullscreen: false,
             fullscreen_at: Instant::now(),
             palette: theme::DARK,
@@ -548,6 +554,18 @@ impl App {
                         self.model.error = Some(format!("Couldn't import the device: {message}"));
                     }
                 }
+                Finished::LibraryMoved { to, .. } => {
+                    self.model.notice = Some((format!("Your devices are in {} now", to.display()), Instant::now()));
+                }
+                Finished::Failed { activity: lighttouch_model::Activity::MovingLibrary { .. }, message } => {
+                    if message == "Cancelled" {
+                        self.model.notice =
+                            Some(("Move cancelled; your devices stayed where they were".into(), Instant::now()));
+                    } else {
+                        self.model.error =
+                            Some(format!("Couldn't move your devices: {message}. They're where they were."));
+                    }
+                }
                 Finished::Failed { activity: lighttouch_model::Activity::Preparing(_), message } => {
                     // Shown on the Prepare page; elsewhere also as a banner, without leaving the page.
                     if self.page != Page::Prepare {
@@ -593,6 +611,11 @@ impl App {
         let Some((activity, progress)) = self.model.busy() else { return };
         let Some(title) = lighttouch_model::transfer::title(activity) else { return };
         let exporting = matches!(activity, lighttouch_model::Activity::Exporting { .. });
+        let icon = match activity {
+            lighttouch_model::Activity::MovingLibrary { .. } => icons::HARD_DRIVES,
+            _ if exporting => icons::UPLOAD,
+            _ => icons::DOWNLOAD,
+        };
         let cancelled = self.model.task_cancelled();
         let p = self.palette;
         let modal =
@@ -604,9 +627,7 @@ impl App {
             );
         modal.show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(
-                widgets::icon_text(if exporting { icons::UPLOAD } else { icons::DOWNLOAD }, 26.0).color(p.primary),
-            );
+            ui.label(widgets::icon_text(icon, 26.0).color(p.primary));
             ui.add_space(6.0);
             ui.label(RichText::new(title).font(theme::title()));
             ui.add_space(10.0);
@@ -815,6 +836,10 @@ impl App {
                             format!("Still preparing {what}"),
                             "Closing LightTouch stops it. You can prepare it again later, and a download picks up where it left off.",
                         ),
+                        (None, Some(what)) if matches!(self.model.busy(), Some((lighttouch_model::Activity::MovingLibrary { .. }, _))) => (
+                            format!("Still {}", what[..1].to_lowercase() + &what[1..]),
+                            "Closing LightTouch stops it, and your devices stay where they were: you can move them again later.",
+                        ),
                         (None, Some(what)) => (
                             format!("Still {}", what[..1].to_lowercase() + &what[1..]),
                             "Closing LightTouch stops it, and nothing is kept: you can start it again later.",
@@ -870,6 +895,13 @@ impl App {
                     } else if matches!(self.dialog, Some(Dialog::CarrierText { .. })) {
                         self.dialog = Some(Dialog::CarrierText { number, text });
                     }
+                }
+                Dialog::Library(choice) => {
+                    close = storage::choice_dialog(self, ui, &choice);
+                }
+                Dialog::MissingLibrary => {
+                    // "Choose another" puts the next question in its place.
+                    close = storage::missing_dialog(self, ui) && matches!(self.dialog, Some(Dialog::MissingLibrary));
                 }
                 Dialog::RemoveApp { bundle_id, name } => {
                     ui.label(widgets::icon_text(icons::TRASH, 26.0).color(theme::DANGER));

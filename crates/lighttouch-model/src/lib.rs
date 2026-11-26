@@ -6,6 +6,7 @@ pub mod crash;
 pub mod diagnostics;
 pub mod gamepad;
 pub mod inspector;
+pub mod library_move;
 pub mod network;
 pub mod notices;
 pub mod prepare;
@@ -85,6 +86,8 @@ pub enum Activity {
     Exporting { name: String, dest: PathBuf },
     /// Importing a device file.
     Importing(PathBuf),
+    /// Moving the devices to another folder (Settings → Storage).
+    MovingLibrary { to: PathBuf },
 }
 
 /// A finished background operation, for the UI to react to (e.g. show "ready").
@@ -111,6 +114,13 @@ pub enum Finished {
         selected: bool,
         seconds: f64,
     },
+    /// The devices moved to `to` (library_move.rs); `library` is the setting saved for it (none: the data folder).
+    LibraryMoved {
+        to: PathBuf,
+        library: Option<PathBuf>,
+        bytes: u64,
+        seconds: f64,
+    },
     Failed {
         activity: Activity,
         message: String,
@@ -127,6 +137,9 @@ pub struct Model {
     pub notice: Option<(String, Instant)>,
     /// A problem to show until dismissed.
     pub error: Option<String>,
+    /// The folder the devices are kept in isn't there (a drive that isn't plugged in): nothing is created in its
+    /// place until the user chooses (Settings → Storage).
+    pub missing_library: Option<PathBuf>,
     /// Legacy Store and app installs for the current device.
     pub store: store::Store,
     /// Game controllers and keyboard bindings (gamepad.rs).
@@ -153,6 +166,7 @@ pub struct Model {
 impl Model {
     pub fn new(dirs: DataDirs, resources: Resources, waker: Waker) -> Self {
         let settings = Settings::load(&dirs.settings());
+        let dirs = dirs.with_library(settings.library.clone());
         let store = store::Store::new(dirs.cache().join("store"), waker.clone());
         let gamepads = gamepad::Gamepads::new(
             dirs.root.join("controllers"),
@@ -171,6 +185,7 @@ impl Model {
             session: None,
             notice: None,
             error: None,
+            missing_library: None,
             library: None,
             carrier: None,
             task: None,
@@ -184,12 +199,9 @@ impl Model {
             waker,
         };
         remove_old_logs(&model.dirs.logs());
-        model.interrupted = prepare::recover_interrupted(&model.dirs);
-        match Library::open(&model.dirs.library()) {
-            Ok(library) => model.library = Some(library),
-            Err(e) => model.error = Some(format!("Couldn't open your devices: {e}")),
+        if model.open_library() {
+            model.interrupted = prepare::recover_interrupted(&model.dirs);
         }
-        model.refresh();
         for d in &model.devices {
             app_log!(
                 "device {}: {} ({} {}){}{}",
@@ -260,6 +272,18 @@ impl Model {
                     }
                     Finished::Failed { activity, message } => app_log!("{activity:?} failed: {message}"),
                     Finished::DeviceExported { .. } | Finished::DeviceImported { .. } => {}
+                    Finished::LibraryMoved { .. } => {}
+                }
+                match &finished {
+                    Finished::LibraryMoved { library, .. } => {
+                        self.settings.library = library.clone();
+                        self.dirs = self.dirs.clone().with_library(library.clone());
+                        self.open_library();
+                    }
+                    Finished::Failed { activity: Activity::MovingLibrary { .. }, .. } => {
+                        self.open_library();
+                    }
+                    _ => {}
                 }
                 if let Finished::DeviceAdded { name, selected: false, .. } = &finished {
                     self.notice =
@@ -362,6 +386,101 @@ impl Model {
         self.notice = Some((text.into(), Instant::now()));
     }
 
+    /// Open the device library where the settings keep it. A chosen folder that isn't there is left alone, so
+    /// nothing lands on the disk a removable drive is mounted from. Whether it opened.
+    fn open_library(&mut self) -> bool {
+        self.library = None;
+        self.missing_library = None;
+        if let Some(custom) = self.dirs.missing_library() {
+            app_log!("the devices folder {} isn't there", custom.display());
+            self.missing_library = Some(custom.to_path_buf());
+            self.devices.clear();
+            return false;
+        }
+        match Library::open(&self.dirs.library()) {
+            Ok(library) => self.library = Some(library),
+            Err(e) => {
+                self.error = Some(format!("Couldn't open your devices: {e}"));
+                self.devices.clear();
+                return false;
+            }
+        }
+        self.refresh();
+        true
+    }
+
+    /// Look for a missing devices folder again (its drive plugged in since).
+    pub fn retry_library(&mut self) {
+        if self.open_library() && self.interrupted.is_none() {
+            self.interrupted = prepare::recover_interrupted(&self.dirs);
+        }
+    }
+
+    /// Why the devices folder can't change now, if it can't.
+    pub fn library_locked(&self) -> Option<String> {
+        if self.session.is_some() {
+            Some("Stop the running device first".into())
+        } else if self.task.is_some() {
+            Some("Wait for the current task to finish".into())
+        } else {
+            None
+        }
+    }
+
+    /// What choosing `picked` for the devices would do (Settings → Storage).
+    pub fn library_choice(&self, picked: &Path) -> Result<library_move::Choice, String> {
+        if let Some(reason) = self.library_locked() {
+            return Err(reason);
+        }
+        library_move::plan(&self.dirs, picked)
+    }
+
+    /// Move the devices to `target` in the background ([`library_move::Choice::New`]).
+    pub fn move_library(&mut self, target: PathBuf) {
+        if let Some(reason) = self.library_locked() {
+            self.error = Some(reason);
+            return;
+        }
+        if self.missing_library.is_some() {
+            return self.use_library(Some(target));
+        }
+        app_log!("moving the devices from {} to {}", self.dirs.library().display(), target.display());
+        let m = library_move::Move::new(&self.dirs, &self.settings, &target);
+        // The core keeps no files open between calls; dropped all the same, so nothing in the folder is in use.
+        self.library = None;
+        self.interrupted = None;
+        let task = Task::spawn(self.waker.clone(), move |reporter| library_move::run(m, reporter));
+        self.task = Some((Activity::MovingLibrary { to: target }, task));
+    }
+
+    /// Keep the devices in `target` from now on without moving any (none: the data folder's own library). The
+    /// devices in the current folder stay there, to come back to.
+    pub fn use_library(&mut self, target: Option<PathBuf>) {
+        if let Some(reason) = self.library_locked() {
+            self.error = Some(reason);
+            return;
+        }
+        let default = self.dirs.default_library();
+        let target = target.filter(|t| *t != default);
+        app_log!(
+            "devices are kept in {} now",
+            target.as_deref().map_or_else(|| default.display().to_string(), |t| t.display().to_string())
+        );
+        if let Some(dir) = &target {
+            if let Err(e) = std::fs::create_dir_all(dir.join("records")) {
+                self.error = Some(format!("Couldn't use {}: {e}", dir.display()));
+                return;
+            }
+        }
+        self.settings.library = target.clone();
+        self.dirs = self.dirs.clone().with_library(target);
+        self.save_settings();
+        self.interrupted = None;
+        if self.open_library() {
+            self.interrupted = prepare::recover_interrupted(&self.dirs);
+        }
+    }
+
     fn library(&self) -> Result<&Library, String> {
         self.library.as_ref().ok_or_else(|| "The device library is unavailable".to_string())
     }
@@ -415,7 +534,7 @@ impl Model {
 
     /// Start the selected device. `recover` cold-boots state that was not shut down cleanly.
     pub fn start(&mut self, recover: bool) {
-        if self.session_active() {
+        if self.session_active() || matches!(self.task, Some((Activity::MovingLibrary { .. }, _))) {
             return;
         }
         let Some(device) = self.selected().cloned() else {
@@ -663,6 +782,10 @@ impl Model {
         if self.task.is_some() {
             return;
         }
+        if let Some(missing) = &self.missing_library {
+            self.error = Some(format!("Your devices folder {} isn't there (Settings → Storage)", missing.display()));
+            return;
+        }
         let context = prepare::PrepareContext {
             dirs: self.dirs.clone(),
             resources: self.resources.clone(),
@@ -698,6 +821,10 @@ impl Model {
     /// Add the device in a device file (another LightTouch's export) in the background.
     pub fn import_device(&mut self, source: PathBuf) {
         if self.task.is_some() {
+            return;
+        }
+        if let Some(missing) = &self.missing_library {
+            self.error = Some(format!("Your devices folder {} isn't there (Settings → Storage)", missing.display()));
             return;
         }
         app_log!("importing a device from {}", source.display());
@@ -740,6 +867,18 @@ fn remove_old_logs(dir: &Path) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// The data folder, with the device library where its settings keep it (for the command line; the app's `Model`
+/// applies the setting itself).
+pub fn data_dirs() -> DataDirs {
+    data_dirs_in(lighttouch_core::paths::data_root())
+}
+
+fn data_dirs_in(root: PathBuf) -> DataDirs {
+    let dirs = DataDirs::new(root);
+    let library = Settings::load(&dirs.settings()).library;
+    dirs.with_library(library)
 }
 
 /// The USB link for a session of `record`, when this build has the bridge.

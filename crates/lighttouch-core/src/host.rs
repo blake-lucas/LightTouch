@@ -1,8 +1,9 @@
 //! What this computer is, for the app log's header and an exported log's summary: OS, CPU, memory, free storage.
 use std::path::Path;
 
-/// (label, value) lines describing this computer. Anything that can't be read is left out.
-pub fn describe(data: &Path) -> Vec<(&'static str, String)> {
+/// (label, value) lines describing this computer. Anything that can't be read is left out. `library` is where the
+/// devices are kept, when it isn't inside the data folder `data` (Settings → Storage).
+pub fn describe(data: &Path, library: &Path) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
     if let Some(os) = os() {
         lines.push(("OS", os));
@@ -17,6 +18,11 @@ pub fn describe(data: &Path) -> Vec<(&'static str, String)> {
     }
     if let Some(bytes) = free_bytes(data) {
         lines.push(("Free storage", format!("{} where LightTouch keeps its data", gib(bytes))));
+    }
+    if !library.starts_with(data) {
+        if let Some(bytes) = free_bytes(library) {
+            lines.push(("Free storage for devices", format!("{} where LightTouch keeps its devices", gib(bytes))));
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -130,7 +136,7 @@ fn memory_bytes() -> Option<u64> {
 }
 
 #[cfg(unix)]
-fn free_bytes(path: &Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let mut existing = path;
     while !existing.exists() {
@@ -142,7 +148,7 @@ fn free_bytes(path: &Path) -> Option<u64> {
 }
 
 #[cfg(windows)]
-fn free_bytes(path: &Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
     let mut existing = path;
@@ -159,7 +165,7 @@ fn free_bytes(path: &Path) -> Option<u64> {
 mod tests {
     #[test]
     fn this_computer_has_a_description() {
-        let lines = super::describe(&std::env::temp_dir());
+        let lines = super::describe(&std::env::temp_dir(), &std::env::temp_dir());
         assert!(lines.iter().any(|(k, _)| *k == "Architecture"));
         #[cfg(target_os = "linux")]
         assert!(lines.iter().any(|(k, _)| *k == "Memory"), "{lines:?}");
