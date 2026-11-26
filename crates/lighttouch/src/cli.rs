@@ -29,7 +29,7 @@
 use lighttouch_core::frames::{FrameReader, segment_name};
 use lighttouch_core::library::Library;
 use lighttouch_core::network::NetworkConfig;
-use lighttouch_core::paths::{DataDirs, Resources, data_root};
+use lighttouch_core::paths::{DataDirs, Resources};
 use lighttouch_core::protocol::{Command, Event, NetworkArgs, WorkerArgs};
 use lighttouch_core::runtime::NetworkMode;
 use std::io::{BufRead, BufReader, Write};
@@ -42,7 +42,7 @@ pub fn handles(command: &str) -> bool {
 }
 
 pub fn main(args: &[String]) -> i32 {
-    let dirs = DataDirs::new(data_root());
+    let dirs = lighttouch_model::data_dirs();
     let result = match args[0].as_str() {
         "list" => list(&dirs),
         "run" => run(&dirs, &args[1..]),

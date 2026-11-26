@@ -73,7 +73,11 @@ On Linux the window opens on Wayland when the session has it, else X11; `LIGHTTO
 `wayland-csd-adwaita`); KDE Plasma, wlroots compositors and X11 window managers draw their own.
 
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
-`~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
+`~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder. Settings > Storage
+can keep the devices elsewhere (settings.json's `library`, read by the app and the developer commands alike; logs and
+settings stay in the data folder): a move renames on the same drive, else copies with holes kept (pre-qcow2 page files)
+and removes the originals once the new setting is saved; a missing folder (drive not connected) is never recreated.
+`LIGHTTOUCH_UI_LIBRARY=DIR` (or `move:DIR`) drives it without a folder picker.
 To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_SHOT=file.png` saves the window after
 `LIGHTTOUCH_UI_SHOT_AFTER` seconds and closes it; `LIGHTTOUCH_UI_START=1` starts the selected device first.
 

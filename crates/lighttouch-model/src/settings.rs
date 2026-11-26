@@ -1,6 +1,6 @@
 //! App settings, saved as JSON in the data folder. Mirrors the Android app's settings where they apply.
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -167,6 +167,10 @@ pub struct Settings {
     ipad_real_size: bool,
     /// The display's measured density, for `real_size`.
     pub display: Option<crate::real_size::DisplayMeasure>,
+    /// The folder the devices are kept in (Settings → Storage); none keeps them in the data folder. Logs and these
+    /// settings stay in the data folder either way.
+    #[serde(deserialize_with = "lenient")]
+    pub library: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -200,6 +204,7 @@ impl Default for Settings {
             real_size: RealSize::Off,
             ipad_real_size: false,
             display: None,
+            library: None,
         }
     }
 }
@@ -287,6 +292,7 @@ mod tests {
             scaling: Scaling::PixelPerfect,
             integer_scale: 3,
             real_size: RealSize::All,
+            library: Some(PathBuf::from("/media/games/LightTouch")),
             ..Default::default()
         };
         s.save(&path).unwrap();
@@ -296,10 +302,12 @@ mod tests {
         assert_eq!(value["ipad_real_size"], true);
         let back = Settings::load(&path);
         assert_eq!((back.scaling, back.integer_scale, back.real_size), (Scaling::PixelPerfect, 3, RealSize::All));
+        assert_eq!(back.library.as_deref(), Some(Path::new("/media/games/LightTouch")));
         // A choice from a newer version leaves the rest of the file alone.
-        let newer = r#"{"theme":"light","screen_scaling":"hologram","real_size":"some"}"#;
+        let newer = r#"{"theme":"light","screen_scaling":"hologram","real_size":"some","library":7}"#;
         let s = Settings::parse(newer).unwrap();
         assert_eq!((s.theme, s.scaling, s.real_size), (Theme::Light, Scaling::Smooth, RealSize::Off));
+        assert_eq!(s.library, None);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

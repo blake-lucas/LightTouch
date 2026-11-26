@@ -74,6 +74,7 @@ pub fn title(activity: &Activity) -> Option<String> {
             "Importing {}",
             path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "a device".into())
         )),
+        Activity::MovingLibrary { .. } => Some("Moving your devices".into()),
         Activity::Preparing(_) => None,
     }
 }

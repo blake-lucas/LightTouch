@@ -4,6 +4,7 @@ pub mod bundle;
 pub mod carrier;
 mod clock;
 mod ffi;
+pub mod files;
 pub mod frames;
 pub mod host;
 pub mod job;

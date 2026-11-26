@@ -339,6 +339,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 }
             });
 
+            widgets::section(ui, &p, "Storage");
+            widgets::card(ui, &p, |ui| super::storage::rows(app, ui));
+
             widgets::section(ui, &p, "About");
             widgets::card(ui, &p, |ui| {
                 widgets::setting_row(
