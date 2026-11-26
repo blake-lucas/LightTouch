@@ -2,15 +2,15 @@ package org.lighttouch.android
 
 /**
  * The one gate every Legacy Store request passes, so the app stays a polite client of a small volunteer-run service
- * (it answers bursts with 429). Same rules as the desktop's crates/lighttouch-catalog/src/throttle.rs: at most 4
- * requests in flight, 4 a second with bursts of 8, and a 429 (or a 503 that says when to come back) pauses every
+ * (it answers bursts with 429). Same rules as the desktop's crates/lighttouch-catalog/src/throttle.rs: at most 8
+ * requests in flight, 16 a second with bursts of 16, and a 429 (or a 503 that says when to come back) pauses every
  * request for as long as the server asks. No Android in it; times are System.nanoTime() values.
  */
 class StoreThrottle(private val clock: () -> Long = System::nanoTime) {
     companion object {
-        const val MAX_IN_FLIGHT = 4
-        const val INTERVAL_NS = 250_000_000L
-        const val BURST = 8
+        const val MAX_IN_FLIGHT = 8
+        const val INTERVAL_NS = 62_500_000L
+        const val BURST = 16
         /** A 429 without a usable Retry-After. */
         const val DEFAULT_PAUSE_NS = 30_000_000_000L
         const val MAX_PAUSE_NS = 600_000_000_000L

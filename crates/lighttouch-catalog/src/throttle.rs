@@ -1,13 +1,13 @@
 //! The one gate every Legacy Store request passes, so the app stays a polite client of a small volunteer-run
-//! service (it answers bursts with 429). Same rules as the Android app's StoreThrottle.kt: at most 4 requests in
-//! flight, 4 a second with bursts of 8, and a 429 (or a 503 that says when to come back) pauses every request for
+//! service (it answers bursts with 429). Same rules as the Android app's StoreThrottle.kt: at most 8 requests in
+//! flight, 16 a second with bursts of 16, and a 429 (or a 503 that says when to come back) pauses every request for
 //! as long as the server asks.
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-const MAX_IN_FLIGHT: usize = 4;
-const INTERVAL: Duration = Duration::from_millis(250);
-const BURST: u32 = 8;
+const MAX_IN_FLIGHT: usize = 8;
+const INTERVAL: Duration = Duration::from_micros(62_500);
+const BURST: u32 = 16;
 /// A 429 without a usable Retry-After.
 const DEFAULT_PAUSE: Duration = Duration::from_secs(30);
 const MAX_PAUSE: Duration = Duration::from_secs(600);
