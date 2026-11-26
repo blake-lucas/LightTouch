@@ -74,6 +74,12 @@ window of gameplay (`LT_PGO_RESET`, `LT_PGO_DUMP`; the default is 150 to 250 s a
 changed since the profile was taken are compiled without it, so refresh the profile after large engine
 changes. Configure options must match those of the instrumented build. The raw profile of each game stays in `OUT.d`, so a game can be weighted when merging (`llvm-profdata merge -weighted-input=3,jetpack.profraw ...`); the shipped profile weights Jetpack Joyride 3×. Collect from a build in the release layout (`release-VER/app` beside `release-VER/engine`): clang finds a file's functions by their path relative to the build directory, and a profile taken from `~/git-projects/qemu-ios` left the static functions of release and CI builds without one.
 
+The Linux release engine (GCC 10 in the release image) takes its own profile: `scripts/build-release.sh` mounts
+`LT_LINUX_PGO` (default `$LT_INPUTS/backend/pgo/engine-linux-gcc10`, a folder of `.gcda` files; `off` builds without)
+at `/pgo`. It is recorded from an instrumented build made in the same image (`tools/bench/linux-engine.sh gen`) with
+`tools/bench/pgo_desktop.py`, one board at a time, and merged with `gcov-tool merge` in the image. Functions changed
+since then are compiled without it (`-Wno-coverage-mismatch`), so refresh it after large engine changes.
+
 ## Inputs that are not in this repository
 
 Set these in the environment or in `scripts/build.env`, which the script sources if present (not
