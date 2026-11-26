@@ -198,8 +198,8 @@ Where the inputs come from:
   whose `usbmuxd` LightTouch.app carries (as `LT_MAC_VENDOR` is locally).
 - **Pinned copies of this machine's inputs**, in the `ci-inputs-1` pre-release: the AppImage tool and runtime
   (upstream publishes them only as "continuous"), the desktop notices, and for Android the ANGLE libraries, the frontend
-  notices and the engine PGO profile (its version 2 is in `ci-inputs-2`). To change one, upload a new `ci-inputs-N`
-  release and update the manifest.
+  notices and the engine PGO profile (its version 2 is in `ci-inputs-2`); the Linux engine's GCC profile is in
+  `ci-inputs-3`. To change one, upload a new `ci-inputs-N` release and update the manifest.
 
 The APK is signed with the `ANDROID_DEBUG_KEYSTORE` repository secret (base64 of the keystore the releases are signed
 with) if set; otherwise with a key made for the run, and that APK doesn't install over a published one.
