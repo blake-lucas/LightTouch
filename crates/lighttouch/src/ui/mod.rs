@@ -469,27 +469,33 @@ impl App {
             self.dialog = Some(Dialog::CloseWhileBusy);
             return;
         }
-        if requested && self.model.session_active() {
+        if requested && self.model.any_running() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if !self.close_after_stop {
-                self.model.stop();
-                // Stop refuses while an app install is changing the guest; then the window stays.
-                self.close_after_stop = self.model.session.as_ref().is_some_and(|s| s.stopping());
+                self.model.stop_all();
+                // Stop refuses while an app install is changing the guest on screen; then the window stays.
+                self.close_after_stop = self.model.session.as_ref().is_none_or(|s| s.stopping());
                 if self.close_after_stop {
-                    let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
-                    self.model.notice = Some((format!("Shutting down {name}, then closing…"), Instant::now()));
+                    let n = self.model.running().len();
+                    let what = match (&self.model.session, n) {
+                        (Some(s), 1) => s.name.clone(),
+                        _ => format!("{n} devices"),
+                    };
+                    self.model.notice = Some((format!("Shutting down {what}, then closing…"), Instant::now()));
                 }
             }
         }
-        if self.close_after_stop && !self.model.session_active() {
+        if self.close_after_stop && !self.model.any_running() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
     fn background_work(&mut self, ctx: &egui::Context) {
         let was_active = self.model.session_active();
+        let was_on_screen = self.model.session.as_ref().map(|s| s.record_id.clone());
         self.model.tick();
-        if was_active && !self.model.session_active() {
+        let on_screen = self.model.session.as_ref().map(|s| s.record_id.clone());
+        if (was_active && !self.model.session_active()) || (was_on_screen.is_some() && on_screen != was_on_screen) {
             self.guest.clear();
             if self.fullscreen {
                 self.set_fullscreen(ctx, false);
@@ -581,15 +587,10 @@ impl App {
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if self.model.settings.pause_when_hidden {
             if minimized && !self.paused_for_hidden && !self.model.store.installing() {
-                if let Some(s) = &self.model.session {
-                    if matches!(s.phase, lighttouch_model::session::Phase::Running) {
-                        self.model.set_paused(true);
-                        self.paused_for_hidden = true;
-                    }
-                }
+                self.paused_for_hidden = self.model.set_hidden(true);
             } else if !minimized && self.paused_for_hidden {
                 self.paused_for_hidden = false;
-                self.model.set_paused(false);
+                self.model.set_hidden(false);
             }
         }
         // Keep progress and timers moving without a busy loop.

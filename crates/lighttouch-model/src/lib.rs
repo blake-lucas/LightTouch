@@ -133,6 +133,11 @@ pub struct Model {
     pub settings: Settings,
     pub devices: Vec<Device>,
     pub session: Option<Session>,
+    /// Devices left running while another is on screen: each still runs in its own worker, muted and without the
+    /// microphone, until it is selected again (`select`) or stops.
+    pub background: Vec<Session>,
+    /// The devices `set_hidden` paused, to resume.
+    paused_for_hidden: Vec<String>,
     /// A message to show briefly ("Renamed to …").
     pub notice: Option<(String, Instant)>,
     /// A problem to show until dismissed.
@@ -183,6 +188,8 @@ impl Model {
             settings,
             devices: Vec::new(),
             session: None,
+            background: Vec::new(),
+            paused_for_hidden: Vec::new(),
             notice: None,
             error: None,
             missing_library: None,
@@ -252,6 +259,27 @@ impl Model {
                 }
                 ended = true;
             }
+        }
+        let mut background_ended = false;
+        for session in &mut self.background {
+            session.poll();
+            session.kill_if_overdue();
+            if let Phase::Ended { clean, dirty, message } = &session.phase {
+                app_log!(
+                    "{} (in the background) ended after {:.0} s: clean={clean} dirty={dirty}{}",
+                    session.name,
+                    session.started_at.elapsed().as_secs_f64(),
+                    if message.is_empty() { String::new() } else { format!(": {message}") }
+                );
+                if !*clean && !message.is_empty() {
+                    self.error = Some(format!("{}: {message}", session.name));
+                }
+                background_ended = true;
+            }
+        }
+        if background_ended {
+            self.background.retain(|s| !matches!(s.phase, Phase::Ended { .. }));
+            self.refresh();
         }
         if ended {
             // Keep the ended session around only long enough to report; the record's dirty flag shows the rest.
@@ -363,6 +391,46 @@ impl Model {
         }
     }
 
+    /// Whether any device is running, on screen or in the background.
+    pub fn any_running(&self) -> bool {
+        self.session.is_some() || !self.background.is_empty()
+    }
+
+    /// The devices running (on screen or in the background) and their phases.
+    pub fn running(&self) -> Vec<(String, Phase)> {
+        self.session.iter().chain(&self.background).map(|s| (s.record_id.clone(), s.phase.clone())).collect()
+    }
+
+    /// Stop every running device (closing the window). Whether any is still shutting down or refused (an app
+    /// install is changing the device on screen).
+    pub fn stop_all(&mut self) {
+        self.stop();
+        for session in &mut self.background {
+            if session.phase.active() && !session.stopping() {
+                session.stop();
+            }
+        }
+    }
+
+    /// Pause every running device while the window is minimized (`pause_when_hidden`), and resume those it paused
+    /// when the window comes back. Whether any was paused.
+    pub fn set_hidden(&mut self, hidden: bool) -> bool {
+        let sessions = self.session.iter_mut().chain(&mut self.background);
+        if hidden {
+            for session in sessions.filter(|s| matches!(s.phase, Phase::Running)) {
+                session.set_paused(true);
+                self.paused_for_hidden.push(session.record_id.clone());
+            }
+            !self.paused_for_hidden.is_empty()
+        } else {
+            let paused = std::mem::take(&mut self.paused_for_hidden);
+            for session in sessions.filter(|s| paused.contains(&s.record_id)) {
+                session.set_paused(false);
+            }
+            !paused.is_empty()
+        }
+    }
+
     pub fn session_active(&self) -> bool {
         self.session.as_ref().is_some_and(|s| s.phase.active())
     }
@@ -418,8 +486,8 @@ impl Model {
 
     /// Why the devices folder can't change now, if it can't.
     pub fn library_locked(&self) -> Option<String> {
-        if self.session.is_some() {
-            Some("Stop the running device first".into())
+        if self.any_running() {
+            Some("Stop the running devices first".into())
         } else if self.task.is_some() {
             Some("Wait for the current task to finish".into())
         } else {
@@ -485,14 +553,44 @@ impl Model {
         self.library.as_ref().ok_or_else(|| "The device library is unavailable".to_string())
     }
 
+    /// Select a device, which is the one on screen. A device running on screen keeps running in the background, and
+    /// a device already running in the background comes back on screen.
     pub fn select(&mut self, id: &str) {
-        if self.session_active() {
+        if self.session.as_ref().is_some_and(|s| s.record_id != id) && self.store.mutating() {
+            self.notify("An app is being installed; switch devices once it finishes.");
             return;
         }
         let result = self.library().and_then(|l| l.select(id).map_err(|e| e.to_string()));
         match result {
-            Ok(()) => self.refresh(),
+            Ok(()) => {
+                self.bring_on_screen(id);
+                self.refresh();
+            }
             Err(e) => self.error = Some(e),
+        }
+    }
+
+    /// Make `id`'s session (if it runs) the one on screen; the one there goes to the background, muted.
+    fn bring_on_screen(&mut self, id: &str) {
+        if self.session.as_ref().is_some_and(|s| s.record_id == id) {
+            return;
+        }
+        if let Some(mut session) = self.session.take() {
+            if session.phase.active() {
+                // Only the device on screen is heard and hears the microphone.
+                session.set_muted(true);
+                session.set_microphone(false);
+                session.set_paused(false);
+                app_log!("{} keeps running in the background", session.name);
+                self.background.push(session);
+            }
+        }
+        if let Some(at) = self.background.iter().position(|s| s.record_id == id) {
+            let mut session = self.background.remove(at);
+            session.set_muted(self.settings.muted);
+            session.set_microphone(self.settings.microphone);
+            app_log!("{} is back on screen", session.name);
+            self.session = Some(session);
         }
     }
 
@@ -504,7 +602,7 @@ impl Model {
         let result = self.library().and_then(|l| l.rename(id, &name).map_err(|e| e.to_string()));
         match result {
             Ok(()) => {
-                if let Some(session) = &mut self.session {
+                for session in self.session.iter_mut().chain(&mut self.background) {
                     if session.record_id == id {
                         session.name = name.clone();
                     }
@@ -517,7 +615,7 @@ impl Model {
     }
 
     pub fn remove(&mut self, id: &str) {
-        if self.session.as_ref().is_some_and(|s| s.record_id == id) {
+        if self.running().iter().any(|(r, _)| r == id) {
             return;
         }
         let result = self.library().and_then(|l| l.remove(id).map_err(|e| e.to_string()));
@@ -575,7 +673,12 @@ impl Model {
             headphones: self.settings.headphones,
             muted: self.settings.muted,
             microphone: self.settings.microphone,
-            log_dir: self.dirs.logs(),
+            // The engine log is one file: a device started while another runs logs in a folder of its own.
+            log_dir: if self.background.is_empty() {
+                self.dirs.logs()
+            } else {
+                self.dirs.logs().join(format!("device-{}", &device.id[..8.min(device.id.len())]))
+            },
             // Settings → Fewer pauses when apps open: the engine's code-cache flushes as an app opens and once it
             // settles cost a pause each but are worth ~5% in games (docs/PERFORMANCE.md).
             extra_env: if self.settings.fewer_app_pauses {
@@ -805,7 +908,7 @@ impl Model {
             return;
         }
         let Some(device) = self.devices.iter().find(|d| d.id == id).cloned() else { return };
-        if self.session.as_ref().is_some_and(|s| s.record_id == id && s.phase.active()) {
+        if self.running().iter().any(|(r, phase)| r == id && phase.active()) {
             self.error = Some(format!("Stop {} before exporting it", device.name));
             return;
         }

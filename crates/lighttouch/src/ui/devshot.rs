@@ -148,6 +148,32 @@ pub fn start(app: &mut App) {
 }
 
 pub fn tick(app: &mut App, ctx: &egui::Context) {
+    // LIGHTTOUCH_UI_SWITCH=ID: once the device on screen has run 20 s, switch to ID and start it too (several devices
+    // at once); LIGHTTOUCH_UI_SWITCH_BACK=1 switches back to the first 40 s later.
+    static SWITCHED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    static FROM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static BACK: AtomicBool = AtomicBool::new(false);
+    if let Ok(id) = std::env::var("LIGHTTOUCH_UI_SWITCH") {
+        let first = app.model.session.as_ref().filter(|s| s.started_at.elapsed() > Duration::from_secs(20));
+        if SWITCHED.get().is_none() && first.is_some_and(|s| s.record_id != id) {
+            let back = first.map(|s| s.record_id.clone()).unwrap_or_default();
+            let _ = SWITCHED.set(Instant::now());
+            eprintln!("switch: to {id}, leaving {back} running");
+            app.model.select(&id);
+            app.model.start(false);
+            let _ = FROM.set(back);
+        }
+        if let Some(at) = SWITCHED.get() {
+            if std::env::var_os("LIGHTTOUCH_UI_SWITCH_BACK").is_some()
+                && at.elapsed() > Duration::from_secs(40)
+                && !BACK.swap(true, Ordering::AcqRel)
+            {
+                let back = FROM.get().cloned().unwrap_or_default();
+                eprintln!("switch: back to {back}");
+                app.model.select(&back);
+            }
+        }
+    }
     let Some(shot) = &mut app.dev_shot else { return };
     if shot.install.is_some() && app.model.store.guest_ready() {
         let path = shot.install.take().unwrap();
