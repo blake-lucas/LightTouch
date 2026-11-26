@@ -112,6 +112,11 @@ from qemu-ios (by the `guest-package.yml` CI workflow, or `scripts/build.sh gues
 
 ## Rules and style
 
+- **Same experience on every platform.** Android, Linux, Windows and macOS aim to behave and perform alike, so a fix,
+  feature or speed-up goes to every platform it can apply to, not only the one it was found or measured on. Gate code
+  by platform only where an API truly differs (e.g. Android's AHardwareBuffer), and say why in a comment. When a
+  change can't be tested on a platform, still enable it there and list it as untested for the owner's test build
+  rather than leaving that platform behind.
 - **Activation is a black box**, maintained separately (`crates/lighttouch-firmware/csrc/activation.c`,
   `tools/activation/`).
 - **No firmware in any repo**: IPSWs, decrypted components, NAND images, SDKs and prepared devices stay outside.
