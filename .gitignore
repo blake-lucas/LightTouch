@@ -38,3 +38,6 @@ scripts/build.env
 /.claude/settings.local.json
 .build-*/
 /Packages/
+# Skills' machine-specific notes (references/local/); only the template is shared
+/.claude/skills/*/references/local/*
+!/.claude/skills/*/references/local/_TEMPLATE.md
