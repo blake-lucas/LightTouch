@@ -56,6 +56,21 @@ pub fn export(request: &ExportRequest, dest: &Path) -> Result<(), String> {
         add(&mut c, &format!("{}-previous.log", spec.name), previous, one);
     }
 
+    // A device started while another ran logs in a folder of its own (`Model::start`).
+    let mut folders: Vec<_> = std::fs::read_dir(&logs_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("device-") && e.path().is_dir())
+        .collect();
+    folders.sort_by_key(|e| e.file_name());
+    for folder in folders {
+        let name = folder.file_name().to_string_lossy().into_owned();
+        if let Some(bytes) = logs::stitch(&folder.path(), logs::ENGINE.name) {
+            c.entries.push((format!("{name}/engine.log"), bytes));
+        }
+    }
+
     let current = request.current.as_ref().and_then(|id| request.devices.iter().find(|d| &d.id == id));
     let state = current.map(|d| d.record.state_path.clone());
     add(

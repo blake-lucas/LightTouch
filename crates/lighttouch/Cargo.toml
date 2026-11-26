@@ -18,7 +18,9 @@ lighttouch-services = { path = "../lighttouch-services" }
 cpal = "0.18"
 egui_extras = { version = "0.37", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# clipboard: Copy buttons and Ctrl+C/Ctrl+V in text fields reach the system clipboard (arboard; smithay-clipboard on
+# Wayland). Without it they only copied within egui.
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
 rfd = "0.17"
 serde_json = "1"
 

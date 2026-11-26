@@ -177,6 +177,11 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
         }
     }
 
+    /// Whether any entry matches `f` (its item and payload).
+    pub fn any(&self, f: impl Fn(&QueueItem, &P) -> bool) -> bool {
+        self.state.lock().unwrap().entries.iter().any(|e| f(&e.item, &e.payload))
+    }
+
     pub fn snapshot(&self) -> Vec<QueueItem> {
         self.state.lock().unwrap().entries.iter().map(|e| e.item.clone()).collect()
     }

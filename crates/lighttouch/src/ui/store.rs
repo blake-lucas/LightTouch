@@ -319,7 +319,8 @@ fn notices(app: &mut App, ui: &mut Ui) {
             ui.label(RichText::new(title).font(theme::title()));
             ui.add_space(6.0);
             egui::ScrollArea::vertical().max_height(320.0).id_salt("crash").show(ui, |ui| {
-                ui.add(egui::Label::new(RichText::new(&crash).monospace().size(12.0)).wrap());
+                // Selectable, unlike the app's other labels (theme.rs), so part of it can be copied.
+                ui.add(egui::Label::new(RichText::new(&crash).monospace().size(12.0)).wrap().selectable(true));
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {

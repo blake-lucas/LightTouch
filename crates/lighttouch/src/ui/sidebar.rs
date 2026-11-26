@@ -30,16 +30,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             let active = app.model.session_active();
             let busy = app.model.busy().is_some();
-            let running_id = app.model.session.as_ref().map(|s| s.record_id.clone());
-            let running_phase = app.model.session.as_ref().map(|s| s.phase.clone());
+            // Every running device has its dot: the one on screen and those left running in the background.
+            let running_devices = app.model.running();
             // The Prepare page is the device being made (marked on its own row), not the selected one.
             let preparing_shown = app.page == Page::Prepare;
             egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ui.available_height() - 168.0).show(
                 ui,
                 |ui| {
                     for device in app.model.devices.clone() {
-                        let running = running_id.as_deref() == Some(device.id.as_str());
-                        let badge = match running_phase.as_ref().filter(|_| running) {
+                        let phase = running_devices.iter().find(|(id, _)| *id == device.id).map(|(_, p)| p);
+                        let running = phase.is_some();
+                        let badge = match phase {
                             Some(phase) => Some(Badge::Dot(phase_color(phase))),
                             None if device.dirty => Some(Badge::Warning),
                             None => None,
@@ -57,11 +58,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 "Needs recovery: it didn't shut down cleanly. The next start checks its storage first.",
                             );
                         }
-                        if active && !device.selected {
-                            let name = app.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
-                            response = response.on_hover_text(format!("Stop {name} to switch to this device"));
+                        if active && !device.selected && !running {
+                            response = response.on_hover_text("The device on screen keeps running in the background");
                         }
-                        if response.clicked() && !active && !busy && !device.selected {
+                        if response.clicked() && !busy && !device.selected {
                             app.model.select(&device.id);
                             app.page = Page::Device;
                         } else if response.clicked() && device.selected {

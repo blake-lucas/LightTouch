@@ -114,6 +114,8 @@ pub struct App {
     pulse_release: Option<Instant>,
     /// The window was closed with iOS running: close once it has shut down.
     close_after_stop: bool,
+    /// The device shown last frame, to notice a switch.
+    shown_device: Option<String>,
     /// Closing was confirmed during a preparation or import: close once it has cancelled.
     close_after_task: bool,
     dev_shot: Option<devshot::DevShot>,
@@ -416,6 +418,7 @@ impl App {
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
+            shown_device: None,
             close_after_task: false,
             dev_shot: devshot::DevShot::from_env(),
         }
@@ -469,19 +472,23 @@ impl App {
             self.dialog = Some(Dialog::CloseWhileBusy);
             return;
         }
-        if requested && self.model.session_active() {
+        if requested && self.model.any_running() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if !self.close_after_stop {
-                self.model.stop();
-                // Stop refuses while an app install is changing the guest; then the window stays.
-                self.close_after_stop = self.model.session.as_ref().is_some_and(|s| s.stopping());
-                if self.close_after_stop {
-                    let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
-                    self.model.notice = Some((format!("Shutting down {name}, then closing…"), Instant::now()));
+                // A device installing an app stops once iOS has finished with it.
+                self.model.stop_all();
+                self.close_after_stop = true;
+                {
+                    let n = self.model.running().len();
+                    let what = match (&self.model.session, n) {
+                        (Some(s), 1) => s.name.clone(),
+                        _ => format!("{n} devices"),
+                    };
+                    self.model.notice = Some((format!("Shutting down {what}, then closing…"), Instant::now()));
                 }
             }
         }
-        if self.close_after_stop && !self.model.session_active() {
+        if self.close_after_stop && !self.model.any_running() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -489,6 +496,14 @@ impl App {
     fn background_work(&mut self, ctx: &egui::Context) {
         let was_active = self.model.session_active();
         self.model.tick();
+        // Another device shown (selected in the sidebar, which may leave the last one running in the background): its
+        // picture is its own, never the last device's.
+        let shown = self.model.current().map(|d| d.id.clone());
+        let switched = shown != self.shown_device;
+        self.shown_device = shown;
+        if switched {
+            self.guest.clear();
+        }
         if was_active && !self.model.session_active() {
             self.guest.clear();
             if self.fullscreen {
@@ -581,15 +596,10 @@ impl App {
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if self.model.settings.pause_when_hidden {
             if minimized && !self.paused_for_hidden && !self.model.store.installing() {
-                if let Some(s) = &self.model.session {
-                    if matches!(s.phase, lighttouch_model::session::Phase::Running) {
-                        self.model.set_paused(true);
-                        self.paused_for_hidden = true;
-                    }
-                }
+                self.paused_for_hidden = self.model.set_hidden(true);
             } else if !minimized && self.paused_for_hidden {
                 self.paused_for_hidden = false;
-                self.model.set_paused(false);
+                self.model.set_hidden(false);
             }
         }
         // Keep progress and timers moving without a busy loop.
@@ -691,7 +701,7 @@ impl App {
                     });
                 }
                 // iOS is installing an app: a shutdown would wait for it, so the only way out now is Force stop.
-                Dialog::Stop if self.model.store.mutating() => {
+                Dialog::Stop if self.model.installing_on_screen() => {
                     let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
                     ui.label(widgets::icon_text(icons::POWER, 26.0).color(theme::DANGER));
                     ui.add_space(6.0);
