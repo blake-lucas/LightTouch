@@ -919,7 +919,8 @@ JNI(networkStatus) jobjectArray JNICALL Java_org_lighttouch_android_Native_netwo
     env->SetObjectArrayElement(output,7,string(env,activity.last_result_error?"1":"0"));return output;
 }
 
-static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty,bool headphones) {
+static jstring start_runtime(JNIEnv *env, jstring root, jstring id, bool allow_dirty, bool headphones,
+                             const char *load_state = nullptr) {
     bool qmp_requested=false;
     bool touch_trace_requested=false;
     {
@@ -993,6 +994,7 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     engine.boot.headphones=headphones && (prepared_board.capabilities&LT_BOARD_HEADPHONES);
     engine.boot.network_mode=network_mode;engine.boot.network_local=network_local;
     engine.boot.network_socket=network_socket.empty()?nullptr:network_socket.c_str();
+    engine.load_state = load_state;
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
     if(status==LT_OK)status=lt_runtime_set_frame_listener(prepared_runtime,frame_published,nullptr,&error);
 #ifdef LT_ANDROID_DEBUG
@@ -1040,6 +1042,164 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
 }
 JNI(recoverStart) jstring JNICALL Java_org_lighttouch_android_Native_recoverStart(JNIEnv *env,jobject,jstring root,jstring id,jboolean headphones) {
     return start_runtime(env,root,id,true,headphones);
+}
+
+// Save states (Portable/src/States.cpp). A load starts this worker from the state (its storage replaces the device's,
+// so a device that wasn't shut down cleanly may load one too).
+JNI(startState)
+jstring JNICALL Java_org_lighttouch_android_Native_startState(JNIEnv *env, jobject, jstring root, jstring id,
+                                                              jstring state, jboolean headphones) {
+    Utf chosen(env, state);
+    return start_runtime(env, root, id, true, headphones, chosen.value);
+}
+// The record's states, newest first: rows of [id, name, app, created ms, bytes, thumbnail path, thumbnail width,
+// thumbnail height], or one row ["", error].
+JNI(states)
+jobjectArray JNICALL Java_org_lighttouch_android_Native_states(JNIEnv *env, jobject, jstring root, jstring id) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf path(env, root), record(env, id);
+    lt_error error = LT_INIT(lt_error);
+    std::vector<lt_state_info> infos(256);
+    for (auto &info : infos)
+        info = lt_state_info LT_INIT(lt_state_info);
+    uint32_t count = 0;
+    auto status = open_library(path.value, &error);
+    if (status == LT_OK)
+        status = lt_library_states(library, record.value, infos.data(), uint32_t(infos.size()), &count, &error);
+    jclass strings = env->FindClass("[Ljava/lang/String;");
+    jclass str = env->FindClass("java/lang/String");
+    if (status != LT_OK) {
+        auto rows = env->NewObjectArray(1, strings, nullptr);
+        auto row = env->NewObjectArray(2, str, nullptr);
+        env->SetObjectArrayElement(row, 0, string(env, ""));
+        env->SetObjectArrayElement(row, 1, string(env, result(status, error)));
+        env->SetObjectArrayElement(rows, 0, row);
+        return rows;
+    }
+    count = std::min<uint32_t>(count, uint32_t(infos.size()));
+    auto rows = env->NewObjectArray(jsize(count), strings, nullptr);
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto &info = infos[i];
+        std::vector<std::string> values{info.id,
+                                        info.name,
+                                        info.app,
+                                        std::to_string(info.created_ms),
+                                        std::to_string(info.bytes),
+                                        info.thumbnail_path,
+                                        std::to_string(info.thumbnail_width),
+                                        std::to_string(info.thumbnail_height)};
+        auto row = env->NewObjectArray(jsize(values.size()), str, nullptr);
+        for (size_t k = 0; k < values.size(); ++k)
+            env->SetObjectArrayElement(row, jsize(k), string(env, values[k]));
+        env->SetObjectArrayElement(rows, jsize(i), row);
+        env->DeleteLocalRef(row);
+    }
+    return rows;
+}
+JNI(deleteState)
+jstring JNICALL
+    Java_org_lighttouch_android_Native_deleteState(JNIEnv *env, jobject, jstring root, jstring id, jstring state) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf path(env, root), record(env, id), chosen(env, state);
+    lt_error error = LT_INIT(lt_error);
+    auto status = open_library(path.value, &error);
+    if (status == LT_OK)
+        status = lt_library_delete_state(library, record.value, chosen.value, &error);
+    return string(env, result(status, error));
+}
+JNI(renameState)
+jstring JNICALL Java_org_lighttouch_android_Native_renameState(JNIEnv *env, jobject, jstring root, jstring id,
+                                                               jstring state, jstring name) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf path(env, root), record(env, id), chosen(env, state), label(env, name);
+    lt_error error = LT_INIT(lt_error);
+    auto status = open_library(path.value, &error);
+    if (status == LT_OK)
+        status = lt_library_rename_state(library, record.value, chosen.value, label.value, &error);
+    return string(env, result(status, error));
+}
+// A save's progress for stateProgress (a load's comes from the runtime).
+static std::mutex state_progress_guard;
+static std::string state_phase;
+static uint64_t state_done = 0, state_total = 0;
+static int state_observed(void *, const char *phase, uint64_t done, uint64_t total) {
+    std::lock_guard<std::mutex> lock(state_progress_guard);
+    state_phase = phase ? phase : "";
+    state_done = done;
+    state_total = total;
+    return 0;
+}
+// Save the running guest (blocking: call it off the binder's caller thread): [error, id, name, bytes].
+JNI(saveState)
+jobjectArray JNICALL Java_org_lighttouch_android_Native_saveState(JNIEnv *env, jobject, jstring name, jstring app) {
+    Utf label(env, name), who(env, app);
+    lt_runtime *target = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        target = runtime;
+    }
+    lt_error error = LT_INIT(lt_error);
+    lt_state_info info = LT_INIT(lt_state_info);
+    lt_status status = LT_AGAIN;
+    if (target) {
+        lt_state_save_config config = LT_INIT(lt_state_save_config);
+        config.name = label.value && *label.value ? label.value : nullptr;
+        config.app = who.value;
+        state_observed(nullptr, "saving", 0, 0);
+        status = lt_runtime_save_state(target, &config, state_observed, nullptr, &info, &error);
+        state_observed(nullptr, "", 0, 0);
+    } else {
+        std::snprintf(error.message, sizeof(error.message), "The device isn't running");
+    }
+    std::vector<std::string> values{result(status, error), status == LT_OK ? info.id : "",
+                                    status == LT_OK ? info.name : "",
+                                    status == LT_OK ? std::to_string(info.bytes) : "0"};
+    auto out = env->NewObjectArray(jsize(values.size()), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < values.size(); ++i)
+        env->SetObjectArrayElement(out, jsize(i), string(env, values[i]));
+    return out;
+}
+// A save or load under way: [phase, done, total] ("" phase when none).
+JNI(stateProgress) jobjectArray JNICALL Java_org_lighttouch_android_Native_stateProgress(JNIEnv *env, jobject) {
+    std::string phase;
+    uint64_t done = 0, total = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_progress_guard);
+        phase = state_phase;
+        done = state_done;
+        total = state_total;
+    }
+    if (phase.empty()) {
+        std::lock_guard<std::mutex> lock(guard);
+        lt_state_progress progress = LT_INIT(lt_state_progress);
+        lt_error error = LT_INIT(lt_error);
+        if (runtime && lt_runtime_state_progress(runtime, &progress, &error) == LT_OK && progress.active) {
+            phase = progress.phase;
+            done = progress.done;
+            total = progress.total;
+        }
+    }
+    auto out = env->NewObjectArray(3, env->FindClass("java/lang/String"), nullptr);
+    env->SetObjectArrayElement(out, 0, string(env, phase));
+    env->SetObjectArrayElement(out, 1, string(env, std::to_string(done)));
+    env->SetObjectArrayElement(out, 2, string(env, std::to_string(total)));
+    return out;
+}
+// Whether a state of the running record would load in a fresh worker: the reason for the user, or "".
+JNI(checkState) jstring JNICALL Java_org_lighttouch_android_Native_checkState(JNIEnv *env, jobject, jstring state) {
+    std::lock_guard<std::mutex> lock(guard);
+    Utf chosen(env, state);
+    lt_error error = LT_INIT(lt_error);
+    return string(env, runtime ? result(lt_runtime_check_state(runtime, chosen.value, &error), error)
+                               : "The device isn't running");
+}
+// End the engine without an iOS shutdown, to load a state over this session; the worker then disposes itself.
+JNI(discard) jstring JNICALL Java_org_lighttouch_android_Native_discard(JNIEnv *env, jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_error error = LT_INIT(lt_error);
+    ++presentation_epoch;
+    previous_present_ns = 0;
+    return string(env, runtime ? result(lt_runtime_discard(runtime, &error), error) : "");
 }
 
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {

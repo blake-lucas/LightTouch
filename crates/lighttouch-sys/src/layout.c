@@ -9,7 +9,8 @@ uint32_t lt_rust_layout(uint32_t *out, uint32_t capacity) {
         S(lt_runtime_status), S(lt_runtime_config), S(lt_runtime_diagnostics), S(lt_runtime_io_stats),
         S(lt_runtime_storage_stats), S(lt_frame_info), S(lt_contact), S(lt_touch_batch), S(lt_input_status), S(lt_motion), S(lt_pcm_info),
         S(lt_mic_info), S(lt_guest_request), S(lt_guest_result), S(lt_carrier), S(lt_export_config),
-        S(lt_transfer_import_config), S(lt_vibrator_info)};
+        S(lt_transfer_import_config), S(lt_vibrator_info), S(lt_state_info), S(lt_state_save_config),
+        S(lt_state_progress)};
     const uint32_t count = sizeof(sizes) / sizeof(sizes[0]);
     for (uint32_t i = 0; i < count && i < capacity; i++)
         out[i] = sizes[i];

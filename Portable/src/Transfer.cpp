@@ -7,11 +7,12 @@
 // free space before writing anything large. Each entry's CRC-32 (in its data descriptor and the central directory)
 // guards its bytes; the base is also checked against its own lock's SHA-256 digests, hashed as it arrives.
 //
-// What goes in: record.json, carrier.json, base/ (the prepared system), assets/ (boot ROM, guest tools) and state/
-// (the device's own NAND overlay, NOR, SIM and guest verdicts; the unclean-shutdown mark when there is one). What
+// What goes in: record.json, carrier.json, base/ (the prepared system), assets/ (boot ROM, guest tools), state/
+// (the device's own NAND overlay, NOR, SIM and guest verdicts; the unclean-shutdown mark when there is one) and
+// states/ (its save states, States.cpp: they load on another host of the same kind with the same LightTouch). What
 // stays out: the lease, the admission cache (.base-identity, .verified-digests: inode identities of this host), the
-// guest-offer staging (state/work), logs and temporary files. Pairing and network folders live outside the record and
-// are made again on the new host. There is no saved running state to carry: a moved device cold-boots.
+// guest-offer staging (state/work), logs and temporary files (a save state being written included). Pairing and
+// network folders live outside the record and are made again on the new host.
 //
 // Holes: an export never reads a file's holes (data_ranges); a chunk that is all zeros is one precompressed block.
 // An import writes zeros as holes and sets each file's length, so sparse images stay sparse.
@@ -117,7 +118,7 @@ bool entry_name_ok(const std::string &name) {
         return false;
     if (name == "record.json" || name == "carrier.json" || name == "state/.dirty")
         return true;
-    if (name.rfind("base/", 0) && name.rfind("assets/", 0) && name.rfind("state/", 0))
+    if (name.rfind("base/", 0) && name.rfind("assets/", 0) && name.rfind("state/", 0) && name.rfind("states/", 0))
         return false;
     size_t start = 0;
     for (;;) {
@@ -315,6 +316,7 @@ std::vector<Entry> collect(const fs::path &directory) {
         // work/: the guest offer staged for each boot; logs: this host's.
         return visible(r) && r != "work" && r.rfind("work/", 0) && !(top && r.size() > 4 && r.compare(r.size() - 4, 4, ".log") == 0);
     });
+    tree("states", visible);
     // Identity and lock first (in that order), the rest of the small files, then the large.
     std::vector<Entry> all;
     for (auto *list : {&small, &rest})

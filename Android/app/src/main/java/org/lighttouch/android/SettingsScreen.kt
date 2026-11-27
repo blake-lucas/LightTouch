@@ -65,6 +65,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     SwitchRow(LtIcons.Vibrate, "Vibration", "Vibrate this phone when the iPhone does", s.vibration, "vibration_toggle") { s.vibration = it; host.applySettings() }
                     SwitchRow(LtIcons.Camera, "Screenshot button", "Adds Screenshot to the controls under the device. Full screen's menu always has it",
                         s.screenshotButton, "screenshot_toggle") { s.screenshotButton = it }
+                    SwitchRow(LtIcons.Save, "States button", "Adds States to the controls: save the running device, and load a save state later to carry on from that moment",
+                        s.statesButton, "states_toggle") { s.statesButton = it }
                 }
                 SettingsGroup("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",

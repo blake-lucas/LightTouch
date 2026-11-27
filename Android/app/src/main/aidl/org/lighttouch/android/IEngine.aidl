@@ -41,6 +41,21 @@ interface IEngine {
     void guestCancel(long requestId);
     String debugEnableTouchTrace();
     Bundle recoverStart(String recordId);
+    /** Save states (Portable/src/States.cpp). startState: this fresh worker starts from a state of the record. */
+    Bundle startState(String recordId, String stateId);
+    /** The record's states, newest first: id, name, app, createdMs, bytes, thumbnail (a PNG path), width, height. */
+    Bundle[] states(String recordId);
+    String deleteState(String recordId, String stateId);
+    String renameState(String recordId, String stateId, String name);
+    /** Save the running guest in the background: "" when it began, else why not. stateProgress follows it. */
+    String saveState(String name, String app);
+    /** A save or load under way (phase "saving", "restoring" or "loading", done, total; phase "" when none), and the
+     *  last save's outcome once (saved: the state's name; failed: why). */
+    Bundle stateProgress();
+    /** Whether a state of the running record would load in a fresh worker: the reason, or "". */
+    String checkState(String stateId);
+    /** End the engine without an iOS shutdown to load a state over this session; the worker then disposes itself. */
+    String discard();
     long displayInputGeneration(long lease);
     Bundle performance(long observationEpoch);
     String debugArmVcpuAccounting();

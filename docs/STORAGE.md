@@ -24,6 +24,22 @@ Nothing converts an old device (export + import keeps its format). Old 2G page-f
 both hosts; **preparing the device again** gives it a container. There is no migration: the owner decided preparing
 again is the answer (2026-11-23).
 
+## Save states
+
+A device's save states live with it, in `records/ID/states/STATE/` (`Portable/src/States.cpp`): `state.json` (name,
+time, the app and engine that made it, the host kind, board, build, base digest, guest tools digest), `thumbnail.png`
+and `state.zip` (`Portable/src/Zip.hpp`: 1 MiB deflate level-1 chunks compressed and inflated on up to 8 threads,
+ZIP64, zero chunks kept as holes). The zip holds `machine.state` (the engine's stream: RAM, every device, the live GL
+state) and the device's own storage as it was (`state/nand/*`, NOR, SIM, guest verdicts). A save stops the guest,
+streams the machine and copies the storage while it is stopped, then resumes it; a load runs only in a fresh engine
+process, puts the storage back before the engine opens it and loads the machine before the first instruction. A
+state loads only into its own device, on the same host kind (desktop or Android: the GL part differs) with the same
+engine build and guest tools; anything else is refused with a plain message. Export/import carries `states/`;
+deleting the device deletes them. An iPod touch 2G prepared before the NAND container writes a whole copy of its
+base's chip files in place (state/nand with geometry.json nand-xor-blank-v2): its states keep only the 1 MiB chunks
+that differ from the base, which a load reads back from the base (a fresh boot's state went from ~1.8 GB to the size of
+what it changed). A load into a running device shows the state's picture greyed out with one bar and percentage for the whole load (storage, then machine), not a stop and a boot.
+
 ## What the overlay's "write" figure measures
 
 The bytes of NAND pages the engine programmed (page plus spare) over the last second, refreshed four times a second;

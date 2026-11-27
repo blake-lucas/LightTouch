@@ -23,6 +23,9 @@ class EngineService : Service() {
     private val started = WorkerStartAdmission()
     private val failureRecorded = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
+    /** A save state being written (saveState), and the last one's outcome for stateProgress: ("saved", name) or ("failed", why). */
+    private val stateSaving = AtomicBoolean(false)
+    @Volatile private var stateOutcome: Pair<String, String>? = null
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
     /** The guest's audio plays (mixed with other apps' audio: LightTouch takes no audio focus). */
@@ -194,16 +197,56 @@ class EngineService : Service() {
         override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
         override fun start(recordId: String): Bundle = startRecord(recordId, coldRecovery = false)
         override fun recoverStart(recordId: String): Bundle = startRecord(recordId, coldRecovery = true)
+        override fun startState(recordId: String, stateId: String): Bundle = startRecord(recordId, coldRecovery = true, stateId)
+        override fun states(recordId: String): Array<Bundle> = Native.states(File(filesDir, "library").absolutePath, recordId).mapNotNull { row ->
+            if (row[0].isEmpty()) { AppLog.w("Save states unavailable: ${row.getOrElse(1) { "" }}"); null }
+            else Bundle().apply {
+                putString("id", row[0]); putString("name", row[1]); putString("app", row[2])
+                putLong("createdMs", row[3].toLongOrNull() ?: 0L); putLong("bytes", row[4].toLongOrNull() ?: 0L)
+                putString("thumbnail", row[5]); putInt("width", row[6].toIntOrNull() ?: 0); putInt("height", row[7].toIntOrNull() ?: 0)
+            }
+        }.toTypedArray()
+        override fun deleteState(recordId: String, stateId: String): String =
+            Native.deleteState(File(filesDir, "library").absolutePath, recordId, stateId)
+        override fun renameState(recordId: String, stateId: String, name: String): String =
+            Native.renameState(File(filesDir, "library").absolutePath, recordId, stateId, name)
+        override fun saveState(name: String, app: String): String {
+            if (stopping.get()) return "The device is stopping"
+            if (!stateSaving.compareAndSet(false, true)) return "A save is already under way"
+            stateOutcome = null
+            Thread({
+                val result = Native.saveState(name, app)
+                stateOutcome = if (result[0].isEmpty()) "saved" to result[2] else "failed" to result[0]
+                AppLog.i("Save state: " + if (result[0].isEmpty()) "${result[1].take(8)} (${result[3]} bytes)" else result[0])
+                stateSaving.set(false)
+            }, "save-state").start()
+            return ""
+        }
+        override fun stateProgress(): Bundle = Bundle().apply {
+            val progress = Native.stateProgress()
+            putString("phase", progress[0]); putLong("done", progress[1].toLongOrNull() ?: 0L); putLong("total", progress[2].toLongOrNull() ?: 0L)
+            putBoolean("saving", stateSaving.get())
+            stateOutcome?.takeIf { !stateSaving.get() }?.let { (kind, text) -> putString(kind, text); stateOutcome = null }
+        }
+        override fun checkState(stateId: String): String = Native.checkState(stateId)
+        override fun discard(): String {
+            // Ended on purpose to load a state: no iOS shutdown, the device stays marked unclean (the state replaces
+            // its storage at the next start), and this worker disposes itself as after Force stop.
+            stopping.set(true)
+            val result = Native.discard()
+            shutdownWatchdog.force()
+            return result
+        }
         /** A Java failure here used to kill the worker with nothing written; now it says what it was. */
-        private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle = try {
-            startRecordOrThrow(recordId, coldRecovery)
+        private fun startRecord(recordId: String, coldRecovery: Boolean, stateId: String? = null): Bundle = try {
+            startRecordOrThrow(recordId, coldRecovery, stateId)
         } catch (failure: Throwable) {
             val message = ("The emulator couldn't start: " + (failure.message ?: failure.javaClass.simpleName)).take(4096)
             error = message
             persistStopError(message)
             Bundle().apply { putString("state", "failed"); putString("error", message) }
         }
-        private fun startRecordOrThrow(recordId: String, coldRecovery: Boolean): Bundle {
+        private fun startRecordOrThrow(recordId: String, coldRecovery: Boolean, stateId: String? = null): Bundle {
             if (stopping.get()) return Bundle().apply {
                 putString("state", "stopping"); putString("error", "This worker is disposing; recovery and Start require a fresh worker.")
             }
@@ -244,11 +287,15 @@ class EngineService : Service() {
                 networkSetup = if (network.enabled) "Waiting for guest tools…" else "Off"
                 val roots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts").firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
                 error = Native.networkPrepare(filesDir.absolutePath, recordId, network.nativeMode, network.archiveDate, network.localNetwork, roots)
-                if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+                if (error.isEmpty()) error = when {
+                    stateId != null -> Native.startState(libraryRoot, recordId, stateId, headphones)
+                    coldRecovery -> Native.recoverStart(libraryRoot, recordId, headphones)
+                    else -> Native.start(libraryRoot, recordId, headphones)
+                }
                 if (error.isEmpty() && network.enabled) startGuestNetwork()
             }
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
-            AppLog.i("Engine ${if (coldRecovery) "recovery" else "start"} of ${recordId.take(8)}: " + error.ifEmpty { "started" } +
+            AppLog.i("Engine ${if (stateId != null) "load of state ${stateId.take(8)}" else if (coldRecovery) "recovery" else "start"} of ${recordId.take(8)}: " + error.ifEmpty { "started" } +
                 " (graphics ${Native.status().getOrNull(5) ?: "?"}, network $networkSetup, USB ${usbError.ifEmpty { "ok" }}, app pauses $flush, headphones $headphones)")
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({

@@ -204,7 +204,9 @@ fn run(
     let busy_until = Instant::now() + Duration::from_secs(15);
     let device = loop {
         let mut last_report = Instant::now() - Duration::from_secs(1);
-        let opened = Device::open(&library, &record.id, args.recover, &mut |done, total| {
+        // A state replaces the device's storage, clean or not.
+        let recover = args.recover || args.load_state.is_some();
+        let opened = Device::open(&library, &record.id, recover, &mut |done, total| {
             if last_report.elapsed() >= Duration::from_millis(100) || done == total {
                 last_report = Instant::now();
                 let _ = events.send(Event::Admission { done, total });
@@ -241,6 +243,7 @@ fn run(
         audio: args.audio,
         headphones,
         network: network.as_ref().and_then(Networking::boot),
+        load_state: args.load_state.clone(),
     };
     let _bridge = match usb {
         Some(Ok(bridge)) => {
@@ -352,6 +355,9 @@ fn run(
     let mut microphone = Microphone { enabled: args.microphone, ..Default::default() };
     let mut modem = Modem { present: lighttouch_core::carrier::board_has_modem(&record.board), ..Default::default() };
     let mut ui_gone = false;
+    // Ended on purpose without a shutdown (Command::Discard), to load a state over this session.
+    let mut discarded = false;
+    let mut load_reported = (Instant::now(), false);
     let grace = Duration::from_millis(sys::LT_SHUTDOWN_GRACE_MS as u64);
     let outcome = loop {
         // Commands.
@@ -451,6 +457,19 @@ fn run(
                 Command::ReloadCarrier => runtime.reload_carrier(),
                 Command::HoldStorageSync { hold } => runtime.hold_storage_sync(hold),
                 Command::Modem { action } => runtime.modem(&action).map(|_| modem.wrote()),
+                Command::SaveState { name } => {
+                    save_state(&runtime, name, events);
+                    Ok(())
+                }
+                Command::CheckState { id } => {
+                    let problem = runtime.check_state(&id).err().map(|e| e.to_string());
+                    let _ = events.send(Event::StateChecked { id, problem });
+                    Ok(())
+                }
+                Command::Discard => {
+                    discarded = true;
+                    runtime.discard()
+                }
             };
             if let Err(e) = result {
                 let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
@@ -498,7 +517,28 @@ fn run(
         microphone.tick(&runtime);
         modem.tick(&runtime, events);
 
-        let status = runtime.poll().map_err(|e| format!("engine status: {e}"))?;
+        // A state loading at start: its progress, ten times a second, and once more when it ends.
+        if args.load_state.is_some() {
+            if let Ok(progress) = runtime.state_progress() {
+                if progress.active && load_reported.0.elapsed() >= Duration::from_millis(100) {
+                    load_reported = (Instant::now(), true);
+                    let _ = events.send(Event::StateProgress {
+                        phase: progress.phase,
+                        done: progress.done,
+                        total: progress.total,
+                    });
+                }
+            }
+        }
+
+        let status = match runtime.poll() {
+            Ok(status) => status,
+            Err(_) if discarded => {
+                break Outcome { clean: false, dirty: true, message: "ended to load a save state".into() };
+            }
+            Err(e) if args.load_state.is_some() && e.to_string().contains("save state") => return Err(e.to_string()),
+            Err(e) => return Err(format!("engine status: {e}")),
+        };
         let diagnostics = runtime.diagnose().unwrap_or_default();
         let event = StatusEvent {
             state: status.state,
@@ -551,7 +591,9 @@ fn run(
                 break Outcome {
                     clean: false,
                     dirty: true,
-                    message: if status.storage_failed {
+                    message: if discarded {
+                        "ended to load a save state".into()
+                    } else if status.storage_failed {
                         "iOS stopped unexpectedly: a storage write failed".into()
                     } else {
                         format!("iOS stopped unexpectedly (engine exit {})", status.engine_exit)
@@ -823,6 +865,42 @@ fn command_name(command: &Command) -> &'static str {
         Command::ReloadCarrier => "reload_carrier",
         Command::HoldStorageSync { .. } => "hold_storage_sync",
         Command::Modem { .. } => "modem",
+        Command::SaveState { .. } => "save_state",
+        Command::CheckState { .. } => "check_state",
+        Command::Discard => "discard",
+    }
+}
+
+/// Save a state on its own thread, so frames, audio and the session's status go on meanwhile (the guest is stopped for
+/// the save itself). Progress, then the result, go out as events.
+fn save_state(runtime: &Arc<Runtime>, name: Option<String>, events: &Sender<Event>) {
+    let (runtime, sender) = (runtime.clone(), events.clone());
+    let spawned = thread::Builder::new().name("save-state".into()).spawn(move || {
+        let events = sender;
+        let started = Instant::now();
+        let app = lighttouch_model::transfer::app_name();
+        let mut progress = |phase: &str, done: u64, total: u64| {
+            let _ = events.send(Event::StateProgress { phase: phase.into(), done, total });
+            true
+        };
+        match runtime.save_state(name.as_deref(), &app, &mut progress) {
+            Ok(state) => {
+                eprintln!(
+                    "save state: {} ({} bytes) in {:.2} s",
+                    state.id,
+                    state.bytes,
+                    started.elapsed().as_secs_f64()
+                );
+                let _ = events.send(Event::StateSaved { state });
+            }
+            Err(e) => {
+                eprintln!("save state failed: {e}");
+                let _ = events.send(Event::StateFailed { message: e.to_string() });
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        let _ = events.send(Event::StateFailed { message: format!("Couldn't save: {e}") });
     }
 }
 

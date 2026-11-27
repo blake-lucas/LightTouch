@@ -28,6 +28,7 @@ pub const INFO: &str = "\u{E2CE}";
 pub const QUESTION: &str = "\u{E3E8}";
 pub const FILE: &str = "\u{E230}";
 pub const FOLDER: &str = "\u{E24A}";
+pub const FLOPPY: &str = "\u{E248}";
 pub const HARD_DRIVES: &str = "\u{E2A0}";
 pub const SUN: &str = "\u{E472}";
 pub const CPU: &str = "\u{E610}";

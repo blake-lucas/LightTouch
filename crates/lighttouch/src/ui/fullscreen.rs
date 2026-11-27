@@ -56,6 +56,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         super::controller::overlay(app, ui, screen);
     }
     super::controller::step(app, ui, screen);
+    super::states::restoring_overlay(app, ui, screen);
     if asleep {
         let response = ui.interact(screen, ui.scope_id().with("wake"), Sense::click());
         ui.painter().text(
@@ -225,6 +226,11 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
             ui.menu_button(widgets::icon_label(icons::CELL_SIGNAL, "Carrier", None), |ui| {
                 super::carrier::menu_items(app, ui);
             });
+        }
+        if super::states::wants_button(app) {
+            if ui.button(widgets::icon_label(icons::FLOPPY, "States…", None)).clicked() {
+                super::states::open_centered(app, ui.ctx());
+            }
         }
         if ui.button(widgets::icon_label(icons::GEAR, "Settings", None)).clicked() {
             let ctx = ui.ctx().clone();

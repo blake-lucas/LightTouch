@@ -14,17 +14,22 @@ import java.io.File
  *
  * CMD: select RECORD | start | stop | status | button "N down|up|press" | tap "X Y" | swipe "X0 Y0 X1 Y1 MS" |
  * launch BUNDLE_ID | frontmost | lockstatus | frames "start NAME" | frames stop | scaling "METHOD [MULTIPLE]" |
- * view device|fullscreen | install "IPA BUNDLE_ID" | uninstall BUNDLE_ID | storage. Coordinates are the guest screen's, normalized (0..1, y down). Every command answers with
+ * view device|fullscreen | install "IPA BUNDLE_ID" | uninstall BUNDLE_ID | storage | savestate | states |
+ * loadstate ID | statejob. Coordinates are the guest screen's, normalized (0..1, y down). Every command answers with
  * one logcat line, tag LTBench: "CMD -> RESULT". `frames start NAME` keeps appending the engine's frame timeline
  * (`sequence published_ns presented_ns present_work_ns`, CLOCK_MONOTONIC) to files/bench/NAME.frames until `frames
  * stop`. `install` takes an IPA path the app can read (files/…); `storage` answers the engine's NAND counters
- * (read ops/bytes/ns, write ops/bytes/ns, erase ops/ns). `scaling` sets Settings › Screen scaling (SMOOTH, SHARP, CRISP or PIXEL_PERFECT).
+ * (read ops/bytes/ns, write ops/bytes/ns, erase ops/ns). `scaling` sets Settings › Screen scaling (SMOOTH, SHARP, CRISP
+ * or PIXEL_PERFECT). `savestate` saves the running device as the States menu does and `loadstate` loads one of
+ * `states` (id name bytes per line) into it; `statejob` is the save or load under way, or the last outcome.
  */
 internal class BenchControl(private val host: Host, private val dir: File) {
     interface Host {
         val engine: IEngine?
         val status: String
         val displayAsleep: Boolean
+        /** A save state is loading (the screen shows its picture). */
+        val restoringState: Boolean
         fun select(id: String)
         fun start()
         fun stop()
@@ -33,6 +38,10 @@ internal class BenchControl(private val host: Host, private val dir: File) {
         /** The running guest's usbmux socket, or null. */
         val muxSocket: String?
         val apps: GuestApps
+        val saveStates: SaveStatesController
+        val recordId: String?
+        fun saveState()
+        fun loadState(state: SaveStateSummary)
     }
 
     @Volatile private var recording: Thread? = null
@@ -54,7 +63,7 @@ internal class BenchControl(private val host: Host, private val dir: File) {
         "select" -> { onMain { host.select(arg) }; "ok" }
         "start" -> { onMain { host.start() }; "ok" }
         "stop" -> { onMain { host.stop() }; "ok" }
-        "status" -> "state=${host.status} asleep=${host.displayAsleep}"
+        "status" -> "state=${host.status} asleep=${host.displayAsleep} restoring=${host.restoringState}"
         "button" -> {
             val (button, how) = arg.split(" ").let { it[0].toInt() to it.getOrElse(1) { "press" } }
             if (how != "up") engine().button(button, true)
@@ -93,8 +102,18 @@ internal class BenchControl(private val host: Host, private val dir: File) {
         }
         "uninstall" -> host.apps.uninstall(host.muxSocket ?: error("no guest"), arg).toString()
         "storage" -> engine().frameStats(Long.MAX_VALUE).getLongArray("storage")?.joinToString(" ") ?: "error: no counters"
+        "savestate" -> { onMain { host.saveState() }; "ok" }
+        "states" -> states().joinToString(";") { "${it.id} ${it.name} ${it.bytes}" }.ifEmpty { "none" }
+        "loadstate" -> {
+            val state = states().firstOrNull { it.id == arg } ?: return "error: no state $arg"
+            onMain { host.loadState(state) }; "ok"
+        }
+        "statejob" -> host.saveStates.job?.let { "${it.label} ${it.done}/${it.total}" } ?: "idle"
         else -> "error: unknown command"
     }.ifEmpty { "ok" }
+
+    private fun states(): List<SaveStateSummary> =
+        engine().states(host.recordId ?: error("no device selected")).map { SaveStateSummary.of(it) }
 
     private fun touch(phase: Int, x: Float, y: Float): String =
         // width -1: the coordinates are already normalized guest ones

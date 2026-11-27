@@ -114,6 +114,9 @@ class AppSettings(private val context: Context) {
     /* The Carrier button on every device with a modem (each device's own setting in 0.0.15's test builds). */
     private val carrierButtonState = mutableStateOf(prefs.getBoolean("carrierButton", false))
     var carrierButton: Boolean get() = carrierButtonState.value; set(v) { carrierButtonState.value = v; prefs.edit().putBoolean("carrierButton", v).apply() }
+    /* The States button (save states of the device on screen): on by default. */
+    private val statesButtonState = mutableStateOf(prefs.getBoolean("statesButton", true))
+    var statesButton: Boolean get() = statesButtonState.value; set(v) { statesButtonState.value = v; prefs.edit().putBoolean("statesButton", v).apply() }
     /* The device page's dock tucked away to a tab at the right edge, so it doesn't cover the device. */
     private val dockHiddenState = mutableStateOf(prefs.getBoolean("dockHidden", false))
     var dockHidden: Boolean get() = dockHiddenState.value; set(v) { dockHiddenState.value = v; prefs.edit().putBoolean("dockHidden", v).apply() }

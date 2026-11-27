@@ -48,6 +48,39 @@ impl Record {
 /// and total for that phase. Return `false` to cancel.
 pub type PhaseFn<'a> = dyn FnMut(&str, u64, u64) -> bool + 'a;
 
+/// A save state of a record (`lt_library_states`): the running machine and its storage at one moment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveState {
+    pub id: String,
+    pub name: String,
+    /// Who saved it ("LightTouch 0.0.16 (Linux)").
+    pub app: String,
+    /// Unix time in milliseconds.
+    pub created_ms: i64,
+    /// On disk.
+    pub bytes: u64,
+    /// The screen when it was saved (PNG), when there is one.
+    pub thumbnail: Option<PathBuf>,
+    pub thumbnail_width: u32,
+    pub thumbnail_height: u32,
+}
+
+impl SaveState {
+    pub(crate) fn from_info(info: &sys::lt_state_info) -> Self {
+        let thumbnail = chars(&info.thumbnail_path);
+        Self {
+            id: chars(&info.id),
+            name: chars(&info.name),
+            app: chars(&info.app),
+            created_ms: info.created_ms,
+            bytes: info.bytes,
+            thumbnail: (!thumbnail.is_empty()).then(|| PathBuf::from(thumbnail)),
+            thumbnail_width: info.thumbnail_width,
+            thumbnail_height: info.thumbnail_height,
+        }
+    }
+}
+
 /// A preparer's output to add as a new record.
 #[derive(Debug, Clone, Default)]
 pub struct ImportSource {
@@ -210,6 +243,42 @@ impl Library {
         Ok(Record::from_info(&info))
     }
 
+    /// The record's save states, newest first.
+    pub fn states(&self, id: &str) -> Result<Vec<SaveState>> {
+        let id = cstring(id)?;
+        let mut infos = vec![sys::lt_state_info::new(); 256];
+        let mut count = 0u32;
+        let mut error = sys::lt_error::new();
+        let status = unsafe {
+            sys::lt_library_states(
+                self.raw,
+                id.as_ptr(),
+                infos.as_mut_ptr(),
+                infos.len() as u32,
+                &mut count,
+                &mut error,
+            )
+        };
+        check(status, &error)?;
+        infos.truncate(count.min(256) as usize);
+        Ok(infos.iter().map(SaveState::from_info).collect())
+    }
+
+    pub fn rename_state(&self, id: &str, state: &str, name: &str) -> Result<()> {
+        let (id, state, name) = (cstring(id)?, cstring(state)?, cstring(name)?);
+        let mut error = sys::lt_error::new();
+        check(
+            unsafe { sys::lt_library_rename_state(self.raw, id.as_ptr(), state.as_ptr(), name.as_ptr(), &mut error) },
+            &error,
+        )
+    }
+
+    pub fn delete_state(&self, id: &str, state: &str) -> Result<()> {
+        let (id, state) = (cstring(id)?, cstring(state)?);
+        let mut error = sys::lt_error::new();
+        check(unsafe { sys::lt_library_delete_state(self.raw, id.as_ptr(), state.as_ptr(), &mut error) }, &error)
+    }
+
     pub(crate) fn raw(&self) -> *mut sys::lt_library {
         self.raw
     }
@@ -221,7 +290,12 @@ impl Drop for Library {
     }
 }
 
-unsafe extern "C" fn phase_trampoline(opaque: *mut c_void, phase: *const c_char, done: u64, total: u64) -> c_int {
+pub(crate) unsafe extern "C" fn phase_trampoline(
+    opaque: *mut c_void,
+    phase: *const c_char,
+    done: u64,
+    total: u64,
+) -> c_int {
     let observer = unsafe { &mut *(opaque as *mut &mut PhaseFn<'_>) };
     let phase = cstr_lossy(phase);
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&phase, done, total))) {
