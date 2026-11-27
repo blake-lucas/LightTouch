@@ -2,11 +2,14 @@ package org.lighttouch.android
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
@@ -32,6 +35,19 @@ internal fun StatesDockButton(host: GuestHost, modifier: Modifier = Modifier) {
     if (open) StatesSheet(host) { open = false }
 }
 
+/** The stopped screen's States button, styled as the screen's other actions: the same sheet, to load a state. */
+@Composable
+internal fun StatesScreenButton(host: GuestHost) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.14f)).clickable(enabled = !host.busy) { open = true }
+        .padding(horizontal = 16.dp, vertical = 8.dp).testTag("states_screen_button"), verticalAlignment = Alignment.CenterVertically) {
+        Icon(LtIcons.Save, null, Modifier.size(18.dp), tint = Color.White)
+        Spacer(Modifier.width(8.dp))
+        Text("States", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.9f))
+    }
+    if (open) StatesSheet(host) { open = false }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
@@ -44,27 +60,35 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
     val running = host.shownStatus in listOf("running", "paused")
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("states_sheet")) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-            Text("States", style = MaterialTheme.typography.titleMedium)
-            Text(device?.name ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(12.dp))
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            // The title and the device on the left, Save state on the right.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Save states", style = MaterialTheme.typography.titleLarge)
+                    Text(device?.subtitle ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // A stopped device can't be saved: its sheet only loads, renames and deletes.
+                if (running) {
+                    Spacer(Modifier.width(12.dp))
+                    Button(onClick = host::saveState, enabled = states.job == null, modifier = Modifier.testTag("save_state")) {
+                        Icon(Icons.Filled.Add, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp)); Text("Save state")
+                    }
+                }
+            }
+            if (!running) Text("Start the device to save its state.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             states.job?.let { job ->
+                Spacer(Modifier.height(12.dp))
                 Text("${job.label}… ${job.fraction?.let { "${(it * 100).toInt()}%" } ?: ""}", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(6.dp))
                 val fraction = job.fraction
                 if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
                 else LinearProgressIndicator(Modifier.fillMaxWidth())
-                Spacer(Modifier.height(12.dp))
             }
-            Button(onClick = host::saveState, enabled = running && states.job == null, modifier = Modifier.testTag("save_state")) {
-                Icon(LtIcons.Save, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save state")
-            }
-            if (!running) Text("Start the device to save its state.", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(20.dp))
             if (states.states.isEmpty()) Text("No saved states yet. Save one while the device runs; loading it later takes the device back to that moment.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
-            LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(states.states, key = { it.id }) { state ->
                     StateRow(states, state, canLoad = states.job == null && host.restoring == null && host.shownStatus != "starting" && host.shownStatus != "stopping",
                         onLoad = { if (running) loading = state else { host.loadState(state); onDismiss() } },
@@ -105,11 +129,12 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
 @Composable
 private fun StateRow(states: SaveStatesController, state: SaveStateSummary, canLoad: Boolean, onLoad: () -> Unit,
                      onRename: () -> Unit, onDelete: () -> Unit) {
-    // A card per state, as the desktop's panel: its screen at the device's shape, the whole name (two lines at most),
-    // when and how big, and Load as the main action.
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(10.dp),
+    // A card per state: its screen at the device's shape, its name (two lines at most), when and how big, then delete,
+    // rename and Load, the main action, at the right edge.
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        val height = 96.dp
+        val height = 72.dp
         val width = if (state.width > 0 && state.height > 0) height * (state.width.toFloat() / state.height).coerceAtMost(1.5f) else height * 0.66f
         val bitmap = remember(state.thumbnail) { states.thumbnail(state) }
         Box(Modifier.size(width, height).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
@@ -118,22 +143,45 @@ private fun StateRow(states: SaveStatesController, state: SaveStateSummary, canL
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(state.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(state.createdMs))} · ${size(state.bytes)}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onLoad, enabled = canLoad, contentPadding = PaddingValues(horizontal = 18.dp),
-                    modifier = Modifier.height(36.dp).testTag("load_state")) { Text("Load") }
-                Spacer(Modifier.width(4.dp))
-                IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, "Rename", Modifier.size(18.dp)) }
-                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) }
-            }
+            Spacer(Modifier.height(2.dp))
+            Text("${saved(state.createdMs)} · ${size(state.bytes)}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onDelete, Modifier.size(36.dp).testTag("delete_state")) {
+            Icon(Icons.Filled.Delete, "Delete", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+        }
+        IconButton(onClick = onRename, Modifier.size(36.dp).testTag("rename_state")) {
+            Icon(Icons.Filled.Edit, "Rename", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(2.dp))
+        val primary = MaterialTheme.colorScheme.primary
+        FilledTonalButton(onClick = onLoad, enabled = canLoad, contentPadding = PaddingValues(start = 10.dp, end = 14.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(containerColor = primary.copy(alpha = 0.14f), contentColor = primary),
+            modifier = Modifier.testTag("load_state")) {
+            Icon(LtIcons.Play, null, Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text("Load")
         }
     }
 }
 
+/** When a state was saved, as on the desktop: "Today 2:05 PM", "Nov 20 9:12 AM", "Dec 30, 2025 6:40 PM". */
+private fun saved(ms: Long): String {
+    val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(ms))
+    val then = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+    val now = java.util.Calendar.getInstance()
+    val year = then.get(java.util.Calendar.YEAR)
+    return when {
+        year == now.get(java.util.Calendar.YEAR) && then.get(java.util.Calendar.DAY_OF_YEAR) == now.get(java.util.Calendar.DAY_OF_YEAR) -> "Today $time"
+        year == now.get(java.util.Calendar.YEAR) -> {
+            val pattern = android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMd")
+            "${java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(Date(ms))} $time"
+        }
+        else -> "${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(ms))} $time"
+    }
+}
+
 private fun size(bytes: Long): String =
-    if (bytes >= 1L shl 30) "%.1f GB".format(bytes / (1L shl 30).toDouble()) else "${bytes shr 20} MB"
+    // A no-break space keeps the unit with its number when the line wraps.
+    if (bytes >= 1L shl 30) "%.1f\u00A0GB".format(bytes / (1L shl 30).toDouble()) else "${bytes shr 20}\u00A0MB"
 
 /**
  * A save state loading into the device on screen (GuestHost.restoring): the state's picture, its saved screen, where the

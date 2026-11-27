@@ -177,8 +177,12 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
                         else ScreenAction(LtIcons.History, "Recover", host::recover, tag = "recover_guest")
                     }
                     else -> if (host.selected == null) ScreenAction(LtIcons.Phone, "Add a device", host::addDevice, tag = "add_device")
-                        else if (host.selected?.dirty == true) ScreenAction(LtIcons.History, "Recover and start", { if (!host.busy) host.recover() }, tag = "recover_guest")
-                        else ScreenAction(LtIcons.Play, "Start", { if (!host.busy) host.start() }, tag = "start_guest")
+                        else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (host.selected?.dirty == true) ScreenAction(LtIcons.History, "Recover and start", { if (!host.busy) host.recover() }, tag = "recover_guest")
+                            else ScreenAction(LtIcons.Play, "Start", { if (!host.busy) host.start() }, tag = "start_guest")
+                            // A stopped device's save states: the dock's sheet, Load starting the device into one.
+                            if (host.settings.statesButton) { Spacer(Modifier.height(18.dp)); StatesScreenButton(host) }
+                        }
                 }
             }
         }

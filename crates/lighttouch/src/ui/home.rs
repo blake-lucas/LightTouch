@@ -280,6 +280,26 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
                     theme::WARNING,
                 );
             }
+            // A stopped device's save states: the same panel as the dock's, Load starting the device into one.
+            if app.model.session.is_none() && app.model.selected().is_some() && super::states::wants_button(app) {
+                let pill = Rect::from_center_size(
+                    center + vec2(0.0, if missing_rom { 94.0 } else { 76.0 }),
+                    vec2(116.0, 34.0),
+                );
+                let states = ui.interact(pill, ui.scope_id().with("state-states"), Sense::click());
+                painter.rect_filled(
+                    pill,
+                    CornerRadius::same(17),
+                    Color32::from_white_alpha(if states.hovered() { 56 } else { 36 }),
+                );
+                let galley = painter.layout_job(widgets::icon_label(icons::FLOPPY, "States", Some(Color32::WHITE)));
+                painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+                if states.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                    || std::mem::take(&mut app.states_ui.open)
+                {
+                    super::states::open_from_screen(app, ui.ctx(), pill);
+                }
+            }
             if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 match app.model.session.as_ref().map(|s| s.phase.clone()) {
                     Some(Phase::Paused) => app.model.set_paused(false),

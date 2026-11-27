@@ -1,7 +1,7 @@
-//! Save states on screen: the dock's States button (and full screen's More › States…) opens a panel above the dock
-//! with Save state and the device's states, each a card with its screen, its name, when and how big, Load, rename in
-//! place and delete (confirmed); and the picture a state shows while it loads. As Android's States sheet
-//! (StatesSheet.kt). The behaviour is the model's (lighttouch-model states.rs).
+//! Save states on screen: the dock's States button (the stopped screen's, full screen's More › States…) opens a panel
+//! with Save state and the device's states, each a card with its screen, its name, when and how big, delete
+//! (confirmed), rename in place and Load; and the picture a state shows while it loads. Laid out as Android's States
+//! sheet (StatesSheet.kt). The behaviour is the model's (lighttouch-model states.rs).
 use super::{App, Dialog, icons, theme, widgets};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, RichText, Stroke, Ui, vec2,
@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Width of the panel, and the height of a state's picture in it.
-const PANEL_WIDTH: f32 = 440.0;
-const THUMB_HEIGHT: f32 = 104.0;
+const PANEL_WIDTH: f32 = 520.0;
+const THUMB_HEIGHT: f32 = 76.0;
 
 /// The panel's state and the thumbnails decoded so far.
 #[derive(Default)]
@@ -56,6 +56,14 @@ pub fn toggle(app: &mut App, button: Rect) {
     }
 }
 
+/// Open the panel from the stopped screen's States button: as from the dock, at the bottom of the window.
+pub fn open_from_screen(app: &mut App, ctx: &egui::Context, button: Rect) {
+    let screen = ctx.content_rect();
+    app.states_ui.anchor = Some(egui::pos2(button.center().x, screen.bottom() - 24.0));
+    app.states_ui.button = Some(button);
+    app.states_ui.renaming = None;
+}
+
 /// Open the panel in the middle of the window's bottom (full screen's More › States…, which has no dock).
 pub fn open_centered(app: &mut App, ctx: &egui::Context) {
     let screen = ctx.content_rect();
@@ -64,7 +72,7 @@ pub fn open_centered(app: &mut App, ctx: &egui::Context) {
     app.states_ui.renaming = None;
 }
 
-/// The panel, while open: drawn over the page, closed by its X, Escape or a click outside it.
+/// The panel, while open: drawn over the page, closed by Escape or a click outside it.
 pub fn panel(app: &mut App, ctx: &egui::Context) {
     let Some(anchor) = app.states_ui.anchor else { return };
     if app.model.current().is_none() {
@@ -87,7 +95,7 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
         .fixed_pos(egui::pos2(left, anchor.y))
         .show(ctx, |ui| {
             Frame::new()
-                .fill(p.container_high)
+                .fill(p.container_low)
                 .stroke(Stroke::new(1.0, p.outline.gamma_multiply(0.35)))
                 .corner_radius(CornerRadius::same(theme::radius::DOCK))
                 .inner_margin(Margin::same(18))
@@ -113,41 +121,39 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// The panel's contents. Whether it should close (a load started).
+/// The panel's contents, as Android's sheet: the title and the device with Save state beside them, then a card per
+/// state. Whether it should close (a load started).
 fn contents(app: &mut App, ui: &mut Ui) -> bool {
     let p = app.palette;
     let mut close = false;
-    let device = app.model.current().map(|d| d.name.clone()).unwrap_or_default();
+    let subtitle = app.model.current().map(|d| d.subtitle.clone()).unwrap_or_default();
+    let can_save = app.model.can_save_state();
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new("States").font(theme::title()));
-            ui.label(widgets::muted(&p, &device).size(12.5));
+            ui.label(RichText::new("Save states").family(theme::semibold()).size(19.0));
+            ui.label(widgets::muted(&p, &subtitle).size(13.0));
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if widgets::icon_button_sized(ui, &p, icons::CLOSE, "Close", 32.0, true).clicked() {
-                close = true;
-            }
-        });
-    });
-    ui.add_space(12.0);
-    let can_save = app.model.can_save_state();
-    ui.horizontal(|ui| {
-        if widgets::primary_enabled(ui, &p, "Save state", can_save).clicked() {
-            app.model.save_state(None);
-        }
-        if !can_save && app.model.state_job().is_none() {
-            ui.add_space(10.0);
-            ui.label(widgets::muted(&p, "Start the device to save it").size(12.5));
+        // A stopped device can't be saved: its panel only loads, renames and deletes.
+        if app.model.session_active() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if pill(ui, icons::PLUS, "Save state", p.primary, p.on_primary, 40.0, can_save).clicked() {
+                    app.model.save_state(None);
+                }
+            });
         }
     });
+    if !can_save && app.model.state_job().is_none() && !app.model.session_active() {
+        ui.add_space(6.0);
+        ui.label(widgets::muted(&p, "Start the device to save its state.").size(12.5));
+    }
     if let Some(job) = app.model.state_job().cloned() {
         ui.add_space(10.0);
         ui.label(widgets::muted(&p, format!("{}… {:.0}%", job.label(), job.fraction() * 100.0)).size(12.5));
         ui.add_space(4.0);
         widgets::progress(ui, &p, (job.total > 0).then(|| job.fraction()), ui.available_width());
     }
-    ui.add_space(14.0);
+    ui.add_space(16.0);
     let states = app.model.states().to_vec();
     if states.is_empty() {
         ui.label(widgets::muted(
@@ -164,7 +170,7 @@ fn contents(app: &mut App, ui: &mut Ui) -> bool {
         egui::ScrollArea::vertical().id_salt("states-list").auto_shrink([false, true]).show(ui, |ui| {
             for (i, state) in states.iter().enumerate() {
                 if i > 0 {
-                    ui.add_space(8.0);
+                    ui.add_space(10.0);
                 }
                 if row(app, ui, state, can_load) {
                     close = true;
@@ -175,17 +181,19 @@ fn contents(app: &mut App, ui: &mut Ui) -> bool {
     close
 }
 
-/// One state's card. Whether a load started.
+/// One state's card: its screen at the device's shape, its name and when and how big, then delete, rename and Load
+/// at the right edge. Whether a load started.
 fn row(app: &mut App, ui: &mut Ui, state: &SaveState, can_load: bool) -> bool {
     let p = app.palette;
     let mut loaded = false;
     Frame::new()
-        .fill(p.container)
-        .corner_radius(CornerRadius::same(theme::radius::ROW))
-        .inner_margin(Margin::same(10))
+        .fill(p.container_lowest)
+        .stroke(Stroke::new(1.0, p.outline.gamma_multiply(0.3)))
+        .corner_radius(CornerRadius::same(theme::radius::CARD))
+        .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal_top(|ui| {
+            ui.horizontal(|ui| {
                 let width = match (state.thumbnail_width, state.thumbnail_height) {
                     (w, h) if w > 0 && h > 0 => (THUMB_HEIGHT * w as f32 / h as f32).min(THUMB_HEIGHT * 1.5),
                     _ => THUMB_HEIGHT * 0.66,
@@ -198,33 +206,35 @@ fn row(app: &mut App, ui: &mut Ui, state: &SaveState, can_load: bool) -> bool {
                         .corner_radius(CornerRadius::same(8))
                         .paint_at(ui, rect);
                 }
-                ui.add_space(12.0);
-                ui.vertical(|ui| {
-                    ui.set_min_height(THUMB_HEIGHT);
-                    ui.spacing_mut().item_spacing.y = 3.0;
-                    name_line(app, ui, state);
-                    ui.label(
-                        widgets::muted(&p, format!("{} · {}", when(state.created_ms), size(state.bytes))).size(12.5),
-                    );
-                    ui.add_space((THUMB_HEIGHT - 86.0).max(4.0));
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        let load = small_primary(ui, &p, "Load", can_load).on_hover_text("Carry on from this moment");
-                        if load.clicked() {
-                            if app.model.session_active() {
-                                app.dialog = Some(Dialog::LoadState { id: state.id.clone(), name: state.name.clone() });
-                            } else {
-                                app.model.load_state(&state.id);
-                                loaded = true;
-                            }
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let tint = p.primary.gamma_multiply(0.2);
+                    let load = pill(ui, icons::PLAY, "Load", tint, p.primary, 40.0, can_load)
+                        .on_hover_text("Carry on from this moment");
+                    if load.clicked() {
+                        if app.model.session_active() {
+                            app.dialog = Some(Dialog::LoadState { id: state.id.clone(), name: state.name.clone() });
+                        } else {
+                            app.model.load_state(&state.id);
+                            loaded = true;
                         }
-                        ui.add_space(6.0);
-                        if widgets::icon_button_sized(ui, &p, icons::PENCIL, "Rename", 32.0, true).clicked() {
-                            app.states_ui.renaming = Some((state.id.clone(), state.name.clone()));
-                        }
-                        if widgets::icon_button_sized(ui, &p, icons::TRASH, "Delete", 32.0, true).clicked() {
-                            app.dialog = Some(Dialog::DeleteState { id: state.id.clone(), name: state.name.clone() });
-                        }
+                    }
+                    ui.add_space(4.0);
+                    if icon_action(ui, &p, icons::PENCIL, "Rename", p.on_surface_variant).clicked() {
+                        app.states_ui.renaming = Some((state.id.clone(), state.name.clone()));
+                    }
+                    if icon_action(ui, &p, icons::TRASH, "Delete", theme::DANGER).clicked() {
+                        app.dialog = Some(Dialog::DeleteState { id: state.id.clone(), name: state.name.clone() });
+                    }
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            name_line(app, ui, state);
+                            let detail = format!("{} · {}", when(state.created_ms), size(state.bytes));
+                            ui.add(egui::Label::new(widgets::muted(&p, detail).size(13.0)).truncate());
+                        });
                     });
                 });
             });
@@ -232,12 +242,21 @@ fn row(app: &mut App, ui: &mut Ui, state: &SaveState, can_load: bool) -> bool {
     loaded
 }
 
-/// The state's name, cut with an ellipsis at the card's edge (the whole name on hover), or its rename field.
+/// The state's name, two lines at most and cut with an ellipsis (the whole name on hover), or its rename field.
 fn name_line(app: &mut App, ui: &mut Ui, state: &SaveState) {
     let editing = app.states_ui.renaming.as_ref().is_some_and(|(id, _)| *id == state.id);
     if !editing {
-        let name = RichText::new(&state.name).family(theme::medium()).size(14.5);
-        ui.add(egui::Label::new(name).truncate()).on_hover_text(&state.name);
+        let mut job = egui::text::LayoutJob::single_section(
+            state.name.clone(),
+            egui::TextFormat::simple(FontId::new(15.5, theme::semibold()), ui.visuals().strong_text_color()),
+        );
+        job.wrap = egui::text::TextWrapping {
+            max_width: ui.available_width(),
+            max_rows: 2,
+            break_anywhere: false,
+            overflow_character: Some('…'),
+        };
+        ui.add(egui::Label::new(job)).on_hover_text(&state.name);
         return;
     }
     let Some((_, text)) = app.states_ui.renaming.as_mut() else { return };
@@ -264,19 +283,53 @@ fn name_line(app: &mut App, ui: &mut Ui, state: &SaveState) {
     }
 }
 
-/// A compact primary button for a card's main action.
-fn small_primary(ui: &mut Ui, p: &theme::Palette, text: &str, enabled: bool) -> egui::Response {
-    let (fill, color) = if enabled { (p.primary, p.on_primary) } else { (p.container_highest, p.on_surface_variant) };
-    let button = egui::Button::new(RichText::new(text).color(color).family(theme::semibold()).size(13.5))
+/// A pill-shaped button with an icon before its label (Save state, Load).
+fn pill(
+    ui: &mut Ui,
+    icon: &str,
+    text: &str,
+    fill: Color32,
+    color: Color32,
+    height: f32,
+    enabled: bool,
+) -> egui::Response {
+    let (fill, color) = if enabled { (fill, color) } else { (fill.gamma_multiply(0.35), color.gamma_multiply(0.5)) };
+    let mut job = egui::text::LayoutJob::default();
+    let format =
+        |font: FontId| egui::TextFormat { font_id: font, color, valign: egui::Align::Center, ..Default::default() };
+    // Play is solid; plus has no solid form (its filled glyph is a box).
+    let family = if icon == icons::PLAY { theme::icons_fill() } else { theme::icons() };
+    job.append(icon, 0.0, format(FontId::new(18.0, family)));
+    job.append(text, 6.0, format(FontId::new(14.5, theme::semibold())));
+    let button = egui::Button::new(job)
         .fill(fill)
-        .corner_radius(CornerRadius::same(16))
-        .min_size(vec2(0.0, 32.0));
-    ui.scope(|ui| {
-        ui.spacing_mut().button_padding = vec2(16.0, 0.0);
-        ui.add_enabled(enabled, button)
-    })
-    .inner
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .corner_radius(CornerRadius::same(theme::radius::PILL))
+        .min_size(vec2(0.0, height));
+    let r = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = vec2(16.0, 0.0);
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+            ui.add_enabled(enabled, button)
+        })
+        .inner;
+    if enabled { r.on_hover_cursor(egui::CursorIcon::PointingHand) } else { r }
+}
+
+/// A round icon button in a given colour (the card's delete and rename).
+fn icon_action(ui: &mut Ui, p: &theme::Palette, icon: &str, tooltip: &str, color: Color32) -> egui::Response {
+    let size = 38.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::click());
+    let fill = if response.is_pointer_button_down_on() {
+        p.outline.gamma_multiply(0.5)
+    } else if response.hovered() {
+        p.container_highest
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().circle_filled(rect.center(), size / 2.0, fill);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon, FontId::new(19.0, theme::icons()), color);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tooltip)
 }
 
 /// While a state loads into the device on screen (the model's `restoring`): its picture over the screen, dimmed, with
@@ -367,14 +420,17 @@ fn thumbnail(app: &mut App, ctx: &egui::Context, path: &PathBuf) -> Option<egui:
         .clone()
 }
 
-/// When a state was saved, in local time ("Today 14:05", "2026-11-20 09:12").
+/// When a state was saved, in local time, as on Android: "Today 14:05", "Nov 20 09:12", "Dec 30, 2025 18:40".
 fn when(created_ms: i64) -> String {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     let t = lighttouch_core::local_time_of(created_ms / 1000);
     let now = lighttouch_core::local_time();
     if (t.year, t.month, t.day) == (now.year, now.month, now.day) {
         format!("Today {:02}:{:02}", t.hour, t.minute)
     } else {
-        format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute)
+        let month = MONTHS[(t.month as usize).clamp(1, 12) - 1];
+        let year = if t.year == now.year { String::new() } else { format!(", {}", t.year) };
+        format!("{month} {}{year} {:02}:{:02}", t.day, t.hour, t.minute)
     }
 }
 
