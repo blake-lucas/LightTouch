@@ -1284,7 +1284,7 @@ lt_status lt_runtime_save_state(lt_runtime *r, const lt_state_save_config *c, lt
         lt::abi(out);
         lt::require(r && r->started && !r->done && !r->stopping, "The device isn't running", LT_AGAIN);
         lt::require(r->engine->state_save, "This version of the engine can't save states", LT_UNSUPPORTED);
-        lt::require(r->engine->ready() && !r->load, "The device is still starting", LT_AGAIN);
+        lt::require(r->engine->ready() && !r->state_busy, "The device is still starting", LT_AGAIN);
         std::unique_lock<std::mutex> once(r->save_mutex, std::try_to_lock);
         lt::require(once.owns_lock(), "A save is already under way", LT_BUSY);
         lt::states::SaveRequest request;
