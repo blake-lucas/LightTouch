@@ -14,12 +14,13 @@ import java.io.File
  *
  * CMD: select RECORD | start | stop | status | button "N down|up|press" | tap "X Y" | swipe "X0 Y0 X1 Y1 MS" |
  * launch BUNDLE_ID | frontmost | lockstatus | frames "start NAME" | frames stop | scaling "METHOD [MULTIPLE]" |
- * view device|fullscreen. Coordinates are the guest screen's, normalized (0..1, y down). Every command answers with
+ * view device|fullscreen | install "IPA BUNDLE_ID" | uninstall BUNDLE_ID | storage. Coordinates are the guest screen's, normalized (0..1, y down). Every command answers with
  * one logcat line, tag LTBench: "CMD -> RESULT". `frames start NAME` keeps appending the engine's frame timeline
  * (`sequence published_ns presented_ns present_work_ns`, CLOCK_MONOTONIC) to files/bench/NAME.frames until `frames
- * stop`. `scaling` sets Settings › Screen scaling (SMOOTH, SHARP, CRISP or PIXEL_PERFECT).
+ * stop`. `install` takes an IPA path the app can read (files/…); `storage` answers the engine's NAND counters
+ * (read ops/bytes/ns, write ops/bytes/ns, erase ops/ns). `scaling` sets Settings › Screen scaling (SMOOTH, SHARP, CRISP or PIXEL_PERFECT).
  */
-class BenchControl(private val host: Host, private val dir: File) {
+internal class BenchControl(private val host: Host, private val dir: File) {
     interface Host {
         val engine: IEngine?
         val status: String
@@ -29,6 +30,9 @@ class BenchControl(private val host: Host, private val dir: File) {
         fun stop()
         fun scaling(method: ScreenScaling, multiple: Int)
         fun fullscreen(on: Boolean)
+        /** The running guest's usbmux socket, or null. */
+        val muxSocket: String?
+        val apps: GuestApps
     }
 
     @Volatile private var recording: Thread? = null
@@ -83,6 +87,12 @@ class BenchControl(private val host: Host, private val dir: File) {
             onMain { host.scaling(method, parts.getOrNull(1)?.toIntOrNull() ?: 0) }; "ok"
         }
         "view" -> { onMain { host.fullscreen(arg == "fullscreen") }; "ok" }
+        "install" -> {
+            val (ipa, bundle) = arg.split(" ").let { it[0] to it[1] }
+            host.apps.install(host.muxSocket ?: error("no guest"), File(ipa), bundle, { false }) { }.toString()
+        }
+        "uninstall" -> host.apps.uninstall(host.muxSocket ?: error("no guest"), arg).toString()
+        "storage" -> engine().frameStats(Long.MAX_VALUE).getLongArray("storage")?.joinToString(" ") ?: "error: no counters"
         else -> "error: unknown command"
     }.ifEmpty { "ok" }
 

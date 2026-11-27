@@ -45,6 +45,19 @@ internal fun boardSpecs(board: String): BoardSpecs? = when (board) {
     else -> null
 }
 
+/**
+ * Whether the space iOS frees comes back to the phone when the device stops: yaFTL (the S5L8920/8922 and A4 boards on
+ * iOS 4 to 6) erases the flash blocks it no longer needs while iOS shuts down, and the engine frees each erased block in
+ * the device's files; the 2G's and the iPhone 5's FTLs keep freed space until their flash fills (docs/STORAGE.md,
+ * "Space iOS frees"). The desktop's lighttouch_model::details::freed_space_returns_at_stop is the same rule.
+ */
+internal fun freedSpaceReturnsAtStop(board: String, build: String): Boolean =
+    board in setOf("n18ap", "n88ap", "n81ap", "n90ap", "k48ap") && build.takeWhile { it.isDigit() }.toIntOrNull() in 8..10
+
+internal fun storageNote(board: String, build: String): String =
+    if (freedSpaceReturnsAtStop(board, build)) "Space iOS frees is given back to your phone when you stop the device."
+    else "Space iOS frees is not given back to your phone yet, so a device's changes only grow."
+
 /** What a device's record holds on this phone, read from its files. */
 internal data class DeviceFacts(
     val flashBytes: Long?, val created: String?, val identity: JSONObject?, val toolsSerial: Int?, val toolsVerdict: String?,
@@ -66,8 +79,9 @@ internal data class DeviceFacts(
         private fun flash(base: File): Long? {
             File(base, "nand/geometry.json").takeIf { it.isFile }?.let {
                 val g = JSONObject(it.readText())
-                return g.getLong("page_bytes") * g.getLong("pages_per_block") * g.getLong("blocks_per_ce") *
-                    g.getLong("ce_per_bus") * g.getLong("buses")
+                // The 2G's geometry names its chip selects; the others, buses and chip enables per bus.
+                val chips = if (g.has("chip_selects")) g.getLong("chip_selects") else g.getLong("ce_per_bus") * g.getLong("buses")
+                return g.getLong("page_bytes") * g.getLong("pages_per_block") * g.getLong("blocks_per_ce") * chips
             }
             val packed = File(base, "nand").takeIf { it.isFile } ?: return null
             val header = ByteArray(24)
@@ -145,7 +159,7 @@ internal fun DeviceDetails(device: DeviceSummary, onClose: () -> Unit) {
                                 .joinToString(" and ").replaceFirstChar { it.uppercase() }.ifEmpty { "None" })
                         }
                     }
-                    Section("Storage", "Space iOS frees is not given back to your phone yet, so a device's changes only grow.") {
+                    Section("Storage", storageNote(device.board, device.build)) {
                         f?.flashBytes?.let { Fact("Disk size", formatBytes(it) + " of flash") }
                         val u = space
                         if (u == null) Fact("On this phone", "Measuring…") else {

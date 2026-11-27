@@ -481,6 +481,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             override fun stop() = stopGuest()
             override fun scaling(method: ScreenScaling, multiple: Int) { settings.scaling = method; settings.integerScale = multiple; applySettings() }
             override fun fullscreen(on: Boolean) = navigate(if (on) Screen.FULLSCREEN else Screen.HOME)
+            override val muxSocket get() = this@MainActivity.muxSocket.ifEmpty { null }
+            override val apps by lazy { GuestApps(applicationContext) }
         }, File(filesDir, "bench"))
     }
     private fun benchIntent(intent: Intent?) {

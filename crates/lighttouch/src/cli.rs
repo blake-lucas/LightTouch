@@ -6,7 +6,7 @@
 //!                    [--no-game-center]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
-//!                [--install-dir APP.app [--afc N]]
+//!                [--install-dir APP.app [--afc N]] [--uninstall BUNDLE]
 //! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
 //! lighttouch guest <bridge mux.sock>
 //! lighttouch export <record id> <FILE.lighttouch.zip>
@@ -160,6 +160,9 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             PathBuf::from(option(args, "--install-dir").unwrap()),
             option(args, "--afc").and_then(|n| n.parse().ok()).unwrap_or(1),
         )),
+        _ if option(args, "--uninstall").is_some() => {
+            Some(ServiceAction::Uninstall(option(args, "--uninstall").unwrap()))
+        }
         (Some(path), _) => Some(ServiceAction::Install(PathBuf::from(path))),
         (_, Some(query)) => Some(ServiceAction::Store(query)),
         _ => args.iter().any(|a| a == "--services").then_some(ServiceAction::Report),
@@ -457,6 +460,8 @@ enum ServiceAction {
     Store(String),
     /// An unpacked .app over N parallel AFC sessions, then a Developer install (docs/STORAGE.md experiments).
     InstallDir(PathBuf, usize),
+    /// Remove an installed app (space reclamation tests: install, remove, measure the overlay).
+    Uninstall(String),
 }
 
 /// Once the USB link is up: connect to the guest, report it, its apps and its newest crash report, then install a
@@ -543,6 +548,14 @@ fn probe_services(
                     r.files, r.dirs, r.bytes, r.skipped_links, r.requests, r.upload_s, r.install_s, r.staging_after
                 )),
                 Err(e) => say(format!("install failed: {e}")),
+            }
+            return;
+        }
+        ServiceAction::Uninstall(bundle_id) => {
+            let begun = at();
+            match guest.uninstall(&bundle_id) {
+                Ok(()) => say(format!("uninstalled {bundle_id} in {:.1} s", at() - begun)),
+                Err(e) => say(format!("uninstall failed: {e}")),
             }
             return;
         }
