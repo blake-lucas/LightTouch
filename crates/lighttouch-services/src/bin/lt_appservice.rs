@@ -282,7 +282,7 @@ mod helper {
     /// stamped with the monotonic times around its read.
     fn syslog(guest: &mut Guest, seconds: u64) -> Result<Value, String> {
         let mut conn = guest
-            .system_log_conn(Duration::from_millis(250))
+            .system_log_conn(Duration::from_secs(1))
             .map_err(|e| format!("Connecting to the system log failed: {}", e.0))?;
         let started = monotonic_ns();
         let deadline = Instant::now() + Duration::from_secs(seconds);

@@ -246,10 +246,10 @@ impl Guest {
     }
 
     /// The guest's raw system log into `out` until `cancelled` (developer runs: `lighttouch run --syslog FILE`).
-    /// The system log relay itself, for a caller that wants its bytes as they come (NUL-separated lines); reads
-    /// time out after `poll` so the caller can stop.
-    pub fn system_log_conn(&mut self, poll: Duration) -> Result<Conn> {
-        self.service(SYSLOG, poll)
+    /// The system log relay itself, for a caller that wants its bytes as they come (NUL-separated lines).
+    /// `timeout` bounds connecting and each read, so the caller can stop between reads.
+    pub fn system_log_conn(&mut self, timeout: Duration) -> Result<Conn> {
+        self.service(SYSLOG, timeout)
     }
 
     pub fn stream_system_log(&mut self, out: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> Result<()> {
