@@ -41,6 +41,21 @@ internal object Native {
     external fun networkStatus(): Array<String>
     external fun start(libraryRoot: String, id: String, headphones: Boolean): String
     external fun recoverStart(libraryRoot: String, id: String, headphones: Boolean): String
+    /** Start from a save state of the record (Portable/src/States.cpp): its storage replaces the device's. */
+    external fun startState(libraryRoot: String, id: String, state: String, headphones: Boolean): String
+    /** The record's save states, newest first: [id, name, app, createdMs, bytes, thumbnail, width, height], or one
+     *  row ["", error]. */
+    external fun states(libraryRoot: String, id: String): Array<Array<String>>
+    external fun deleteState(libraryRoot: String, id: String, state: String): String
+    external fun renameState(libraryRoot: String, id: String, state: String, name: String): String
+    /** Save the running guest (blocking): [error, id, name, bytes]. */
+    external fun saveState(name: String, app: String): Array<String>
+    /** A save or load under way: [phase, done, total], phase "" when none. */
+    external fun stateProgress(): Array<String>
+    /** Whether a state of the running record would load in a fresh worker: the reason, or "". */
+    external fun checkState(state: String): String
+    /** End the engine at once, without an iOS shutdown, to load a state over this session. */
+    external fun discard(): String
     external fun status(): Array<String>
     external fun guestFrameBuckets(): IntArray
     external fun claimDisplay(): Long

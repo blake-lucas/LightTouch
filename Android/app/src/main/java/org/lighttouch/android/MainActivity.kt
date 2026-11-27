@@ -54,7 +54,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var workerPid by mutableIntStateOf(0)
     override var sessionOwned by mutableStateOf(false)
         private set
-    private data class GuestStartRequest(val recordId: String, val coldRecovery: Boolean)
+    /** A start the worker must make: the record, a cold recovery, or a save state to start from (SaveStates.kt). */
+    private data class GuestStartRequest(val recordId: String, val coldRecovery: Boolean, val loadState: String? = null)
     private var pendingGuestRequest: GuestStartRequest? = null
     private var pendingGuestStart = false
     private var guestStartRequested = false
@@ -151,6 +152,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val settings by lazy { AppSettings(this) }
     // Refusals show as a notice: the status poll replaces the error banner while the device runs.
     override val carrier by lazy { CarrierController({ engine }, handler) { notice = it } }
+    override val saveStates by lazy { SaveStatesController({ engine }, handler, { notice = it }, { error = it }) }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
     override val storeInstalling get() = store.committed
@@ -281,6 +283,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 try { engineState = observedEngine?.status() } catch (e: RemoteException) { engineFailure = e.message ?: "Worker exited" }
                 try { firmwareState = observedFirmware?.status() } catch (e: RemoteException) { firmwareFailure = e.message ?: "Firmware worker exited" }
                 carrier.poll(observedEngine, carrierLive)
+                saveStates.poll(observedEngine, engineState?.getString("state") ?: status)
                 handler.post {
                     pollInFlight = false
                     if (!active) return@post
@@ -507,6 +510,30 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }, "guest-force-stop").start()
     }
     override fun saveAndStop() = stopGuest()
+    override fun saveState() {
+        if (status !in listOf("running", "paused")) return
+        saveStates.save("LightTouch ${BuildConfig.VERSION_NAME} (Android)")
+    }
+    override fun loadState(state: SaveStateSummary) {
+        val device = selected ?: return
+        val request = GuestStartRequest(device.id, coldRecovery = true, loadState = state.id)
+        val worker = engine
+        if (worker == null || !sessionOwned) { saveStates.loading(); startGuest(retainedRequest = request); return }
+        if (status !in listOf("running", "paused") || engineRestarting) return
+        // The running worker checks the state first, so a state that can't load never ends the device.
+        Thread({
+            val problem = try { worker.checkState(state.id) } catch (e: RemoteException) { e.message ?: "Worker unavailable" }
+            handler.post {
+                if (problem.isNotEmpty()) { error = problem; return@post }
+                AppLog.i("Loading state ${state.id.take(8)} over the running ${device.id.take(8)}")
+                pendingGuestRequest = request
+                saveStates.loading()
+                restartGuestForStart(worker, discard = true)
+            }
+        }, "save-state-check").start()
+    }
+    override fun deleteState(state: SaveStateSummary) { selected?.let { saveStates.delete(it.id, state) } }
+    override fun renameState(state: SaveStateSummary, name: String) { selected?.let { saveStates.rename(it.id, state, name) } }
     override fun setPaused(paused: Boolean) {
         val worker = engine ?: return
         if (paused) displayView?.cancelOwnedGesture()
@@ -1206,18 +1233,28 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val worker = engine
         if (worker == null) { pendingGuestStart = true; status = "starting"; bindWorker(); return }
         if (sessionOwned) { restartGuestForStart(worker); return }
+        if (request.loadState != null) saveStates.loading()
         workerEvidenceDelivery.advance()
         engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
             try {
                 // Newer guest tools in this build of LightTouch reach existing devices here; a failure leaves the old ones.
-                try { GuestTools.newerFor(this, request.recordId)?.let { tools ->
+                // Not to a save state: it runs the guest tools it was saved with, and the record's must stay theirs.
+                if (request.loadState == null) try { GuestTools.newerFor(this, request.recordId)?.let { tools ->
                     val result = worker.setGuestPackage(request.recordId, tools.absolutePath)
                     if (result.isEmpty()) AppLog.i("Guest tools updated for ${request.recordId.take(8)} to ${tools.name}") else AppLog.w("Guest tools not updated: $result")
                 } } catch (failure: Exception) { AppLog.e("Guest tools not updated", failure) }
-                AppLog.i("Starting ${request.recordId.take(8)}" + if (request.coldRecovery) " (recovering retained state)" else "")
-                val b = if (request.coldRecovery) worker.recoverStart(request.recordId) else worker.start(request.recordId)
+                AppLog.i("Starting ${request.recordId.take(8)}" + when {
+                    request.loadState != null -> " from save state ${request.loadState.take(8)}"
+                    request.coldRecovery -> " (recovering retained state)"
+                    else -> ""
+                })
+                val b = when {
+                    request.loadState != null -> worker.startState(request.recordId, request.loadState)
+                    request.coldRecovery -> worker.recoverStart(request.recordId)
+                    else -> worker.start(request.recordId)
+                }
                 handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
             }
             catch (failure: Exception) { handler.post {
@@ -1238,7 +1275,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } }
         }, "guest-stop-request").start()
     }
-    private fun restartGuestForStart(old: IEngine) {
+    /** End [old] (shut iOS down, or [discard] it at once to load a save state over it), then start a fresh worker. */
+    private fun restartGuestForStart(old: IEngine, discard: Boolean = false) {
         workerEvidenceDelivery.advance()
         engineRestarting = true; engineExpectedExit = true; pendingGuestStart = true; status = "stopping"
         if (bound) { unbindService(connection); bound = false }
@@ -1248,7 +1286,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 if (binder.isBinderAlive) {
                     try { binder.linkToDeath(recipient, 0) } catch (_: DeadObjectException) { died.countDown() }
-                    try { old.stop() } catch (_: DeadObjectException) { died.countDown() }
+                    try { if (discard) old.discard() else old.stop() } catch (_: DeadObjectException) { died.countDown() }
                     check(!binder.isBinderAlive || died.await(45, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
                 }
                 handler.post { engine = null; sessionOwned = false; engineRestarting = false; bindWorker() }

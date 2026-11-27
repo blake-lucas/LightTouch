@@ -57,6 +57,13 @@ interface GuestHost {
     /** Stop is taking too long: end the worker now (state kept, checked on the next start). */
     fun forceStop()
     fun saveAndStop()
+    /** Save states of the current device (SaveStates.kt): the States menu's list and progress. */
+    val saveStates: SaveStatesController
+    fun saveState()
+    /** Carry on from [state]: a running device ends without an iOS shutdown, and what it did since is replaced. */
+    fun loadState(state: SaveStateSummary)
+    fun deleteState(state: SaveStateSummary)
+    fun renameState(state: SaveStateSummary, name: String)
     fun setPaused(paused: Boolean)
     fun button(id: Int, down: Boolean)
     fun pulse(id: Int)

@@ -104,6 +104,12 @@ private fun ButtonBar(host: GuestHost, modifier: Modifier, onInteract: () -> Uni
                 CarrierKey(host) { open -> SmallKey(LtIcons.Signal, "Carrier", { onInteract(); open() }, host.status in listOf("running", "paused"), tag = "fs_carrier") }
                 Spacer(Modifier.width(8.dp))
             }
+            if (host.settings.statesButton) {
+                var states by remember { mutableStateOf(false) }
+                SmallKey(LtIcons.Save, "States", { onInteract(); states = true }, host.selected != null, tag = "fs_states")
+                if (states) StatesSheet(host) { states = false }
+                Spacer(Modifier.width(8.dp))
+            }
             HardwareKey(LtIcons.Power, "Sleep/Wake", GuestButton.POWER, host, enabled, onInteract, tag = "power_button")
             Spacer(Modifier.width(8.dp))
             Box {

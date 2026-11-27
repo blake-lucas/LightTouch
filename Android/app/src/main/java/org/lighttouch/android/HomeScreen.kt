@@ -148,7 +148,9 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
         if (host.running && (!inDeviceView || s.overlayInDeviceView))
             PerformanceOverlay(host.perf, s.overlay, s.overlayGraph, s.overlayOpacity, s.detailedTiming,
                 Modifier.align(Alignment.of(s.overlayCorner)).padding(6.dp), scale = overlayScale)
+        val job = host.saveStates.job
         val state = when {
+            job != null -> if (job.loading) "loading-state" else "saving-state"
             host.status == "running" && host.displayAsleep -> "asleep"
             host.status == "running" -> null
             else -> host.status
@@ -160,6 +162,7 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
                 contentAlignment = Alignment.Center) {
                 when (shown) {
                     "starting" -> Busy("Starting iOS…")
+                    "saving-state", "loading-state" -> Busy(job?.let { j -> "${j.label}…" + (j.fraction?.let { " ${(it * 100).toInt()}%" } ?: "") } ?: "")
                     "stopping" -> Busy("Shutting down…")
                     "paused" -> ScreenAction(LtIcons.Play, "Paused · tap to resume", { host.setPaused(false) }, tag = "resume_overlay")
                     "asleep" -> ScreenAction(LtIcons.Power, "Screen off · tap to wake", { host.pulse(GuestButton.HOME) }, tag = "guest_screen_asleep")
@@ -231,6 +234,7 @@ private fun Dock(host: GuestHost, onHeight: (Int) -> Unit, onHide: () -> Unit, o
             if (host.settings.screenshotButton) DockButton(LtIcons.Camera, "Screenshot", host::screenshot, Modifier.weight(1f), enabled = canControl, tag = "screenshot_button")
             if (host.settings.hitchButton) DockButton(LtIcons.Timeline, "Inspect", host::openHitch, Modifier.weight(1f), enabled = canControl, tag = "hitch_button")
             if (host.carrierButton) CarrierDockButton(host, Modifier.weight(1f))
+            if (host.settings.statesButton) StatesDockButton(host, Modifier.weight(1f))
             // While a shutdown is under way the same button forces it.
             DockButton(LtIcons.Stop, if (host.status == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
                 enabled = host.sessionOwned, tint = LtColors.Danger, tag = "stop_guest")
