@@ -106,6 +106,38 @@ periodic sync does. Kill tests on the desktop 4G (8 MiB `fs-write`, engine `SIGK
 `fs-check`): `F_FULLFSYNC` then a kill 0.4 s later: intact; plain `fsync` then a kill 2 s later: not intact; plain
 `fsync` then 35 s idle: intact; clean stop: intact.
 
+## Space iOS frees
+
+A device's size on the host is its overlay's allocated blocks (both apps show those; export copies only allocated
+ranges). Nothing reaches the host when iOS deletes a file: NAND has no trim. What does is a block **erase**: the
+engine zeroes the erase block in the overlay with unmap (`nand_disk_erase`), so qcow2 frees its clusters and punches
+them out of the file (Linux `fallocate`, macOS `F_PUNCHHOLE`, Windows `FSCTL_SET_ZERO_DATA`). So the overlay shrinks
+exactly when the guest's flash translation layer (FTL) erases, and that differs by iOS:
+
+| Device (Poco F3, 2026-11-26) | Install → uninstall → clean Stop, overlay MiB | Erases |
+| --- | --- | --- |
+| iPod touch 4G 6.1.6, Infinity Blade (610 MB IPA) | 131 → 1909 → 1910 → **326**; again 325 → 1980 → 1981 → **526** (Stop 7 s) | 16 at the uninstall, none in 14 min idle, the rest during iOS's shutdown |
+| same, engine killed after the uninstall | 526 → 2059 → 2062 → killed: 2062 → Recover, Stop (27 s): **294** | the shrink waits for the next clean Stop |
+| iPhone 3GS 5.1.1, the same IPA (refused after its upload and staging) | 80 → 1827 → 1830 → **482** (Stop 6 s) | during the shutdown |
+| iPod touch 2G 3.1.3, Asphalt 5 (281 MB IPA) | 31 → 810 → 810 → **810**; again 810 → 1567 → **1567** (Stop 3 s) | none |
+| iPhone 5 10.3.4, Infinity Blade | 1148 → 2763 → 2775 → **2778** (Stop 19 s); next boot + 8 min + Stop: 2819 | 6–24 a session |
+
+- **yaFTL (A4 boards, iOS 4–6)** erases the superblocks it no longer needs while iOS shuts down, so a clean Stop
+  already gives the space back; after a killed session (Android ending the app) the next clean Stop does.
+  What stays (~200 MB a cycle above the first size here) is stale pages in superblocks that still hold live data:
+  415 MB of the 520 MB overlay after the second 4G cycle, by an offline read of the FTL's page spares. Only yaFTL's
+  own garbage collection moves those, when it runs short of free blocks.
+- **The 2G's FTL (iOS 3.1.3) and the iPhone 5's (iOS 10.3.4)** didn't erase what an uninstall freed, at the
+  uninstall, idle, Stop or the next boot: each install/uninstall cycle adds its full size. Presumably they reuse
+  stale blocks only once their free blocks run out, so the overlay is bounded by the flash size (2G 8 GiB), not
+  by what iOS shows as used. Untested: 3G 4.2.1, iPhone 4 6.1.3, iPad 5.1.1 (yaFTL, expected to shrink like the 4G).
+- **Rewriting the overlay** (a `qemu-img convert`-style compaction) would gain little: freed clusters are already
+  holes, and allocated exceeds referenced by 0–1% on the seven standard devices.
+- Freeing the 2G's and iPhone 5's stale space from the host would mean reading the guest's filesystem and its FTL,
+  then rewriting flash the FTL still counts as valid: one implementation per FTL, and a mistake corrupts the device.
+- Tools: `lighttouch run REC --uninstall BUNDLE` (desktop), the Android bench verbs `install`/`uninstall`/`storage`
+  (`BenchControl.kt`; `storage`'s seventh number is erase operations).
+
 ## Measuring
 
 - **LT Bench** (`tools/guestbench`, [GUEST-BENCHMARKS.md](GUEST-BENCHMARKS.md)): `fs-write`, `fs-write-big` (uncached,
