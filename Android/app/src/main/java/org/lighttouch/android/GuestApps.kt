@@ -13,7 +13,7 @@ data class InstalledApp(val bundleId: String, val name: String?, val build: Stri
 }
 
 /**
- * Runs the bundled app-service helper (liblt_appservice.so, libimobiledevice over the
+ * Runs the bundled app-service helper (liblt_appservice.so: the desktop's crates/lighttouch-services over the
  * :engine worker's private usbmux socket) as a finite child process. One request per process:
  * a stuck library call can only hang that child, which the deadline kills.
  */

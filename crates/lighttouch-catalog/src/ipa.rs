@@ -261,6 +261,11 @@ fn plist_string(dict: &plist::Dictionary, key: &str) -> Option<String> {
 }
 
 /// Check `source` against `target`, then write the copy to install (executable mode repaired) to `destination`.
+/// Bytes the IPA's files take once unpacked (the sum of its zip entries' sizes).
+pub fn unpacked_size(path: &Path) -> Result<u64, IpaError> {
+    Ok(Zip::open(path)?.entries.iter().map(|e| e.size).sum())
+}
+
 pub fn prepare(source: &Path, destination: &Path, target: &Target) -> Result<IpaInfo, IpaError> {
     let bytes = std::fs::metadata(source).map(|m| if m.is_file() { m.len() } else { 0 }).unwrap_or(0);
     if bytes == 0 || bytes > MAX_IPA {

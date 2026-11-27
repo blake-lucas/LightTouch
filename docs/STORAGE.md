@@ -86,8 +86,8 @@ desktop, before the upload change (2026-11-23): upload ~28 s at ~10 MB/s, unpack
 - **Now:** the bridge sends 32760-byte transactions (time inside the bridge's sends during an upload 22.5 → 11.9 s) (`build-support/patches/usbmuxd-qemu-large-transactions.patch`,
   applied by the Android, Linux and Windows bridge builds; macOS ships a different usbmuxd and keeps 16 KiB
   transactions), and the apps upload an
-  IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`,
-  `Android/native-services/lt_appservice.c`). A packet longer than the transfer iOS armed fills it and continues in
+  IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`, which
+  both apps use: Android runs it as the `lt_appservice` helper). A packet longer than the transfer iOS armed fills it and continues in
   the next, as on a real link (qemu-ios `docs/tcp-usb-protocol.md`); every install verifies the zip's CRCs. With
   sessions writing ahead of the file's end, iOS 3's HFS+ appears to zero-fill the gap: the 2G programs ~58 MB more NAND per
   Asphalt 5 upload (344 vs 286 MB); the A4 boards don't (~294 MB either way). Checked: the app installed this way

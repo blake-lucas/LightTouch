@@ -100,9 +100,13 @@ impl Guest {
         }
     }
 
+    /// The guest's product type and iOS version, as lockdownd reports them ("iPod3,1", "4.2.1").
+    pub fn product(&mut self) -> Result<(String, String)> {
+        Ok((self.lockdown.string_value("ProductType")?, self.lockdown.string_value("ProductVersion")?))
+    }
+
     pub fn target(&mut self) -> Result<Target> {
-        let product = self.lockdown.string_value("ProductType")?;
-        let ios = self.lockdown.string_value("ProductVersion")?;
+        let (product, ios) = self.product()?;
         Target::of(&product, &ios).ok_or_else(|| Error(format!("App installs don't support this device ({product}).")))
     }
 
@@ -242,6 +246,12 @@ impl Guest {
     }
 
     /// The guest's raw system log into `out` until `cancelled` (developer runs: `lighttouch run --syslog FILE`).
+    /// The system log relay itself, for a caller that wants its bytes as they come (NUL-separated lines); reads
+    /// time out after `poll` so the caller can stop.
+    pub fn system_log_conn(&mut self, poll: Duration) -> Result<Conn> {
+        self.service(SYSLOG, poll)
+    }
+
     pub fn stream_system_log(&mut self, out: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> Result<()> {
         let mut conn = self.service(SYSLOG, Duration::from_secs(1))?;
         let mut chunk = [0u8; 16 << 10];

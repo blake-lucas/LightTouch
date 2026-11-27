@@ -21,8 +21,9 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | --- | --- | --- |
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
-| `android` | the engine, `android-usb`, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
-| `android-usb` | `build/android/usb/arm64-v8a/` (`libusbmuxd_qemu.so`, `liblt_appservice.so`) | `Android/packaging/build-mobile-android.py`: the USB bridge and its libraries from pinned sources with this repository's patches, static, NDK clang |
+| `android` | the engine, `android-usb`, `firmwarekit-android`, `appservice-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android-usb` | `build/android/usb/arm64-v8a/libusbmuxd_qemu.so` | `Android/packaging/build-mobile-android.py`: the USB bridge and its libraries from pinned sources with this repository's patches, static, NDK clang |
+| `appservice-android` | `build/appservice/android/` (`lt_appservice`, the APK's `liblt_appservice.so`, and `licenses/`) | `crates/lighttouch-services` (`--bin lt_appservice`), the desktop's guest services as a program, for `aarch64-linux-android` with OpenSSL built from source (`vendored-openssl`) |
 | `windows-usb` | `build/windows/usb/` (`bin/`: `lighttouch-usbmuxd.exe` and its DLLs; `licenses/`) | `Windows/usbmux/build.py`: libplist and libimobiledevice-glue cross-built with MinGW, then `build-native.py` (the daemon and libusbmuxd with the Windows adapter and the shared patches) |
 | `linux-usb` | `build/linux/usb/` (`usbmuxd-qemu`, its libraries in `lib/`) | `Linux/packaging/build-mobile-deps.py` in the Debian 11 image (Docker, `$LT_LINUX_IMAGE`, built from `scripts/release/linux-build.Dockerfile` if missing), as the Linux release builds it |
 | `android-test` | the Android app's unit tests (`testDebugUnitTest`) | the same inputs as `android` |
@@ -100,7 +101,7 @@ tracked). The defaults are the development machine's paths.
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
 | `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
 | `LT_ANDROID_ENGINE` | unset (build it) | an `android-engine` output folder (holding `arm64-v8a/`) for `android` to package instead of building the engine |
-| `LT_ANDROID_USB` | unset (build it) | a folder holding `libusbmuxd_qemu.so` and `liblt_appservice.so` for `android` to package instead of building `android-usb` |
+| `LT_ANDROID_USB` | unset (build it) | a folder holding `libusbmuxd_qemu.so` for `android` to package instead of building `android-usb` |
 | `LT_APP_ID_SUFFIX`, `LT_APP_LABEL` | none, `LightTouch` | a test APK that installs beside the regular app (e.g. `.fwkit`; its own data) and its launcher name |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |
