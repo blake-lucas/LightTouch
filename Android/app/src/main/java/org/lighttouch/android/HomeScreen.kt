@@ -101,7 +101,7 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
         ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(start = 16.dp, end = 16.dp, top = 64.dp))
         // For automation (tools/perf): the raw session state as text.
-        Text(host.status, Modifier.align(Alignment.TopStart).size(1.dp).testTag("session_status"), color = Color.Transparent, fontSize = 1.sp)
+        Text(host.shownStatus, Modifier.align(Alignment.TopStart).size(1.dp).testTag("session_status"), color = Color.Transparent, fontSize = 1.sp)
     }
     if (confirmStop) StopDialog(host) { confirmStop = false }
 }
@@ -112,11 +112,11 @@ private fun TopBar(host: GuestHost) {
         val device = host.selected
         Box(Modifier.weight(1f)) { Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { host.openDevices() }
             .padding(horizontal = 8.dp, vertical = 6.dp).testTag("device_selector"), verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(host.status)
+            StatusDot(host.shownStatus)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f, fill = false)) {
                 Text(device?.name ?: "No device", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(listOfNotNull(device?.subtitle, statusLabel(host.status)).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                Text(listOfNotNull(device?.subtitle, statusLabel(host.shownStatus)).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Filled.KeyboardArrowDown, "Devices", Modifier.padding(start = 4.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -150,15 +150,17 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
                 Modifier.align(Alignment.of(s.overlayCorner)).padding(6.dp), scale = overlayScale)
         val job = host.saveStates.job
         val state = when {
+            host.restoring != null -> "restoring"
             job != null -> if (job.loading) "loading-state" else "saving-state"
-            host.status == "running" && host.displayAsleep -> "asleep"
-            host.status == "running" -> null
-            else -> host.status
+            host.shownStatus == "running" && host.displayAsleep -> "asleep"
+            host.shownStatus == "running" -> null
+            else -> host.shownStatus
         }
         // An asleep display is black, as on the device and on every board: the engine sends no frames while it is
         // off, and the iPod touch 3G's and iPhone 3GS's models don't dim the last one with the backlight.
         AnimatedContent(state, Modifier.matchParentSize(), label = "guest-state") { shown ->
-            if (shown != null) Box(Modifier.fillMaxSize().background(if (shown == "asleep") Color.Black else Color.Black.copy(alpha = 0.7f)),
+            if (shown == "restoring") RestoringOverlay(host, Modifier.fillMaxSize())
+            else if (shown != null) Box(Modifier.fillMaxSize().background(if (shown == "asleep") Color.Black else Color.Black.copy(alpha = 0.7f)),
                 contentAlignment = Alignment.Center) {
                 when (shown) {
                     "starting" -> Busy("Starting iOS…")
@@ -227,7 +229,7 @@ private fun Dock(host: GuestHost, onHeight: (Int) -> Unit, onHide: () -> Unit, o
             }.testTag("dock")) {
         Row(Modifier.padding(start = 8.dp, end = 0.dp, top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically) {
-            val canControl = host.status in listOf("running", "paused")
+            val canControl = host.shownStatus in listOf("running", "paused")
             DockButton(if (host.paused) LtIcons.Play else LtIcons.Pause, if (host.paused) "Resume" else "Pause",
                 { host.setPaused(!host.paused) }, Modifier.weight(1f), enabled = canControl, tag = "pause_guest")
             DockButton(LtIcons.Fullscreen, "Full screen", { host.navigate(Screen.FULLSCREEN) }, Modifier.weight(1f), tag = "fullscreen_button")
@@ -236,7 +238,7 @@ private fun Dock(host: GuestHost, onHeight: (Int) -> Unit, onHide: () -> Unit, o
             if (host.carrierButton) CarrierDockButton(host, Modifier.weight(1f))
             if (host.settings.statesButton) StatesDockButton(host, Modifier.weight(1f))
             // While a shutdown is under way the same button forces it.
-            DockButton(LtIcons.Stop, if (host.status == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
+            DockButton(LtIcons.Stop, if (host.shownStatus == "stopping") "Force stop" else "Stop", onStop, Modifier.weight(1f),
                 enabled = host.sessionOwned, tint = LtColors.Danger, tag = "stop_guest")
             // Tuck the dock away (or drag it right).
             Box(Modifier.width(32.dp).height(56.dp).clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)).clickable(onClick = tuck)
@@ -273,7 +275,7 @@ private fun DockTab(middle: Dp, onShow: () -> Unit) {
 /** Shutting down is slow and closes every app, so it is confirmed; Save & Stop keeps the session. */
 @Composable
 internal fun StopDialog(host: GuestHost, onDismiss: () -> Unit) {
-    if (host.status == "stopping" || host.storeInstalling) return ForceStopDialog(host, onDismiss)
+    if (host.shownStatus == "stopping" || host.storeInstalling) return ForceStopDialog(host, onDismiss)
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Power, null) },
         title = { Text("Stop ${host.selected?.name ?: "device"}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
@@ -303,13 +305,13 @@ private fun ForceStopDialog(host: GuestHost, onDismiss: () -> Unit) {
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Stop, null) },
         title = { Text("Force stop ${host.selected?.name ?: "device"}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
-        text = { Text(if (host.status != "stopping" && host.storeInstalling)
+        text = { Text(if (host.shownStatus != "stopping" && host.storeInstalling)
                 "An app is being installed, so iOS can't shut down until that finishes. Force stop ends it now, like pulling the battery: the app being installed is lost, along with anything else iOS hadn't saved, and the next start checks the device's storage first."
                 else "iOS hasn't finished shutting down. Force stop ends it now, like pulling the battery: anything it hadn't saved is lost, and the next start checks the device's storage first.",
             style = MaterialTheme.typography.bodyMedium) },
         confirmButton = { Button(onClick = { onDismiss(); host.forceStop() }, modifier = Modifier.testTag("confirm_force_stop"),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Force stop") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (host.status != "stopping" && host.storeInstalling) "Keep installing" else "Keep waiting") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (host.shownStatus != "stopping" && host.storeInstalling) "Keep installing" else "Keep waiting") } })
 }
 
 internal fun Color.luminance() = 0.2126f * red + 0.7152f * green + 0.0722f * blue

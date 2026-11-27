@@ -26,6 +26,8 @@ class BenchControl(private val host: Host, private val dir: File) {
         val engine: IEngine?
         val status: String
         val displayAsleep: Boolean
+        /** A save state is loading (the screen shows its picture). */
+        val restoringState: Boolean
         fun select(id: String)
         fun start()
         fun stop()
@@ -56,7 +58,7 @@ class BenchControl(private val host: Host, private val dir: File) {
         "select" -> { onMain { host.select(arg) }; "ok" }
         "start" -> { onMain { host.start() }; "ok" }
         "stop" -> { onMain { host.stop() }; "ok" }
-        "status" -> "state=${host.status} asleep=${host.displayAsleep}"
+        "status" -> "state=${host.status} asleep=${host.displayAsleep} restoring=${host.restoringState}"
         "button" -> {
             val (button, how) = arg.split(" ").let { it[0].toInt() to it.getOrElse(1) { "press" } }
             if (how != "up") engine().button(button, true)

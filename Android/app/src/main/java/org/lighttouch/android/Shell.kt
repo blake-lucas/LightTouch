@@ -30,6 +30,10 @@ enum class Screen { LOADING, SETUP, HOME, FULLSCREEN, SETTINGS, STORE, HITCH, DE
 /** What the screens read from and ask of the activity, which owns the worker and its lifecycle. */
 interface GuestHost {
     val status: String
+    /** A save state loading into the current device (SaveStates.kt), until it runs: the screen shows its picture. */
+    val restoring: SaveStateSummary?
+    /** [status] as the screens show it: "running" throughout a load, which never looks like a stop and a boot. */
+    val shownStatus: String
     val sessionOwned: Boolean
     val displayAsleep: Boolean
     val busy: Boolean
@@ -95,9 +99,9 @@ interface GuestHost {
     fun enableMicrophone()
 }
 
-internal val GuestHost.running get() = status == "running"
-internal val GuestHost.paused get() = status == "paused"
-internal val GuestHost.active get() = status in listOf("running", "paused", "starting", "stopping")
+internal val GuestHost.running get() = shownStatus == "running"
+internal val GuestHost.paused get() = shownStatus == "paused"
+internal val GuestHost.active get() = shownStatus in listOf("running", "paused", "starting", "stopping")
 
 /** A labelled icon button for the control dock. */
 @Composable

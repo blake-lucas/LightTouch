@@ -77,7 +77,7 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
                 Box(Modifier.size(40.dp, 5.dp).background(Color.White.copy(alpha = 0.45f), RoundedCornerShape(3.dp)))
             }
         }
-        Text(host.status, Modifier.size(1.dp).testTag("session_status"), color = Color.Transparent)
+        Text(host.shownStatus, Modifier.size(1.dp).testTag("session_status"), color = Color.Transparent)
         ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp))
     }
     if (confirmStop) StopDialog(host) { confirmStop = false }
@@ -97,11 +97,11 @@ private fun ButtonBar(host: GuestHost, modifier: Modifier, onInteract: () -> Uni
         HomeKey(host, enabled, onInteract)
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             if (host.settings.hitchButton) {
-                SmallKey(LtIcons.Timeline, "Inspect frames", { onInteract(); host.openHitch() }, host.status in listOf("running", "paused"), tag = "hitch_button")
+                SmallKey(LtIcons.Timeline, "Inspect frames", { onInteract(); host.openHitch() }, host.shownStatus in listOf("running", "paused"), tag = "hitch_button")
                 Spacer(Modifier.width(8.dp))
             }
             if (host.carrierButton) {
-                CarrierKey(host) { open -> SmallKey(LtIcons.Signal, "Carrier", { onInteract(); open() }, host.status in listOf("running", "paused"), tag = "fs_carrier") }
+                CarrierKey(host) { open -> SmallKey(LtIcons.Signal, "Carrier", { onInteract(); open() }, host.shownStatus in listOf("running", "paused"), tag = "fs_carrier") }
                 Spacer(Modifier.width(8.dp))
             }
             if (host.settings.statesButton) {
@@ -118,17 +118,17 @@ private fun ButtonBar(host: GuestHost, modifier: Modifier, onInteract: () -> Uni
                     DropdownMenuItem(text = { Text("Exit full screen") }, leadingIcon = { Icon(LtIcons.FullscreenExit, null) },
                         onClick = { menu = false; host.navigate(Screen.HOME) }, modifier = Modifier.testTag("exit_fullscreen"))
                     DropdownMenuItem(text = { Text(if (host.paused) "Resume" else "Pause") }, leadingIcon = { Icon(if (host.paused) LtIcons.Play else LtIcons.Pause, null) },
-                        onClick = { menu = false; host.setPaused(!host.paused) }, enabled = host.status in listOf("running", "paused"))
+                        onClick = { menu = false; host.setPaused(!host.paused) }, enabled = host.shownStatus in listOf("running", "paused"))
                     DropdownMenuItem(text = { Text("Screenshot") }, leadingIcon = { Icon(LtIcons.Camera, null) },
-                        onClick = { menu = false; host.screenshot() }, enabled = host.status in listOf("running", "paused"))
+                        onClick = { menu = false; host.screenshot() }, enabled = host.shownStatus in listOf("running", "paused"))
                     DropdownMenuItem(text = { Text("Inspect frames") }, leadingIcon = { Icon(LtIcons.Timeline, null) },
-                        onClick = { menu = false; host.openHitch() }, enabled = host.status in listOf("running", "paused"))
+                        onClick = { menu = false; host.openHitch() }, enabled = host.shownStatus in listOf("running", "paused"))
                     DropdownMenuItem(text = { Text("Performance overlay: ${host.settings.overlay.label}") }, leadingIcon = { Icon(LtIcons.Speed, null) },
                         onClick = { host.settings.overlay = OverlayLevel.entries[(host.settings.overlay.ordinal + 1) % OverlayLevel.entries.size] })
                     DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
                         onClick = { menu = false; host.navigate(Screen.SETTINGS) })
                     HorizontalDivider()
-                    DropdownMenuItem(text = { Text(if (host.status == "stopping") "Force stop" else "Stop", color = LtColors.Danger) }, leadingIcon = { Icon(LtIcons.Stop, null, tint = LtColors.Danger) },
+                    DropdownMenuItem(text = { Text(if (host.shownStatus == "stopping") "Force stop" else "Stop", color = LtColors.Danger) }, leadingIcon = { Icon(LtIcons.Stop, null, tint = LtColors.Danger) },
                         onClick = { menu = false; onStop() }, enabled = host.sessionOwned)
                 }
             }

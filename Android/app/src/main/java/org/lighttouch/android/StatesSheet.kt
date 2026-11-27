@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -40,7 +41,7 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
     var loading by remember { mutableStateOf<SaveStateSummary?>(null) }
     var deleting by remember { mutableStateOf<SaveStateSummary?>(null) }
     var renaming by remember { mutableStateOf<SaveStateSummary?>(null) }
-    val running = host.status in listOf("running", "paused")
+    val running = host.shownStatus in listOf("running", "paused")
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("states_sheet")) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
@@ -66,7 +67,7 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
             LazyColumn(Modifier.heightIn(max = 460.dp)) {
                 items(states.states, key = { it.id }) { state ->
-                    StateRow(states, state, canLoad = states.job == null && host.status != "starting" && host.status != "stopping",
+                    StateRow(states, state, canLoad = states.job == null && host.restoring == null && host.shownStatus != "starting" && host.shownStatus != "stopping",
                         onLoad = { if (running) loading = state else { host.loadState(state); onDismiss() } },
                         onRename = { renaming = state }, onDelete = { deleting = state })
                 }
@@ -128,3 +129,20 @@ private fun StateRow(states: SaveStatesController, state: SaveStateSummary, canL
 
 private fun size(bytes: Long): String =
     if (bytes >= 1L shl 30) "%.1f GB".format(bytes / (1L shl 30).toDouble()) else "${bytes shr 20} MB"
+
+/**
+ * A save state loading into the device on screen (GuestHost.restoring): the state's picture, its saved screen, where the
+ * guest's frames go, with a thin bar of the load's progress, until the state runs. No boot and no stopped screen show.
+ */
+@Composable
+internal fun RestoringOverlay(host: GuestHost, modifier: Modifier = Modifier) {
+    val state = host.restoring ?: return
+    val bitmap = remember(state.thumbnail) { host.saveStates.thumbnail(state) }
+    Box(modifier.background(Color.Black).testTag("restoring_state")) {
+        if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        val fraction = host.saveStates.job?.fraction
+        val bar = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).fillMaxWidth(0.4f).height(3.dp).clip(RoundedCornerShape(2.dp))
+        if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = bar, color = Color.White, trackColor = Color.White.copy(alpha = 0.25f))
+        else LinearProgressIndicator(modifier = bar, color = Color.White, trackColor = Color.White.copy(alpha = 0.25f))
+    }
+}

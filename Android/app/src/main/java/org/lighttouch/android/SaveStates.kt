@@ -72,7 +72,8 @@ class SaveStatesController(private val engine: () -> IEngine?, private val handl
     /** Called from the status poll (on its thread): the progress of a save or load, and a save's outcome. */
     fun poll(worker: IEngine?, status: String) {
         val current = job ?: return
-        if (current.loading && status in listOf("running", "paused", "failed", "stopped")) { handler.post { job = null }; return }
+        // Not "stopped": a load reads that a moment between the old worker and the new one's session.
+        if (current.loading && status in listOf("running", "paused", "failed")) { handler.post { job = null }; return }
         val progress = try { worker?.stateProgress() } catch (_: RemoteException) { null } ?: return
         val saved = progress.getString("saved"); val failed = progress.getString("failed")
         val phase = progress.getString("phase") ?: ""

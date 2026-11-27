@@ -43,6 +43,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             if (value != statusState) AppLog.i("Device ${selected?.let { "\"${it.name}\" (${it.subtitle})" } ?: "(none)"}: $statusState -> $value")
             statusState = value
         }
+    override var restoring by mutableStateOf<SaveStateSummary?>(null)
+        private set
+    override val shownStatus: String get() = if (restoring != null) "running" else status
+    /** When the restored device first reported running (uptime ms), and since when it has looked stopped. */
+    private var restoreRan = 0L
+    private var restoreStopped = 0L
     private var detail by mutableStateOf("")
     override var displayAsleep by mutableStateOf(false)
         private set
@@ -323,6 +329,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
+                        followRestore()
                         engineFailure?.let { workerExited(); if (!engineExpectedExit) error = "Guest worker unavailable: $it. Writable state retained; Start creates a fresh worker." }
                     }
                     // After the catalog too: it names the device.
@@ -432,7 +439,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val guestSurface = remember { movableContentOf { modifier: Modifier ->
                     WorkerGuestSurface(worker = engine, currentWorker = { engine },
                         mayClaim = { view -> mayClaimDisplay() && displayView === view },
-                        ownerTicket = { displayOwnerTicket }, onError = { error = it },
+                        ownerTicket = { displayOwnerTicket }, onError = { if (restoring == null) error = it },
                         onCreated = { displayView = it },
                         onReleased = { view -> if (displayView === view) displayView = null },
                         keepScreenOn = active && status in listOf("starting", "running", "stopping"),
@@ -475,6 +482,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             override val engine get() = this@MainActivity.engine
             override val status get() = this@MainActivity.status
             override val displayAsleep get() = this@MainActivity.displayAsleep
+            override val restoringState get() = this@MainActivity.restoring != null
             override fun select(id: String) = selectDevice(id)
             override fun start() {
                 // the guest on screen: a first-run or settings page over it would stop its presentation
@@ -501,7 +509,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun dismissError() { dismissedError = error; error = "" }
     override fun start() = startGuest()
     override fun recover() = startGuest(coldRecovery = true)
-    override fun stop() = stopGuest()
+    override fun stop() { if (restoring == null) stopGuest() }
     override fun forceStop() {
         val worker = engine ?: return
         val pid = workerPid
@@ -520,15 +528,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
     override fun loadState(state: SaveStateSummary) {
         val device = selected ?: return
+        if (restoring != null) return
         val request = GuestStartRequest(device.id, coldRecovery = true, loadState = state.id)
         val worker = engine
-        if (worker == null || !sessionOwned) { saveStates.loading(); startGuest(retainedRequest = request); return }
+        if (worker == null || !sessionOwned) { beginRestore(state); saveStates.loading(); startGuest(retainedRequest = request); return }
         if (status !in listOf("running", "paused") || engineRestarting) return
+        beginRestore(state)
         // The running worker checks the state first, so a state that can't load never ends the device.
         Thread({
             val problem = try { worker.checkState(state.id) } catch (e: RemoteException) { e.message ?: "Worker unavailable" }
             handler.post {
-                if (problem.isNotEmpty()) { error = problem; return@post }
+                if (problem.isNotEmpty()) { restoring = null; error = problem; return@post }
                 AppLog.i("Loading state ${state.id.take(8)} over the running ${device.id.take(8)}")
                 pendingGuestRequest = request
                 saveStates.loading()
@@ -536,16 +546,36 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }, "save-state-check").start()
     }
+    /** The screens hold [state]'s picture from now until it runs (followRestore). */
+    private fun beginRestore(state: SaveStateSummary) { restoring = state; restoreRan = 0L; restoreStopped = 0L; displayView?.cancelOwnedGesture() }
+    /** From the status poll: a load ends once the restored device has run a moment (its first frames are up), or failed. */
+    private fun followRestore() {
+        val state = restoring ?: return
+        val now = SystemClock.uptimeMillis()
+        if (engineRestarting || pendingGuestStart) return
+        when (status) {
+            // Only running: a loaded machine reads paused a moment before it resumes (a load always resumes it).
+            "running" -> if (saveStates.job == null) {
+                if (restoreRan == 0L) restoreRan = now
+                else if (now - restoreRan >= 350) { AppLog.i("Restored state ${state.id.take(8)}"); restoring = null }
+            }
+            "failed" -> restoring = null
+            // Between the old worker and the new one's session the status reads stopped a moment: only a lasting one ends it.
+            "stopped" -> { if (restoreStopped == 0L) restoreStopped = now else if (now - restoreStopped > 5000) restoring = null }
+            else -> restoreStopped = 0L
+        }
+    }
     override fun deleteState(state: SaveStateSummary) { selected?.let { saveStates.delete(it.id, state) } }
     override fun renameState(state: SaveStateSummary, name: String) { selected?.let { saveStates.rename(it.id, state, name) } }
     override fun setPaused(paused: Boolean) {
+        if (restoring != null) return
         val worker = engine ?: return
         if (paused) displayView?.cancelOwnedGesture()
         pausedByBackground = false
         try { worker.pause(paused) } catch (_: RemoteException) { error = "Guest worker unavailable" }
     }
-    override fun button(id: Int, down: Boolean) = sendButton(id, down)
-    override fun screenshot() = capture()
+    override fun button(id: Int, down: Boolean) { if (restoring == null) sendButton(id, down) }
+    override fun screenshot() { if (restoring == null) capture() }
     override fun navigate(screen: Screen) {
         when (screen) {
             Screen.HOME, Screen.FULLSCREEN -> { base = screen; overlay = null }
@@ -1298,7 +1328,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             finally { try { binder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "guest-worker-restart").start()
     }
-    override fun pulse(id: Int) = pulse(id, 100)
+    override fun pulse(id: Int) { if (restoring == null) pulse(id, 100) }
     private fun pulse(button: Int, holdMs: Long) {
         val worker = engine ?: return
         buttonCalls.execute {
