@@ -152,6 +152,7 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
         val state = when {
             host.restoring != null -> "restoring"
             job != null -> if (job.loading) "loading-state" else "saving-state"
+            host.booting -> "starting"
             host.shownStatus == "running" && host.displayAsleep -> "asleep"
             host.shownStatus == "running" -> null
             else -> host.shownStatus

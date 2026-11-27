@@ -45,6 +45,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
     override var restoring by mutableStateOf<SaveStateSummary?>(null)
         private set
+    /** This session's guest has drawn something other than black (the boot logo), or started from a save state. */
+    private var guestDrew by mutableStateOf(false)
+    override val booting get() = status == "running" && !guestDrew && restoring == null
     override val shownStatus: String get() = if (restoring != null) "running" else status
     /** When the restored device first reported running (uptime ms), and since when it has looked stopped. */
     private var restoreRan = 0L
@@ -65,6 +68,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var pendingGuestRequest: GuestStartRequest? = null
     private var pendingGuestStart = false
     private var guestStartRequested = false
+    /**
+     * A start asked of the worker that it hasn't shown yet: until its start call runs (guest tools checked first), and
+     * a moment after it returns for polls already under way, the worker still reads "stopped". That isn't an end, and
+     * showing it flashed Start and hid the dock between "Starting iOS…" and the boot. [startReturnedAt] is 0 while the call runs.
+     */
+    private var startAwaited = false
+    private var startReturnedAt = 0L
     private var engineExpectedExit = false
     private var engineRestarting = false
     override var busy by mutableStateOf(false)
@@ -295,13 +305,21 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     if (!active) return@post
                     if (engine?.asBinder() == observedEngine?.asBinder()) {
                         engineState?.let { b ->
-                            status = b.getString("state") ?: "Unknown"
+                            val reported = b.getString("state") ?: "Unknown"
+                            val awaiting = startAwaited && reported == "stopped" &&
+                                (startReturnedAt == 0L || SystemClock.uptimeMillis() - startReturnedAt < 2000)
+                            if (!awaiting) {
+                                if (startAwaited && reported != "stopped") startAwaited = false
+                                if (reported in listOf("stopped", "failed") && status !in listOf("stopped", "failed")) rereadRecovery()
+                                status = reported
+                            }
                             carrier.follow(selected)
                             carrierLive = status in listOf("running", "paused") && selected?.cellular == true
                             detail = b.getString("detail") ?: ""
                             displayAsleep = b.getBundle("observations")?.let {
                                 it.getBoolean("runtimeDiagnosticsAvailable") && it.getLong("engineReady") != 0L && it.getLong("displaySleeping") != 0L
                             } ?: false
+                            if (!guestDrew && (b.getBundle("observations")?.getLong("guestFrameNonzeroRgbSamples") ?: 0L) > 0L) guestDrew = true
                             val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
                             if (reportedError != dismissedError) dismissedError = ""
                             if (reportedError.isNotEmpty() || status == "running") error = if (reportedError == dismissedError) "" else reportedError
@@ -1195,6 +1213,18 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) { handler.post { prep.romError = e.message ?: "Could not use that boot file" } }
         }, "prepare-bootrom").start()
     }
+    /**
+     * A session that ends leaves its device clean or needing recovery (the core's state/.dirty). The worker that could
+     * list the devices again has usually exited by then, and Android brings a new one up only after a backoff (15 s
+     * and more), so "Recover and start" stayed on a device that had just shut down cleanly: read the marker here.
+     */
+    private fun rereadRecovery() {
+        val library = File(filesDir, "library/records")
+        records = records.map { record ->
+            val dirty = File(library, "${record.getString("id")}/state/.dirty").exists()
+            if (record.getBoolean("dirty") == dirty) record else Bundle(record).apply { putBoolean("dirty", dirty) }
+        }
+    }
     private fun refreshDevices(afterDelete: Boolean = false) {
         Thread({
             try {
@@ -1232,7 +1262,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val exitedPid = workerPid
         profileRecording = false; profileBusy = false
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
+        startAwaited = false
         status = if (unexpected) "failed" else "stopped"
+        rereadRecovery()
         detail = ""
         if (unexpected) error = "The emulator stopped unexpectedly. The device's data is kept; press Start to run it again."
         Thread({
@@ -1266,11 +1298,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         // disposal/rebinding; later device-list refreshes cannot change the request.
         pendingGuestRequest = request
         val worker = engine
-        if (worker == null) { pendingGuestStart = true; status = "starting"; bindWorker(); return }
+        if (worker == null) { pendingGuestStart = true; status = "starting"; startAwaited = true; startReturnedAt = 0L; bindWorker(); return }
         if (sessionOwned) { restartGuestForStart(worker); return }
         if (request.loadState != null) saveStates.loading()
         workerEvidenceDelivery.advance()
-        engineExpectedExit = false; guestStartRequested = true; status = "starting"
+        engineExpectedExit = false; guestStartRequested = true; status = "starting"; startAwaited = true; startReturnedAt = 0L
+        // A state's screen is up from its first frame, black or not (an asleep display): never "Starting" over it.
+        guestDrew = request.loadState != null
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
             try {
@@ -1290,9 +1324,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     request.coldRecovery -> worker.recoverStart(request.recordId)
                     else -> worker.start(request.recordId)
                 }
-                handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
+                handler.post {
+                    startReturnedAt = SystemClock.uptimeMillis()
+                    if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: ""
+                    if (error.isNotEmpty()) startAwaited = false
+                }
             }
             catch (failure: Exception) { handler.post {
+                startAwaited = false
                 if (engine?.asBinder() == worker.asBinder()) {
                     error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."
                     status = "failed"
@@ -1302,7 +1341,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
     private fun stopGuest() {
         val worker = engine ?: return
-        engineExpectedExit = true; status = "stopping"; stopSensors()
+        engineExpectedExit = true; status = "stopping"; startAwaited = false; stopSensors()
         Thread({
             try { worker.stop() }
             catch (failure: RemoteException) { handler.post {

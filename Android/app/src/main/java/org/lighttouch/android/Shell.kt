@@ -36,6 +36,8 @@ interface GuestHost {
     val shownStatus: String
     val sessionOwned: Boolean
     val displayAsleep: Boolean
+    /** Running, but the guest hasn't drawn yet (a black screen before the Apple logo): the screen still says Starting. */
+    val booting: Boolean
     val busy: Boolean
     val devices: List<DeviceSummary>
     val selected: DeviceSummary?

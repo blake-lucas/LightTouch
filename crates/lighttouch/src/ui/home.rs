@@ -203,7 +203,8 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
                 let fraction = (*total > 0).then(|| *done as f32 / *total as f32);
                 Card::Busy("Checking the device's files…".into(), fraction)
             }
-            Phase::Starting if !app.guest.has_frame() => Card::Busy("Starting iOS…".into(), None),
+            // Until the guest draws (the boot logo): the engine runs a moment on a black screen first.
+            Phase::Starting | Phase::Running if !app.guest.drew() => Card::Busy("Starting iOS…".into(), None),
             Phase::Starting => Card::None,
             Phase::Stopping => Card::Busy("Shutting down…".into(), None),
             Phase::Paused => Card::Action(icons::PLAY, "Paused · click to resume".into()),
