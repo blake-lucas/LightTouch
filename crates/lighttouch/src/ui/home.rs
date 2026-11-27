@@ -69,8 +69,8 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                 Some(d) => (d.name.clone(), d.subtitle.clone()),
                 None => ("No device".to_string(), String::new()),
             };
-            let (status, color) = match &app.model.session {
-                Some(s) => (s.phase.label().to_string(), sidebar::phase_color(&s.phase)),
+            let (status, color) = match app.model.shown_phase() {
+                Some(phase) => (phase.label().to_string(), sidebar::phase_color(&phase)),
                 None => ("Off".to_string(), p.outline),
             };
             widgets::status_dot(ui, color, 10.0);
@@ -184,6 +184,9 @@ fn hardware_buttons(app: &mut App, ui: &mut Ui, layout: &device_frame::Layout) {
 
 /// What the screen shows when iOS isn't simply running: progress, a paused or asleep hint, or Start.
 fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
+    if super::states::restoring_overlay(app, ui, screen) {
+        return;
+    }
     let p = app.palette;
     enum Card {
         None,
@@ -313,8 +316,9 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
 
 fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     let p = app.palette;
-    let Some(session) = &app.model.session else { return };
-    let phase = session.phase.clone();
+    let Some(phase) = app.model.shown_phase() else { return };
+    // During a load the dock looks as it did (the device stays running), but nothing acts until the state runs.
+    let restoring = app.model.restoring().is_some();
     let running = matches!(phase, Phase::Running);
     let paused = matches!(phase, Phase::Paused);
     // While a shutdown is under way the same button forces it.
@@ -334,7 +338,7 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let (icon, label) = if paused { (icons::PLAY, "Resume") } else { (icons::PAUSE, "Pause") };
-                    if widgets::dock_button(ui, &p, icon, label, running || paused, None).clicked() {
+                    if widgets::dock_button(ui, &p, icon, label, running || paused, None).clicked() && !restoring {
                         app.model.set_paused(!paused);
                     }
                     let muted = app.model.settings.muted;
@@ -359,18 +363,22 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                     }
                     if show_screenshot
                         && widgets::dock_button(ui, &p, icons::CAMERA, "Screenshot", running || paused, None).clicked()
+                        && !restoring
                     {
                         app.model.screenshot();
                     }
                     if show_inspect
                         && widgets::dock_button(ui, &p, icons::CHART, "Inspect", running || paused, None).clicked()
+                        && !restoring
                     {
                         if let Some((snapshot, paused)) = app.model.inspect() {
                             app.inspector = Some(super::inspector::InspectorState::new(snapshot, paused));
                             app.page = Page::Inspector;
                         }
                     }
-                    if widgets::dock_button(ui, &p, icons::POWER, stop_label, true, Some(theme::DANGER)).clicked() {
+                    if widgets::dock_button(ui, &p, icons::POWER, stop_label, true, Some(theme::DANGER)).clicked()
+                        && !restoring
+                    {
                         app.dialog = Some(Dialog::Stop);
                     }
                 });

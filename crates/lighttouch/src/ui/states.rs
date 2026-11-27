@@ -146,6 +146,55 @@ fn row(app: &mut App, ui: &mut Ui, state: &SaveState, can_load: bool) {
     });
 }
 
+/// While a state loads into the device on screen (the model's `restoring`): its picture over the screen, with a thin
+/// progress bar, until the state runs. Whether it drew.
+pub fn restoring_overlay(app: &mut App, ui: &mut Ui, screen: egui::Rect) -> bool {
+    let Some(restoring) = app.model.restoring().cloned() else { return false };
+    let p = app.palette;
+    let painter = ui.painter().with_clip_rect(screen);
+    painter.rect_filled(screen, 0.0, Color32::BLACK);
+    if let Some(texture) = restoring.thumbnail.as_ref().and_then(|path| thumbnail(app, ui.ctx(), path)) {
+        // The picture is a frame as the engine scans it out: turned to the screen as the guest's frames are.
+        let (rotation, turned) = (app.model.settings.rotation, app.guest.scan_turned());
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        for corner in [screen.left_top(), screen.right_top(), screen.right_bottom(), screen.left_bottom()] {
+            let u = ((corner.x - screen.left()) / screen.width()) as f64;
+            let v = ((corner.y - screen.top()) / screen.height()) as f64;
+            let (x, y) = rotation.to_scan(u, v, turned);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: corner,
+                uv: egui::pos2(x as f32, y as f32),
+                color: Color32::WHITE,
+            });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+    }
+    let fraction = app.model.state_job().filter(|j| j.total > 0).map(|j| j.fraction());
+    let width = (screen.width() * 0.4).clamp(60.0, 160.0);
+    let bar = egui::Rect::from_center_size(egui::pos2(screen.center().x, screen.bottom() - 18.0), vec2(width, 4.0));
+    painter.rect_filled(bar.expand(1.0), CornerRadius::same(3), Color32::from_black_alpha(140));
+    painter.rect_filled(bar, CornerRadius::same(2), Color32::from_white_alpha(60));
+    let fill = match fraction {
+        Some(f) => egui::Rect::from_min_size(bar.min, vec2((bar.width() * f.clamp(0.0, 1.0)).max(4.0), bar.height())),
+        None => {
+            let t = (ui.input(|i| i.time) * 0.8).fract() as f32;
+            let seg = bar.width() * 0.3;
+            let x0 = bar.left() + (bar.width() + seg) * t - seg;
+            egui::Rect::from_min_max(
+                egui::pos2(x0.max(bar.left()), bar.top()),
+                egui::pos2((x0 + seg).min(bar.right()), bar.bottom()),
+            )
+        }
+    };
+    if fill.width() > 0.0 {
+        painter.rect_filled(fill, CornerRadius::same(2), p.primary);
+    }
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
+    true
+}
+
 fn thumbnail(app: &mut App, ctx: &egui::Context, path: &PathBuf) -> Option<egui::TextureHandle> {
     app.states_ui
         .thumbnails

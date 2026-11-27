@@ -56,6 +56,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         super::controller::overlay(app, ui, screen);
     }
     super::controller::step(app, ui, screen);
+    super::states::restoring_overlay(app, ui, screen);
     if asleep {
         let response = ui.interact(screen, ui.scope_id().with("wake"), Sense::click());
         ui.painter().text(

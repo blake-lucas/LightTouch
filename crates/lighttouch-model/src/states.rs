@@ -2,9 +2,15 @@
 //! state, which ends a running session without an iOS shutdown and starts a fresh one from the state (the engine
 //! starts once per worker). The core checks a state against the device and the engine before anything changes
 //! (Portable/src/States.cpp).
+//!
+//! A load is seamless: from the moment it is asked until the state's first frames are on screen the model reports
+//! the device as running and `restoring` holds the state's picture, which the screen shows with the load's progress
+//! instead of the session ending, a new one starting and iOS booting.
 use crate::Model;
 use crate::session::Phase;
 use lighttouch_core::library::SaveState;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// The current device's states, and a load waiting for its running session to end.
 #[derive(Default)]
@@ -15,7 +21,22 @@ pub(crate) struct Cache {
     /// A state to load into the current device, asked of its running worker (`check_state`) and then waiting for it to
     /// end (`discard`).
     pending: Option<PendingLoad>,
+    restoring: Option<Restoring>,
 }
+
+/// A state being loaded into the device on screen, shown as its picture until the state runs.
+#[derive(Debug, Clone)]
+pub struct Restoring {
+    pub state: String,
+    /// The state's screen when it was saved, when it has one.
+    pub thumbnail: Option<PathBuf>,
+    /// When the restored device first reported running.
+    ran: Option<Instant>,
+    since: Instant,
+}
+
+/// How long the picture stays once the state runs, so its first frame is up before the picture goes.
+const SETTLE: Duration = Duration::from_millis(350);
 
 pub(crate) struct PendingLoad {
     record: String,
@@ -79,6 +100,9 @@ impl Model {
         if !self.can_load_state() {
             return;
         }
+        let thumbnail = self.states().iter().find(|s| s.id == state).and_then(|s| s.thumbnail.clone());
+        self.states.restoring =
+            Some(Restoring { state: state.to_string(), thumbnail, ran: None, since: Instant::now() });
         match &mut self.session {
             Some(session) => {
                 lighttouch_core::app_log!(
@@ -125,8 +149,45 @@ impl Model {
         self.states.pending.is_some()
     }
 
+    /// The state being loaded into the device on screen, until it runs.
+    pub fn restoring(&self) -> Option<&Restoring> {
+        self.states.restoring.as_ref()
+    }
+
+    /// The device's phase as the user sees it: running throughout a load.
+    pub fn shown_phase(&self) -> Option<Phase> {
+        if self.states.restoring.is_some() {
+            return Some(Phase::Running);
+        }
+        self.session.as_ref().map(|s| s.phase.clone())
+    }
+
+    /// Follow a load until the state runs (or fails: its message then shows as any start's would).
+    fn tick_restoring(&mut self) {
+        let Some(restoring) = &mut self.states.restoring else { return };
+        if self.states.pending.is_some() {
+            return; // the running session is still ending
+        }
+        match self.session.as_ref().map(|s| (&s.phase, s.state_job.is_some())) {
+            Some((Phase::Running, false)) => {
+                let ran = *restoring.ran.get_or_insert_with(Instant::now);
+                if ran.elapsed() >= SETTLE {
+                    lighttouch_core::app_log!(
+                        "restored state {} after {:.1} s",
+                        &restoring.state[..8.min(restoring.state.len())],
+                        restoring.since.elapsed().as_secs_f64()
+                    );
+                    self.states.restoring = None;
+                }
+            }
+            Some((Phase::Ended { .. }, _)) | None => self.states.restoring = None,
+            _ => {}
+        }
+    }
+
     /// Follow saves and loads (called from `tick` before a session that ended is dropped).
     pub(crate) fn tick_states(&mut self) {
+        self.tick_restoring();
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -152,6 +213,7 @@ impl Model {
                 }
                 Some((id, Some(problem))) if id == pending.state => {
                     self.states.pending = None;
+                    self.states.restoring = None;
                     self.error = Some(problem);
                 }
                 _ => {}

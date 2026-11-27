@@ -35,7 +35,10 @@ streams the machine and copies the storage while it is stopped, then resumes it;
 process, puts the storage back before the engine opens it and loads the machine before the first instruction. A
 state loads only into its own device, on the same host kind (desktop or Android: the GL part differs) with the same
 engine build and guest tools; anything else is refused with a plain message. Export/import carries `states/`;
-deleting the device deletes them.
+deleting the device deletes them. An iPod touch 2G prepared before the NAND container writes a whole copy of its
+base's chip files in place (state/nand with geometry.json nand-xor-blank-v2): its states keep only the 1 MiB chunks
+that differ from the base, which a load reads back from the base (a fresh boot's state went from ~1.8 GB to the size of
+what it changed). A load into a running device shows the state's picture with its progress, not a stop and a boot.
 
 ## What the overlay's "write" figure measures
 

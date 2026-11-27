@@ -16,6 +16,7 @@ pub mod rotation;
 pub mod session;
 pub mod settings;
 mod states;
+pub use states::Restoring;
 pub mod store;
 pub mod task;
 pub mod tilt;
@@ -414,7 +415,15 @@ impl Model {
 
     /// The devices running (on screen or in the background) and their phases.
     pub fn running(&self) -> Vec<(String, Phase)> {
-        self.session.iter().chain(&self.background).map(|s| (s.record_id.clone(), s.phase.clone())).collect()
+        let mut list: Vec<(String, Phase)> =
+            self.session.iter().chain(&self.background).map(|s| (s.record_id.clone(), s.phase.clone())).collect();
+        // A device a state is loading into stays running (states.rs, `restoring`).
+        if let (Some(shown), Some(id)) = (self.shown_phase(), self.session.as_ref().map(|s| s.record_id.clone())) {
+            if let Some(entry) = list.iter_mut().find(|(r, _)| *r == id) {
+                entry.1 = shown;
+            }
+        }
+        list
     }
 
     /// Stop every running device (closing the window). Whether any is still shutting down or refused (an app
