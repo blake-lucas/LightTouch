@@ -3,6 +3,7 @@
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
 pub mod carrier;
 pub mod crash;
+pub mod details;
 pub mod diagnostics;
 pub mod gamepad;
 pub mod inspector;

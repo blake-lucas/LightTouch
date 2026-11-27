@@ -2,6 +2,7 @@
 //! another toolkit could replace this module.
 mod carrier;
 mod controller;
+mod details;
 mod device_frame;
 mod devshot;
 mod fullscreen;
@@ -49,6 +50,8 @@ pub enum Page {
     /// Prepare from an IPSW (its step lives in `App::prepare`).
     Prepare,
     Store,
+    /// A device's Details page (`App::details` holds which, and its facts).
+    Details,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +104,7 @@ pub struct App {
     pub setup: setup::SetupState,
     pub prepare: prepare::PrepareState,
     pub licenses: licenses::LicenseState,
+    pub details: Option<details::DetailsState>,
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
     pub carrier: carrier::CarrierUi,
@@ -410,6 +414,7 @@ impl App {
             setup: setup::SetupState::default(),
             prepare,
             licenses: licenses::LicenseState::default(),
+            details: None,
             inspector: None,
             controller: controller::ControllerUi::default(),
             carrier: carrier::CarrierUi::default(),
@@ -1024,6 +1029,7 @@ impl eframe::App for App {
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),
                     Page::Store => store::show(self, ui),
+                    Page::Details => details::show(self, ui),
                 }
             });
         }

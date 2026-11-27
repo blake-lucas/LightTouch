@@ -68,6 +68,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             app.page = Page::Device;
                         }
                         response.context_menu(|ui| {
+                            if ui.button(widgets::icon_label(icons::INFO, "Details", None)).clicked() {
+                                ui.close();
+                                super::details::open(app, &device);
+                            }
                             if ui.button(widgets::icon_label(icons::PENCIL, "Rename…", None)).clicked() {
                                 app.dialog = Some(Dialog::Rename { id: device.id.clone(), name: device.name.clone() });
                                 ui.close();

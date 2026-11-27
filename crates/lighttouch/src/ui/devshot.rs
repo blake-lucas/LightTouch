@@ -1,6 +1,7 @@
 //! Developer hook for checking the UI where nothing can capture the screen (over ssh on macOS or Windows):
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
-//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
+//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview, details for
+//! the selected device's Details) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device (`LIGHTTOUCH_UI_FULLSCREEN=1` full screen). `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
 //! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
@@ -82,6 +83,12 @@ pub fn start(app: &mut App) {
     // LIGHTTOUCH_UI_FULLSCREEN=1 shows the device page full screen (the window is the display under Xvfb).
     if std::env::var_os("LIGHTTOUCH_UI_FULLSCREEN").is_some() {
         app.fullscreen = true;
+    }
+    // LIGHTTOUCH_UI_PAGE=details opens the selected device's Details.
+    if std::env::var("LIGHTTOUCH_UI_PAGE").is_ok_and(|p| p == "details")
+        && let Some(device) = app.model.devices.iter().find(|d| d.selected).cloned()
+    {
+        super::details::open(app, &device);
     }
     // LIGHTTOUCH_UI_PAGE=scaling-full opens Screen scaling's full screen preview.
     if std::env::var("LIGHTTOUCH_UI_PAGE").is_ok_and(|p| p == "scaling-full") {
