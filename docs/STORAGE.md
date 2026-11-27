@@ -120,6 +120,7 @@ exactly when the guest's flash translation layer (FTL) erases, and that differs 
 | same, engine killed after the uninstall | 526 → 2059 → 2062 → killed: 2062 → Recover, Stop (27 s): **294** | the shrink waits for the next clean Stop |
 | same, engine killed inside the Stop's erases | 2074 → killed at 1853 → 1796 → Recover (Jetpack Joyride launches) → Stop (7 s): **406** | a burst ~2–4 s into the Stop |
 | iPhone 3GS 5.1.1, the same IPA (refused after its upload and staging) | 80 → 1827 → 1830 → **482** (Stop 6 s) | during the shutdown |
+| Desktop (Linux), iPod touch 4G 6.1.6, each step its own `lighttouch run`, Infinity Blade | killed mid-install earlier: 1463 → Recover, Stop: **405**; install, Stop: 1385; uninstall, Stop: **284**; boot, Stop: 306 | as on the phone |
 | iPod touch 3G 4.2.1, Real Racing (143 MB IPA, already installed: replaced, then removed) | 48 → 325 → 307 → **92** (Stop 3 s) | 352 at the install, 288 at the uninstall, the rest during the shutdown |
 | iPod touch 2G 3.1.3, Asphalt 5 (281 MB IPA) | 31 → 810 → 810 → **810**; again 810 → 1567 → **1567** (Stop 3 s) | none |
 | iPhone 5 10.3.4, Infinity Blade | 1148 → 2763 → 2775 → **2778** (Stop 19 s); next boot + 8 min + Stop: 2819; again 2819 → 4426 → 4438 → **4440** (Stop 20 s) | 6–24 a session |
