@@ -226,6 +226,11 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
                 super::carrier::menu_items(app, ui);
             });
         }
+        if super::states::wants_button(app) {
+            ui.menu_button(widgets::icon_label(icons::FLOPPY, "States", None), |ui| {
+                super::states::menu(app, ui);
+            });
+        }
         if ui.button(widgets::icon_label(icons::GEAR, "Settings", None)).clicked() {
             let ctx = ui.ctx().clone();
             app.set_fullscreen(&ctx, false);

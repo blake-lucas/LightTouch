@@ -86,6 +86,9 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                 if widgets::icon_button_sized(ui, &p, icons::BAG, "Legacy Store", 40.0, has_device).clicked() {
                     app.page = super::Page::Store;
                 }
+                if super::states::wants_button(app) {
+                    super::states::header_button(app, ui);
+                }
                 super::store::queue_button(app, ui);
                 error_chip(app, ui);
             });
@@ -189,6 +192,12 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
         Failed(String),
     }
     let card = match &app.model.session {
+        // A save stops the guest while it writes; a load restores the storage, then the machine.
+        Some(s) if s.state_job.is_some() => {
+            let job = s.state_job.as_ref().unwrap();
+            Card::Busy(format!("{}…", job.label()), (job.total > 0).then(|| job.fraction()))
+        }
+        _ if app.model.state_load_pending() => Card::Busy("Loading state…".into(), None),
         Some(s) => match &s.phase {
             Phase::Verifying { done, total } => {
                 let fraction = (*total > 0).then(|| *done as f32 / *total as f32);

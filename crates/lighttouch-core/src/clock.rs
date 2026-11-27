@@ -108,6 +108,46 @@ pub fn local_time() -> LocalTime {
     }
 }
 
+/// A Unix time (seconds) as the host's local wall-clock time.
+#[cfg(unix)]
+pub fn local_time_of(seconds: i64) -> LocalTime {
+    let when = seconds as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&when, &mut tm) };
+    LocalTime {
+        year: tm.tm_year + 1900,
+        month: tm.tm_mon as u32 + 1,
+        day: tm.tm_mday as u32,
+        hour: tm.tm_hour as u32,
+        minute: tm.tm_min as u32,
+        second: tm.tm_sec as u32,
+    }
+}
+
+/// A Unix time (seconds) as the host's local wall-clock time.
+#[cfg(windows)]
+pub fn local_time_of(seconds: i64) -> LocalTime {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    // 100 ns intervals since 1601.
+    let ticks = (seconds.max(0) as u64 + 11_644_473_600) * 10_000_000;
+    let file = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    let mut utc: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    let mut local: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    unsafe {
+        FileTimeToSystemTime(&file, &mut utc);
+        SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local);
+    }
+    LocalTime {
+        year: local.wYear as i32,
+        month: local.wMonth as u32,
+        day: local.wDay as u32,
+        hour: local.wHour as u32,
+        minute: local.wMinute as u32,
+        second: local.wSecond as u32,
+    }
+}
+
 #[cfg(windows)]
 pub fn local_time() -> LocalTime {
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;

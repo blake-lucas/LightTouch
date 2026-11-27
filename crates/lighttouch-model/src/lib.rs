@@ -15,6 +15,7 @@ pub mod real_size;
 pub mod rotation;
 pub mod session;
 pub mod settings;
+mod states;
 pub mod store;
 pub mod task;
 pub mod tilt;
@@ -167,6 +168,9 @@ pub struct Model {
     exports: Channel<Result<PathBuf, String>>,
     /// The error last written to the app log, so each shows there once.
     logged_error: Option<String>,
+    /// Save states (states.rs): the current device's, read when it changes, and a state to load once the running
+    /// session has ended for it.
+    states: states::Cache,
     waker: Waker,
 }
 
@@ -206,6 +210,7 @@ impl Model {
             exporting: false,
             exports: std::sync::mpsc::channel(),
             logged_error: None,
+            states: Default::default(),
             waker,
         };
         remove_old_logs(&model.dirs.logs());
@@ -250,6 +255,9 @@ impl Model {
             if let Some(error) = session.last_error.take() {
                 self.notice = Some((error, Instant::now()));
             }
+        }
+        self.tick_states();
+        if let Some(session) = &mut self.session {
             if let Phase::Ended { clean, dirty, message } = &session.phase {
                 app_log!(
                     "{} ended after {:.0} s: clean={clean} dirty={dirty}{}",
@@ -257,7 +265,7 @@ impl Model {
                     session.started_at.elapsed().as_secs_f64(),
                     if message.is_empty() { String::new() } else { format!(": {message}") }
                 );
-                if !*clean && !message.is_empty() {
+                if !*clean && !message.is_empty() && !session.discarded {
                     self.error = Some(message.clone());
                 }
                 ended = true;
@@ -289,7 +297,7 @@ impl Model {
             self.background.retain(|s| !matches!(s.phase, Phase::Ended { .. }));
             self.refresh();
         }
-        if ended {
+        if ended && !self.state_session_ended() {
             // Keep the ended session around only long enough to report; the record's dirty flag shows the rest.
             self.session = None;
             self.refresh();
@@ -647,6 +655,11 @@ impl Model {
 
     /// Start the selected device. `recover` cold-boots state that was not shut down cleanly.
     pub fn start(&mut self, recover: bool) {
+        self.start_with(recover, None);
+    }
+
+    /// Start the selected device, from a save state of it when one is given (its storage replaces the device's).
+    fn start_with(&mut self, recover: bool, load_state: Option<String>) {
         if self.session_active() || matches!(self.task, Some((Activity::MovingLibrary { .. }, _))) {
             return;
         }
@@ -654,9 +667,12 @@ impl Model {
             self.error = Some("Select a device first".into());
             return;
         };
-        // Hand over newer bundled guest tools; iOS installs them during this boot.
+        // Hand over newer bundled guest tools; iOS installs them during this boot. Not to a save state: it runs the
+        // guest tools it was saved with, and the record's must stay theirs for it to load.
         let tools = GuestTools::new(self.resources.guest_tools());
-        if let Some(pack) = tools.newer_than(device.record.guest_package_path.as_deref(), &device.board, &device.build)
+        if let Some(pack) = tools
+            .newer_than(device.record.guest_package_path.as_deref(), &device.board, &device.build)
+            .filter(|_| load_state.is_none())
         {
             if let Ok(library) = self.library() {
                 match library.set_guest_package(&device.id, &pack) {
@@ -672,7 +688,13 @@ impl Model {
         }
         app_log!(
             "{} {} ({} {} {})",
-            if recover || device.dirty { "recovering" } else { "starting" },
+            if load_state.is_some() {
+                "loading a save state of"
+            } else if recover || device.dirty {
+                "recovering"
+            } else {
+                "starting"
+            },
             device.name,
             device.model,
             device.board,
@@ -707,6 +729,7 @@ impl Model {
                 directory: self.dirs.network().join(&device.id),
                 guest_tools: self.resources.guest_tools(),
             }),
+            load_state,
         };
         match Session::start(options, self.waker.clone()) {
             Ok(session) => {

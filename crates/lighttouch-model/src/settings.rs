@@ -150,6 +150,8 @@ pub struct Settings {
     pub screenshot_button: bool,
     /// Show the Carrier button on every device with a modem (it was each device's own setting in 0.0.15's test builds).
     pub carrier_button: bool,
+    /// Show the States button (save states of the device on screen).
+    pub states_button: bool,
     pub detailed_timing: bool,
     /// Settings → Network. Off by default; a section that doesn't parse or validate is off.
     #[serde(deserialize_with = "crate::network::lenient")]
@@ -196,6 +198,7 @@ impl Default for Settings {
             inspect_button: false,
             screenshot_button: false,
             carrier_button: false,
+            states_button: true,
             detailed_timing: false,
             network: Default::default(),
             rotation: crate::rotation::Rotation::Portrait,

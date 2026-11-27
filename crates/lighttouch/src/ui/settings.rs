@@ -108,6 +108,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.screenshot_button);
                     },
                 );
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::FLOPPY,
+                    "States button",
+                    "Shows the States button beside the device's name and in full screen's More menu: save the running device, and load a save state later to carry on from that moment",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.states_button);
+                    },
+                );
             });
 
             widgets::section(ui, &p, "Audio");

@@ -18,6 +18,7 @@ mod screen_scaling;
 mod settings;
 mod setup;
 mod sidebar;
+mod states;
 mod storage;
 mod store;
 pub mod theme;
@@ -86,6 +87,19 @@ pub enum Dialog {
     Library(lighttouch_model::library_move::Choice),
     /// The folder chosen for the devices isn't there (shown at start).
     MissingLibrary,
+    /// Save states (states.rs): load one over the running device, rename one, delete one.
+    LoadState {
+        id: String,
+        name: String,
+    },
+    RenameState {
+        id: String,
+        name: String,
+    },
+    DeleteState {
+        id: String,
+        name: String,
+    },
 }
 
 pub struct App {
@@ -104,6 +118,7 @@ pub struct App {
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
     pub carrier: carrier::CarrierUi,
+    pub states_ui: states::StatesUi,
     pub screen_scaling: screen_scaling::ScreenScalingState,
     /// Where the device page last put the device's room within the page: left, top, right and bottom insets in
     /// points. The Screen scaling preview predicts the device view from it.
@@ -413,6 +428,7 @@ impl App {
             inspector: None,
             controller: controller::ControllerUi::default(),
             carrier: carrier::CarrierUi::default(),
+            states_ui: Default::default(),
             screen_scaling: Default::default(),
             device_view_insets: None,
             paused_for_hidden: false,
@@ -891,6 +907,15 @@ impl App {
                             close = true;
                         }
                     });
+                }
+                Dialog::LoadState { id, name } => close = states::load_dialog(self, ui, &id, &name),
+                Dialog::DeleteState { id, name } => close = states::delete_dialog(self, ui, &id, &name),
+                Dialog::RenameState { id, mut name } => {
+                    if states::rename_dialog(self, ui, &id, &mut name) {
+                        close = true;
+                    } else {
+                        self.dialog = Some(Dialog::RenameState { id, name });
+                    }
                 }
                 Dialog::CarrierCall { mut number } => {
                     if carrier::call_dialog(self, ui, &mut number) {

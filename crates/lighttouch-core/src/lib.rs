@@ -15,7 +15,9 @@ pub mod paths;
 pub mod protocol;
 pub mod runtime;
 
-pub use clock::{LocalTime, local_date, local_time, monotonic_ns, process_cpu_ns, process_resident_bytes};
+pub use clock::{
+    LocalTime, local_date, local_time, local_time_of, monotonic_ns, process_cpu_ns, process_resident_bytes,
+};
 pub use ffi::{Error, Result, status_name};
 pub use lighttouch_sys as sys;
 
