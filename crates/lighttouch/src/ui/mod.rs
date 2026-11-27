@@ -87,12 +87,8 @@ pub enum Dialog {
     Library(lighttouch_model::library_move::Choice),
     /// The folder chosen for the devices isn't there (shown at start).
     MissingLibrary,
-    /// Save states (states.rs): load one over the running device, rename one, delete one.
+    /// Save states (states.rs): load one over the running device, delete one.
     LoadState {
-        id: String,
-        name: String,
-    },
-    RenameState {
         id: String,
         name: String,
     },
@@ -910,13 +906,6 @@ impl App {
                 }
                 Dialog::LoadState { id, name } => close = states::load_dialog(self, ui, &id, &name),
                 Dialog::DeleteState { id, name } => close = states::delete_dialog(self, ui, &id, &name),
-                Dialog::RenameState { id, mut name } => {
-                    if states::rename_dialog(self, ui, &id, &mut name) {
-                        close = true;
-                    } else {
-                        self.dialog = Some(Dialog::RenameState { id, name });
-                    }
-                }
                 Dialog::CarrierCall { mut number } => {
                     if carrier::call_dialog(self, ui, &mut number) {
                         close = true;
@@ -1052,6 +1041,7 @@ impl eframe::App for App {
                 }
             });
         }
+        states::panel(self, &ctx);
         self.dialogs(&ctx);
         self.notices(&ctx);
         controller::window(self, &ctx);

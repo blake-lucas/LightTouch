@@ -361,6 +361,8 @@ struct lt_runtime {
     std::string guest_package_sha256;
     uint32_t headphones = 0;
     std::unique_ptr<lt::states::Load> load;
+    // The saved storage's bytes, counted ahead of the machine's in a load's progress.
+    uint64_t load_storage_bytes = 0;
     std::thread loader;
     std::mutex progress_mutex;
     lt_state_progress progress{sizeof(lt_state_progress), LT_ABI_VERSION, 0, 0, {}, 0, 0};
@@ -402,8 +404,16 @@ struct lt_runtime {
         progress.done = done;
         progress.total = total;
     }
+    // One bar for the whole load, which never goes back: the saved storage first, then the machine.
     static int load_observer(void *opaque, const char *phase, uint64_t done, uint64_t total) {
-        static_cast<lt_runtime *>(opaque)->set_progress(phase, done, total, true);
+        auto *r = static_cast<lt_runtime *>(opaque);
+        if (strcmp(phase, "restoring") == 0) {
+            const auto *machine = r->load->reader->find("machine.state");
+            r->load_storage_bytes = total;
+            r->set_progress(phase, done, total + (machine ? machine->size : 0), true);
+        } else {
+            r->set_progress(phase, r->load_storage_bytes + done, r->load_storage_bytes + total, true);
+        }
         return 0;
     }
     void load_failed(const std::string &why) {

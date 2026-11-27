@@ -86,9 +86,6 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                 if widgets::icon_button_sized(ui, &p, icons::BAG, "Legacy Store", 40.0, has_device).clicked() {
                     app.page = super::Page::Store;
                 }
-                if super::states::wants_button(app) {
-                    super::states::header_button(app, ui);
-                }
                 super::store::queue_button(app, ui);
                 error_chip(app, ui);
             });
@@ -326,7 +323,12 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     let show_inspect = app.model.settings.inspect_button;
     let show_screenshot = app.model.settings.screenshot_button;
     let show_carrier = super::carrier::wants_dock_button(app);
-    let count = 6.0 + show_screenshot as u8 as f32 + show_inspect as u8 as f32 + show_carrier as u8 as f32;
+    let show_states = super::states::wants_button(app);
+    let count = 6.0
+        + show_screenshot as u8 as f32
+        + show_inspect as u8 as f32
+        + show_carrier as u8 as f32
+        + show_states as u8 as f32;
     let width = count * 72.0 + 32.0;
     let dock = Rect::from_center_size(area.center() - vec2(0.0, 6.0), vec2(width, 70.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(dock), |ui| {
@@ -375,6 +377,9 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                             app.inspector = Some(super::inspector::InspectorState::new(snapshot, paused));
                             app.page = Page::Inspector;
                         }
+                    }
+                    if show_states {
+                        super::states::dock_button(app, ui);
                     }
                     if widgets::dock_button(ui, &p, icons::POWER, stop_label, true, Some(theme::DANGER)).clicked()
                         && !restoring

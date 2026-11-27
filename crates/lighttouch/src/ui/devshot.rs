@@ -2,7 +2,7 @@
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
 //! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device (`LIGHTTOUCH_UI_FULLSCREEN=1` full screen). `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
-//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_STATES=1` the States menu, `LIGHTTOUCH_UI_ERROR=text` shows an error,
+//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_STATES=1` the States panel, `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
 //! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
@@ -183,7 +183,14 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
         }
     }
     states_tick(app);
+    // LIGHTTOUCH_UI_SHOT_RESTORING=FRACTION: the shot is taken once a state's load passes that far (its overlay).
+    let restoring_at = std::env::var("LIGHTTOUCH_UI_SHOT_RESTORING").ok().and_then(|v| v.parse::<f32>().ok());
+    let restored = app.model.restoring().is_some()
+        && app.model.state_job().is_some_and(|j| j.total > 0 && Some(j.fraction()) >= restoring_at);
     let Some(shot) = &mut app.dev_shot else { return };
+    if restoring_at.is_some() && !shot.requested {
+        shot.at = if restored { Instant::now() } else { Instant::now() + Duration::from_secs(3600) };
+    }
     if shot.install.is_some() && app.model.store.guest_ready() {
         let path = shot.install.take().unwrap();
         eprintln!("install: queueing {}", path.display());

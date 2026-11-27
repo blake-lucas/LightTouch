@@ -38,7 +38,7 @@ engine build and guest tools; anything else is refused with a plain message. Exp
 deleting the device deletes them. An iPod touch 2G prepared before the NAND container writes a whole copy of its
 base's chip files in place (state/nand with geometry.json nand-xor-blank-v2): its states keep only the 1 MiB chunks
 that differ from the base, which a load reads back from the base (a fresh boot's state went from ~1.8 GB to the size of
-what it changed). A load into a running device shows the state's picture with its progress, not a stop and a boot.
+what it changed). A load into a running device shows the state's picture greyed out with one bar and percentage for the whole load (storage, then machine), not a stop and a boot.
 
 ## What the overlay's "write" figure measures
 

@@ -45,7 +45,7 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("states_sheet")) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-            Text("Save states", style = MaterialTheme.typography.titleMedium)
+            Text("States", style = MaterialTheme.typography.titleMedium)
             Text(device?.name ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
             states.job?.let { job ->
@@ -61,11 +61,10 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
             }
             if (!running) Text("Start the device to save its state.", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider()
-            if (states.states.isEmpty()) Text("No save states yet. Save one while the device runs, and load it later to carry on from that moment.",
+            Spacer(Modifier.height(14.dp))
+            if (states.states.isEmpty()) Text("No saved states yet. Save one while the device runs; loading it later takes the device back to that moment.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
-            LazyColumn(Modifier.heightIn(max = 460.dp)) {
+            LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(states.states, key = { it.id }) { state ->
                     StateRow(states, state, canLoad = states.job == null && host.restoring == null && host.shownStatus != "starting" && host.shownStatus != "stopping",
                         onLoad = { if (running) loading = state else { host.loadState(state); onDismiss() } },
@@ -106,20 +105,26 @@ internal fun StatesSheet(host: GuestHost, onDismiss: () -> Unit) {
 @Composable
 private fun StateRow(states: SaveStatesController, state: SaveStateSummary, canLoad: Boolean, onLoad: () -> Unit,
                      onRename: () -> Unit, onDelete: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        val height = 72.dp
-        val width = if (state.width > 0 && state.height > 0) height * (state.width.toFloat() / state.height) else height * 0.66f
+    // A card per state, as the desktop's panel: its screen at the device's shape, the whole name (two lines at most),
+    // when and how big, and Load as the main action.
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        val height = 96.dp
+        val width = if (state.width > 0 && state.height > 0) height * (state.width.toFloat() / state.height).coerceAtMost(1.5f) else height * 0.66f
         val bitmap = remember(state.thumbnail) { states.thumbnail(state) }
-        Box(Modifier.size(width, height).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
+        Box(Modifier.size(width, height).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
             if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(state.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(state.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text("${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(state.createdMs))} · ${size(state.bytes)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onLoad, enabled = canLoad, modifier = Modifier.testTag("load_state")) { Text("Load") }
+                Button(onClick = onLoad, enabled = canLoad, contentPadding = PaddingValues(horizontal = 18.dp),
+                    modifier = Modifier.height(36.dp).testTag("load_state")) { Text("Load") }
+                Spacer(Modifier.width(4.dp))
                 IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, "Rename", Modifier.size(18.dp)) }
                 IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) }
             }
@@ -132,7 +137,8 @@ private fun size(bytes: Long): String =
 
 /**
  * A save state loading into the device on screen (GuestHost.restoring): the state's picture, its saved screen, where the
- * guest's frames go, with a thin bar of the load's progress, until the state runs. No boot and no stopped screen show.
+ * guest's frames go, greyed out with the load's progress and percentage in the middle, until the state runs. No boot and
+ * no stopped screen show.
  */
 @Composable
 internal fun RestoringOverlay(host: GuestHost, modifier: Modifier = Modifier) {
@@ -140,9 +146,21 @@ internal fun RestoringOverlay(host: GuestHost, modifier: Modifier = Modifier) {
     val bitmap = remember(state.thumbnail) { host.saveStates.thumbnail(state) }
     Box(modifier.background(Color.Black).testTag("restoring_state")) {
         if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-        val fraction = host.saveStates.job?.fraction
-        val bar = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).fillMaxWidth(0.4f).height(3.dp).clip(RoundedCornerShape(2.dp))
-        if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = bar, color = Color.White, trackColor = Color.White.copy(alpha = 0.25f))
-        else LinearProgressIndicator(modifier = bar, color = Color.White, trackColor = Color.White.copy(alpha = 0.25f))
+        // Greyed out, with the load's progress in the middle on a dark plate that keeps it readable over any picture.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+        // The furthest the load has got: between its steps (the old session ending, the new engine starting) the job
+        // reports no fraction for a moment, and the bar holds rather than going back to sliding.
+        var furthest by remember(state.id) { mutableStateOf<Float?>(null) }
+        host.saveStates.job?.fraction?.let { f -> if (f > (furthest ?: -1f)) furthest = f }
+        val fraction = furthest
+        Column(Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = 0.65f))
+            .padding(horizontal = 20.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Restoring…" + (fraction?.let { " ${(it * 100).toInt()}%" } ?: ""), color = Color.White,
+                style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("restoring_progress"))
+            Spacer(Modifier.height(10.dp))
+            val bar = Modifier.width(180.dp).height(6.dp).clip(RoundedCornerShape(3.dp))
+            if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = bar, trackColor = Color.White.copy(alpha = 0.2f), drawStopIndicator = {})
+            else LinearProgressIndicator(modifier = bar, trackColor = Color.White.copy(alpha = 0.2f))
+        }
     }
 }

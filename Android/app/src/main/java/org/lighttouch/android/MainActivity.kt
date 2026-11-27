@@ -340,7 +340,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                         firmwareState?.let { pollPreparation(it) }
                         firmwareFailure?.let { error = "Firmware worker unavailable: $it" }
                     }
-                    handler.postDelayed(this, 500)
+                    // Quicker while a state saves or loads, so its bar and percentage move (a small load takes ~1 s).
+                    handler.postDelayed(this, if (saveStates.job != null || restoring != null) 120 else 500)
                 }
             }
         }
