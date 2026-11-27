@@ -106,6 +106,14 @@ impl Guest {
         Target::of(&product, &ios).ok_or_else(|| Error(format!("App installs don't support this device ({product}).")))
     }
 
+    /// Lockdown's whole default domain (`GetValue` with no key): the identity iOS reports (serial, UDID, ECID, MACs,
+    /// IMEI) among the rest, as an XML property list.
+    pub fn lockdown_values(&mut self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.lockdown.value(None, None)?.to_writer_xml(&mut out).map_err(|e| Error(e.to_string()))?;
+        Ok(out)
+    }
+
     /// Start a service. lockdownd drops a session left idle (as across a long upload); a fresh one recovers it.
     /// When iOS restarts or its USB link drops, the guest comes back under a new usbmux id: wait for it.
     fn service(&mut self, name: &str, timeout: Duration) -> Result<Conn> {
