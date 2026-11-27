@@ -116,24 +116,26 @@ exactly when the guest's flash translation layer (FTL) erases, and that differs 
 
 | Device (Poco F3, 2026-11-26) | Install → uninstall → clean Stop, overlay MiB | Erases |
 | --- | --- | --- |
-| iPod touch 4G 6.1.6, Infinity Blade (610 MB IPA) | 131 → 1909 → 1910 → **326**; again 325 → 1980 → 1981 → **526** (Stop 7 s) | 16 at the uninstall, none in 14 min idle, the rest during iOS's shutdown |
-| same, engine killed after the uninstall | 526 → 2059 → 2062 → killed: 2062 → Recover, Stop (27 s): **294** | the shrink waits for the next clean Stop |
+| iPod touch 4G 6.1.6, Infinity Blade (610 MB IPA) | 131 → 1866 → 1866 → **319**; again 318 → 1934 → 1936 → **514** (Stop 7 s) | 16 at the uninstall, none in 14 min idle, the rest during iOS's shutdown |
+| same, engine killed after the uninstall | 514 → 2011 → 2014 → killed: 2014 → Recover, Stop (27 s): **287** | the shrink waits for the next clean Stop |
 | same, engine killed inside the Stop's erases | 2074 → killed at 1853 → 1796 → Recover (Jetpack Joyride launches) → Stop (7 s): **406** | a burst ~2–4 s into the Stop |
 | iPhone 3GS 5.1.1, the same IPA (refused after its upload and staging) | 80 → 1827 → 1830 → **482** (Stop 6 s) | during the shutdown |
 | Desktop (Linux), iPod touch 4G 6.1.6, each step its own `lighttouch run`, Infinity Blade | killed mid-install earlier: 1463 → Recover, Stop: **405**; install, Stop: 1385; uninstall, Stop: **284**; boot, Stop: 306 | as on the phone |
+| iPhone 4 6.1.3, Infinity Blade | 114 → 1851 → 1857 → **515** (Stop 7 s); again → **586** | during the shutdown |
+| iPad 5.1.1, Infinity Blade (617 MB IPA) | 42 → 1795 → 1794 → **410** (Stop 6 s) | during the shutdown |
 | iPod touch 3G 4.2.1, Real Racing (143 MB IPA, already installed: replaced, then removed) | 48 → 325 → 307 → **92** (Stop 3 s) | 352 at the install, 288 at the uninstall, the rest during the shutdown |
 | iPod touch 2G 3.1.3, Asphalt 5 (281 MB IPA) | 31 → 810 → 810 → **810**; again 810 → 1567 → **1567** (Stop 3 s) | none |
 | iPhone 5 10.3.4, Infinity Blade | 1148 → 2763 → 2775 → **2778** (Stop 19 s); next boot + 8 min + Stop: 2819; again 2819 → 4426 → 4438 → **4440** (Stop 20 s) | 6–24 a session |
 
 - **yaFTL (A4 boards, iOS 4–6)** erases the superblocks it no longer needs while iOS shuts down, so a clean Stop
   already gives the space back; after a killed session (Android ending the app) the next clean Stop does.
-  What stays (~200 MB a cycle above the first size here) is stale pages in superblocks that still hold live data:
-  415 MB of the 520 MB overlay after the second 4G cycle, by an offline read of the FTL's page spares. Only yaFTL's
+  What stays (287–578 MiB after a Stop here, against 131 before the first install; no steady growth) is stale pages in
+  superblocks that still hold live data: 415 MB of the 520 MB overlay after the second 4G cycle, by an offline read of the FTL's page spares. Only yaFTL's
   own garbage collection moves those, when it runs short of free blocks.
 - **The 2G's FTL (iOS 3.1.3) and the iPhone 5's (iOS 10.3.4)** didn't erase what an uninstall freed, at the
   uninstall, idle, Stop or the next boot: each install/uninstall cycle adds its full size. Presumably they reuse
   stale blocks only once their free blocks run out, so the overlay is bounded by the flash size (2G 8 GiB), not
-  by what iOS shows as used. Untested: iPhone 4 6.1.3 and iPad 5.1.1 (yaFTL, expected to shrink like the 4G), and the A4-family boards on iOS 3.
+  by what iOS shows as used. Not measured: the A4-family boards on iOS 3 (the note says "not given back" there).
   The Details page of both apps says which way a device goes (`freed_space_returns_at_stop`, Android `freedSpaceReturnsAtStop`).
 - **Rewriting the overlay** (a `qemu-img convert`-style compaction) would gain little: freed clusters are already
   holes, and allocated exceeds referenced by 0–1% on the seven standard devices.
