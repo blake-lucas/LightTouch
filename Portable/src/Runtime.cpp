@@ -1394,6 +1394,10 @@ lt_status lt_runtime_copy_frame(lt_runtime *r, void *p, uint64_t capacity, uint6
         lt::require(r && p && seq, "invalid frame output");
         lt::abi(out);
         lt::require(capacity <= SIZE_MAX, "frame capacity overflow");
+        // While a state loads, the machine isn't the state's yet: whatever its display shows (a boot logo) never
+        // reaches the screen, which keeps the last frame until the state's first one.
+        if (r->load && r->state_busy)
+            throw lt::Failure(LT_AGAIN, "a state is loading");
         QemuIosPortableFrame f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
         int result = r->engine->frame(p, size_t(capacity), *seq, &f);
         if (result == QEMU_IOS_NO_FRAME)
@@ -1410,6 +1414,8 @@ lt_status lt_runtime_frame_metadata(lt_runtime *r, uint64_t since, lt_frame_info
     const auto status = lt::guard(e, [&] {
         lt::require(r, "invalid frame metadata runtime");
         lt::abi(out);
+        if (r->load && r->state_busy)
+            return; // not ready: as lt_runtime_copy_frame
         const auto result = lt::read_frame_metadata(r->shared, since, *out);
         lt::require(result != lt::MetadataRead::invalid, "invalid published frame metadata", LT_ENGINE);
         ready = result == lt::MetadataRead::fresh;

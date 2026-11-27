@@ -11,6 +11,8 @@ namespace {
 constexpr uint32_t local_signature = 0x04034b50, central_signature = 0x02014b50, descriptor_signature = 0x08074b50;
 constexpr uint32_t index_magic = 0x435a544c; // "LTZC"
 constexpr uint32_t zero_flag = 0x80000000u;
+constexpr uint32_t base_flag = 0x40000000u; // the chunk is the base file's (Writer::file's base): no data
+constexpr uint32_t size_mask = 0x3fffffffu;
 constexpr const char *index_name = "chunks.bin";
 constexpr const char *damaged = "This save state is damaged or incomplete";
 
@@ -155,11 +157,12 @@ struct Writer::Item {
     fs::path path;             // or a file's range
     uint64_t offset = 0, length = 0;
     bool hole = false;
+    fs::path base; // the file's base, to leave out a chunk equal to it
 };
 
 struct Writer::Pending {
     Item item;
-    bool claimed = false, ready = false, zero = false;
+    bool claimed = false, ready = false, zero = false, base = false;
     std::vector<uint8_t> output;
     uint32_t crc = 0;
 };
@@ -222,13 +225,13 @@ void Writer::begin(const std::string &name) {
     in_entry = true;
     chunk.clear();
     chunk.reserve(chunk_bytes);
-    submit({Item::header, name, {}, {}, 0, 0, false});
+    submit({Item::header, name, {}, {}, 0, 0, false, {}});
 }
 
 void Writer::flush_chunk() {
     if (chunk.empty())
         return;
-    Item item{Item::chunk, {}, std::move(chunk), {}, 0, 0, false};
+    Item item{Item::chunk, {}, std::move(chunk), {}, 0, 0, false, {}};
     item.length = item.data.size();
     submit(std::move(item));
     chunk = {};
@@ -252,10 +255,10 @@ void Writer::end() {
     require(in_entry, "no zip entry open");
     flush_chunk();
     in_entry = false;
-    submit({Item::trailer, {}, {}, {}, 0, 0, false});
+    submit({Item::trailer, {}, {}, {}, 0, 0, false, {}});
 }
 
-void Writer::file(const std::string &name, const fs::path &path) {
+void Writer::file(const std::string &name, const fs::path &path, const fs::path &base) {
     Fd in(lt::os::open(path.c_str(), O_RDONLY | O_CLOEXEC));
     io(in.n >= 0, "open " + path.string());
     lt::os::Stat st{};
@@ -263,7 +266,7 @@ void Writer::file(const std::string &name, const fs::path &path) {
     const uint64_t size = uint64_t(st.st_size);
     const auto ranges = size ? file_data_ranges(in.n, int64_t(size)) : std::vector<std::pair<int64_t, int64_t>>{};
     require(!in_entry, "zip entry already open");
-    submit({Item::header, name, {}, {}, 0, 0, false});
+    submit({Item::header, name, {}, {}, 0, 0, false, {}});
     for (uint64_t at = 0; at < size; at += chunk_bytes) {
         const uint64_t length = std::min<uint64_t>(chunk_bytes, size - at);
         bool hole = true;
@@ -272,14 +275,14 @@ void Writer::file(const std::string &name, const fs::path &path) {
                 hole = false;
                 break;
             }
-        submit({Item::chunk, {}, {}, path, at, length, hole});
+        submit({Item::chunk, {}, {}, path, at, length, hole, base});
     }
-    submit({Item::trailer, {}, {}, {}, 0, 0, false});
+    submit({Item::trailer, {}, {}, {}, 0, 0, false, {}});
 }
 
 void Writer::work() {
     Deflater deflater;
-    std::vector<uint8_t> buffer(chunk_bytes);
+    std::vector<uint8_t> buffer(chunk_bytes), base(chunk_bytes);
     for (;;) {
         std::shared_ptr<Pending> job;
         {
@@ -333,7 +336,23 @@ void Writer::work() {
                 }
             }
             job->zero = item.hole || all_zero(data, size_t(item.length));
-            job->output = deflater.chunk(data, size_t(item.length));
+            if (!job->zero && !item.base.empty()) {
+                // Equal to the base's bytes here: the reader takes them from the base.
+                Fd from(lt::os::open(item.base.c_str(), O_RDONLY | O_CLOEXEC));
+                uint64_t done = 0;
+                while (from.n >= 0 && done < item.length) {
+                    ssize_t n = lt::os::pread(from.n, base.data() + done, size_t(item.length - done),
+                                              int64_t(item.offset + done));
+                    if (n < 0 && errno == EINTR)
+                        continue;
+                    if (n <= 0)
+                        break;
+                    done += uint64_t(n);
+                }
+                job->base = done == item.length && std::memcmp(base.data(), data, size_t(item.length)) == 0;
+            }
+            if (!job->base)
+                job->output = deflater.chunk(data, size_t(item.length));
             job->crc = uint32_t(crc32(0, data, uInt(item.length)));
             job->item.data = {};
         } catch (...) {
@@ -396,7 +415,9 @@ void Writer::output() {
                 out_offset += next->output.size();
                 current.crc = uint32_t(crc32_combine(current.crc, next->crc, static_cast<z_off_t>(item.length)));
                 current.size += item.length;
-                current.chunks.push_back(uint32_t(next->output.size()) | (next->zero ? zero_flag : 0));
+                current.chunks.push_back(uint32_t(next->output.size()) | (next->base   ? base_flag
+                                                                          : next->zero ? zero_flag
+                                                                                       : 0));
                 if (progress)
                     progress(item.length);
             } else {
@@ -596,7 +617,7 @@ Reader::Reader(int fd) : fd(fd) {
             uint64_t total = 0;
             for (uint32_t k = 0; k < chunks; ++k) {
                 sizes[k] = get32(&bytes[p + size_t(k) * 4]);
-                total += sizes[k] & ~zero_flag;
+                total += sizes[k] & size_mask;
             }
             p += size_t(chunks) * 4;
             require(chunks == (it->size + chunk_bytes - 1) / chunk_bytes && total + 2 == it->compressed, damaged,
@@ -616,12 +637,19 @@ const Entry *Reader::find(const std::string &name) const {
 namespace {
 // The entry's chunks inflated on every core, handed to sink in order (zero chunks flagged, their bytes still given).
 void read_chunks(int fd, const Entry &e, const std::function<void(const uint8_t *, size_t, bool)> &sink,
-                 const Progress &progress) {
+                 const Progress &progress, const fs::path &base = {}) {
+    int base_fd = -1;
+    if (std::any_of(e.chunks.begin(), e.chunks.end(), [](uint32_t c) { return (c & base_flag) != 0; })) {
+        require(!base.empty(), damaged, LT_IO);
+        base_fd = lt::os::open(base.c_str(), O_RDONLY | O_CLOEXEC);
+        io(base_fd >= 0, "open " + base.string());
+    }
+    Fd base_owner(base_fd);
     const size_t count = e.chunks.size();
     std::vector<uint64_t> offsets(count);
     for (size_t k = 0, at = 0; k < count; ++k) {
         offsets[k] = e.data + at;
-        at += e.chunks[k] & ~zero_flag;
+        at += e.chunks[k] & size_mask;
     }
     struct Slot {
         std::vector<uint8_t> data;
@@ -653,6 +681,9 @@ void read_chunks(int fd, const Entry &e, const std::function<void(const uint8_t 
                 const size_t length = size_t(std::min<uint64_t>(chunk_bytes, e.size - uint64_t(k) * chunk_bytes));
                 slot.data.resize(length);
                 if (e.chunks[k] & zero_flag) {
+                    slot.crc = uint32_t(crc32(0, slot.data.data(), uInt(length)));
+                } else if (e.chunks[k] & base_flag) {
+                    read_fully(base_fd, slot.data.data(), length, uint64_t(k) * chunk_bytes);
                     slot.crc = uint32_t(crc32(0, slot.data.data(), uInt(length)));
                 } else {
                     in.resize(e.chunks[k]);
@@ -759,7 +790,7 @@ void Reader::read(const Entry &e, const std::function<void(const uint8_t *, size
         read_chunks(fd, e, adapt, progress);
 }
 
-void Reader::extract(const Entry &e, const fs::path &path, Progress progress) const {
+void Reader::extract(const Entry &e, const fs::path &path, Progress progress, const fs::path &base) const {
     Fd out(lt::os::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     io(out.n >= 0, "create " + path.string());
     uint64_t at = 0;
@@ -780,7 +811,7 @@ void Reader::extract(const Entry &e, const fs::path &path, Progress progress) co
     if (e.chunks.empty() && e.size)
         read_stream(fd, e, sink);
     else
-        read_chunks(fd, e, sink, progress);
+        read_chunks(fd, e, sink, progress, base);
     io(lt::os::ftruncate(out.n, int64_t(e.size)) == 0, "size " + path.string());
     io(lt::os::fsync(out.n) == 0, "sync " + path.string());
 }

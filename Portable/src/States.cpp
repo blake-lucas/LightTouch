@@ -134,6 +134,29 @@ void write_file(const fs::path &path, const std::string &bytes) {
 
 std::string json_text(const std::string &s) { return quote(s); }
 
+/*
+ * The base file a storage file is a changed copy of, or empty. An iPod touch 2G prepared before the NAND container
+ * (an image store of chip files, nand-xor-blank-v2) writes a whole copy of its base's chips in place in state/nand
+ * (Storage.cpp, image_store_in_place): a state would carry all of the NAND (~1.8 GB) where only the chunks it changed
+ * differ from the read-only base. An overlay (nand.qcow2) is no copy of the base's file of that name.
+ */
+fs::path base_of(const lt_device *d, const fs::path &file) {
+    std::error_code ec;
+    const fs::path geometry = d->state / "nand" / "geometry.json";
+    if (file.parent_path() != d->state / "nand" || !fs::is_regular_file(geometry, ec))
+        return {};
+    try {
+        const Json g = parse(read_file(geometry, 1 << 16));
+        const auto *format = g.find("storage_format");
+        if (!format || format->kind != Json::String || format->string() != "nand-xor-blank-v2" || g.find("container"))
+            return {};
+    } catch (const std::exception &) {
+        return {};
+    }
+    const fs::path base = d->base / "nand" / file.filename();
+    return fs::is_regular_file(fs::symlink_status(base, ec)) ? base : fs::path{};
+}
+
 // The storage files a save takes: state/nand's regular files (the overlay), then the others that exist.
 std::vector<std::pair<std::string, fs::path>> storage(const lt_device *d) {
     std::vector<std::pair<std::string, fs::path>> files;
@@ -270,7 +293,7 @@ void save(lt_device *d, SaveRequest &request, Observer &observer, lt_state_info 
                 zip.end();
                 // The guest is stopped: its storage agrees with the machine just written.
                 for (const auto &f : files)
-                    zip.file(f.first, f.second);
+                    zip.file(f.first, f.second, base_of(d, f.second));
                 // Every chunk read before the guest may write again.
                 zip.finish();
                 resume();
@@ -360,7 +383,9 @@ void restore_storage(Load &load, lt_device *d, Observer &observer) {
     try {
         observer.begin("restoring", total);
         for (const auto *e : entries)
-            load.reader->extract(*e, stage / e->name.substr(6), [&](uint64_t n) { observer.add(n); });
+            load.reader->extract(
+                *e, stage / e->name.substr(6), [&](uint64_t n) { observer.add(n); },
+                e->name.rfind("state/nand/", 0) == 0 ? d->base / "nand" / e->name.substr(11) : fs::path{});
         sync_dir(stage / "nand");
         sync_dir(stage);
         // Swap in: the old overlay goes whole (a file the state lacks would belong to other RAM).

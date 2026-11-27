@@ -6,6 +6,10 @@
 // a stream (the engine's machine state) or come from a file, whose holes are never read. Output stays in order however
 // the chunks finish. Each entry's chunk sizes go into a last entry, "chunks.bin", so the reader inflates an entry's
 // chunks in parallel too, and writes all-zero chunks as holes.
+//
+// A file may be written against a base file (the device's read-only base, of which it is a copy changed in place): a
+// chunk equal to the base's at the same offset is only marked in the index, and the reader takes it from the base
+// again. Such an entry's deflate stream lacks those chunks, so only this reader, given the base, can read it.
 #include "Internal.hpp"
 #include <condition_variable>
 #include <deque>
@@ -31,8 +35,9 @@ class Writer {
     void begin(const std::string &name);
     void write(const void *data, size_t size);
     void end();
-    // A whole entry from a file, its holes as zero chunks. Throws if it shrinks meanwhile.
-    void file(const std::string &name, const fs::path &path);
+    // A whole entry from a file, its holes as zero chunks. Throws if it shrinks meanwhile. With base, the chunks equal
+    // to base's are left out (see above).
+    void file(const std::string &name, const fs::path &path, const fs::path &base = {});
     // The chunk index and the central directory; the fd then holds a complete zip.
     void finish();
     uint64_t written() const { return out_offset; }
@@ -80,8 +85,9 @@ class Reader {
     const std::vector<Entry> &entries() const { return list; }
     // An entry's bytes, in order, to sink (which may throw to stop). Inflated on every core, checked against its CRC.
     void read(const Entry &, const std::function<void(const uint8_t *, size_t)> &sink, Progress progress = {}) const;
-    // An entry into a new file (O_EXCL), all-zero chunks left as holes, synced.
-    void extract(const Entry &, const fs::path &path, Progress progress = {}) const;
+    // An entry into a new file (O_EXCL), all-zero chunks left as holes, synced. base: the file its base chunks are
+    // taken from (required when it has any).
+    void extract(const Entry &, const fs::path &path, Progress progress = {}, const fs::path &base = {}) const;
 
   private:
     int fd;
