@@ -484,6 +484,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             override fun stop() = stopGuest()
             override fun scaling(method: ScreenScaling, multiple: Int) { settings.scaling = method; settings.integerScale = multiple; applySettings() }
             override fun fullscreen(on: Boolean) = navigate(if (on) Screen.FULLSCREEN else Screen.HOME)
+            override val saveStates get() = this@MainActivity.saveStates
+            override val recordId get() = this@MainActivity.selected?.id
+            override fun saveState() = this@MainActivity.saveState()
+            override fun loadState(state: SaveStateSummary) = this@MainActivity.loadState(state)
         }, File(filesDir, "bench"))
     }
     private fun benchIntent(intent: Intent?) {
