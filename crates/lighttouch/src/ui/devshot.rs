@@ -182,6 +182,7 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
             }
         }
     }
+    states_tick(app);
     let Some(shot) = &mut app.dev_shot else { return };
     if shot.install.is_some() && app.model.store.guest_ready() {
         let path = shot.install.take().unwrap();
@@ -224,4 +225,33 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
         });
     }
     ctx.request_repaint_after(Duration::from_millis(100));
+}
+
+/// LIGHTTOUCH_UI_SAVE_AT=SECONDS saves the running device once it has run that long (as the States menu does);
+/// LIGHTTOUCH_UI_LOAD_AT=SECONDS then loads the newest state into it while it runs. Progress and outcomes go to stderr.
+fn states_tick(app: &mut App) {
+    static SAVED: AtomicBool = AtomicBool::new(false);
+    static LOADED: AtomicBool = AtomicBool::new(false);
+    let at = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<u64>().ok()).map(Duration::from_secs);
+    let ran = app.model.session.as_ref().map(|s| s.started_at.elapsed());
+    if let (Some(save), Some(ran)) = (at("LIGHTTOUCH_UI_SAVE_AT"), ran)
+        && ran > save
+        && app.model.can_save_state()
+        && !SAVED.swap(true, Ordering::AcqRel)
+    {
+        eprintln!("states: saving");
+        app.model.save_state(None);
+    }
+    if let (Some(load), Some(ran)) = (at("LIGHTTOUCH_UI_LOAD_AT"), ran)
+        && ran > load
+        && SAVED.load(Ordering::Acquire)
+        && app.model.can_load_state()
+        && !LOADED.swap(true, Ordering::AcqRel)
+    {
+        let newest = app.model.states().first().map(|s| s.id.clone());
+        eprintln!("states: loading {newest:?} into the running device");
+        if let Some(id) = newest {
+            app.model.load_state(&id);
+        }
+    }
 }
