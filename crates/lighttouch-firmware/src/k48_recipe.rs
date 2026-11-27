@@ -134,17 +134,15 @@ impl K48Board {
     fn die_id(&self) -> String {
         self.ident.as_ref().and_then(|i| i.die_id()).map(|d| d.join(":")).unwrap_or_default()
     }
-    /// What every boot of the device carries (the lock's "machine"): the modem's IMEI, the recipe's pinned clock and
-    /// K48's BCM4329 CIS address.
+    /// What every boot of the device carries (the lock's "machine"): the modem's IMEI and SIM, the recipe's pinned
+    /// clock and the Wi-Fi card's CIS address. The card gets the unit's own MAC on every board, as the DT does; without
+    /// it (the iPod touch 3G and 4G, iPhone 3GS and 4 before random seeds) the engine's placeholder, one per board.
     fn machine_options(&self) -> BTreeMap<String, String> {
         let mut m = BTreeMap::new();
         if let Some(i) = &self.ident {
-            if let Some(imei) = i.get("imei") {
-                m.insert("imei".into(), imei.to_string());
-            }
-            if self.board == Hardware::K48 {
-                if let Some(mac) = i.get("wifi-mac") {
-                    m.insert("wifi-mac".into(), mac.to_string());
+            for key in ["imei", "imsi", "iccid", "wifi-mac"] {
+                if let Some(value) = i.get(key) {
+                    m.insert(key.into(), value.to_string());
                 }
             }
         }

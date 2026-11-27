@@ -259,7 +259,8 @@ int main() {
     };
     std::string n90base = prepared("n90",
         "{\"format\":1,\"board\":\"n90ap\",\"build\":\"8C148\",\"boot_strategy\":\"kboot\",\"machine\":"
-        "{\"imei\":\"012345678901234\"},\"outputs\":{\"nor\":null,\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" +
+        "{\"imei\":\"012345678901234\",\"imsi\":\"001011234567890\",\"iccid\":\"89001011234567890121\","
+        "\"wifi-mac\":\"02:12:34:56:78:9a\"},\"outputs\":{\"nor\":null,\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" +
             hash(listing) + "\",\"pages\":1},\"kboot\":{\"path\":\"kboot.bin\",\"sha256\":\"" + hash(iboot) + "\"}}}",
         {{"kboot.bin", iboot}});
     std::string n90state = (root / "n90state").string();
@@ -271,10 +272,14 @@ int main() {
     assert(args.find("kboot=" + n90base + "/kboot.bin") != std::string::npos);
     assert(args.find("baseband=on") != std::string::npos && args.find("imei=012345678901234") != std::string::npos);
     assert(args.find("nor-rw=") == std::string::npos && args.find("bootrom=") == std::string::npos);
+    assert(args.find("wifi-mac=02:12:34:56:78:9a") != std::string::npos);
+    // The SIM is the modem's, never a machine option.
+    assert(args.find("imsi") == std::string::npos && args.find("iccid") == std::string::npos);
     {
         // The modem starts with the carrier defaults (no record: nothing saved), each -global one argv element.
         std::vector<std::string> all(argv, argv + argc);
         auto has = [&](const std::string &v) { return std::find(all.begin(), all.end(), v) != all.end(); };
+        assert(has("ios-baseband.imsi=001011234567890") && has("ios-baseband.iccid=89001011234567890121"));
         assert(has("ios-baseband.carrier=Light Touch") && has("ios-baseband.mcc-mnc=00101"));
         assert(has("ios-baseband.registered=on") && has("ios-baseband.sim-present=on"));
         assert(has("ios-baseband.signal-dbm=-63") && has("ios-baseband.gps-fix=37.334900,-122.009000,0,0.00,-1.0,5"));

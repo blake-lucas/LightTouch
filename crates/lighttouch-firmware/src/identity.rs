@@ -13,6 +13,11 @@
 //! ```
 //! Fields keep Python's insertion order, which is what makes `json` match. A value is a string or a list of strings
 //! (die-id).
+//!
+//! The seed is all an identity depends on. A preparation without `--seed` gets a random one (`generated_seed`), so no
+//! two prepared devices, here or on anyone else's machine, share a serial, ECID, MAC, IMEI or UDID; the old fixed
+//! "<board>-<build>-default" made every device of one build the same unit. The lock and identity.json record the seed,
+//! and nothing derives a device's identity again after it is prepared.
 use crate::error::Result;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -78,12 +83,50 @@ pub fn a6_udid(serial: &str, ecid: &str, wifi_mac: &str, bt_mac: &str) -> Option
     Some(sha1_hex(&format!("{serial}{ecid}{}{}", wifi_mac.to_lowercase(), bt_mac.to_lowercase())))
 }
 
-/// The IMEI: the synthetic TAC, six digits from the seed, and the Luhn digit.
+/// The random part of a generated seed: 128 bits, as 32 lowercase hex digits.
+const GENERATED_HEX: usize = 32;
+
+/// A new device's seed: "<prefix>-<build>-" and 128 random bits in hex. `--seed` with the same string makes the same
+/// identity again.
+pub fn generated_seed(prefix: &str, build: &str) -> String {
+    use rand_core::{OsRng, RngCore};
+    let mut b = [0u8; GENERATED_HEX / 2];
+    OsRng.fill_bytes(&mut b);
+    format!("{prefix}-{build}-{}", hex::encode(b))
+}
+
+/// A seed `generated_seed` made (its last part 32 lowercase hex digits), as opposed to a fixed one ("-default", a
+/// test's): its IMEI takes twelve digits from the seed instead of six.
+pub fn is_generated(seed: &str) -> bool {
+    seed.rsplit_once('-').is_some_and(|(_, tail)| {
+        tail.len() == GENERATED_HEX && tail.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    })
+}
+
+/// The IMEI: the Luhn digit after fourteen. A fixed seed's are the synthetic TAC and six digits from the seed (as
+/// devices prepared before random seeds have it); a generated seed's keep the TAC's test reporting body "00" and take
+/// the other twelve from the seed, since six digits (a million IMEIs) would repeat among a thousand phones.
 pub fn imei(seed: &str) -> String {
     let h = sha256(&format!("imei:{seed}"));
-    let body: String = SYNTHETIC_TAC.to_string() + &h[..6].iter().map(|b| (b % 10).to_string()).collect::<String>();
+    let digits = |n: usize| h[..n].iter().map(|b| (b % 10).to_string()).collect::<String>();
+    let body = if is_generated(seed) { format!("00{}", digits(12)) } else { SYNTHETIC_TAC.to_string() + &digits(6) };
     let check = luhn(&body);
     format!("{body}{check}")
+}
+
+/// A generated seed's SIM: the IMSI (the 3GPP test network 001-01, which the modem offers, and ten digits from the
+/// seed) and the 20-digit ICCID (89, the same 001-01, twelve digits from the seed and the Luhn digit). None for a fixed
+/// seed, whose modem keeps its default SIM (qemu-ios ios_baseband.c: 001010000000001, 89001010000000000001).
+pub fn sim(seed: &str) -> Option<(String, String)> {
+    if !is_generated(seed) {
+        return None;
+    }
+    let digits = |tag: &str, n: usize| -> String {
+        sha256(&format!("{tag}:{seed}"))[..n].iter().map(|b| (b % 10).to_string()).collect()
+    };
+    let iccid = format!("8900101{}", digits("iccid", 12));
+    let check = luhn(&iccid);
+    Some((format!("00101{}", digits("imsi", 10)), format!("{iccid}{check}")))
 }
 
 /// The Luhn check digit of a digit string (an IMEI's fifteenth).
@@ -213,12 +256,17 @@ impl UnitIdentity {
         Ok(Self::synthesize_ipod(seed, model_number, region_info, true)?.adding_imei(seed))
     }
 
-    /// This identity with an iPhone's IMEI after the serial, and the UDID the baseband's IMEI makes.
+    /// This identity with an iPhone's IMEI after the serial, and the UDID the baseband's IMEI makes. A generated seed's
+    /// also carries its SIM's IMSI and ICCID (`sim`); a fixed seed's SIM stays the modem's default, as it always was.
     pub fn adding_imei(&self, seed: &str) -> UnitIdentity {
         let mut id = self.clone();
         let imei = imei(seed);
-        id.fields.retain(|(k, _)| k != "udid" && k != "imei");
+        id.fields.retain(|(k, _)| k != "udid" && k != "imei" && k != "imsi" && k != "iccid");
         id.fields.insert(1, s("imei", imei.clone()));
+        if let Some((imsi, iccid)) = sim(seed) {
+            id.fields.insert(2, s("imsi", imsi));
+            id.fields.insert(3, s("iccid", iccid));
+        }
         let u = iphone_udid(&id.synthesized("serial-number"), &imei, &id.synthesized("wifi-mac"), &id.synthesized("bt-mac"));
         id.fields.push(s("udid", u));
         id
@@ -433,6 +481,50 @@ mod tests {
         ));
         assert_eq!(id.udid(), Some(want.as_str()));
         assert_eq!(id.fields.iter().filter(|(k, _)| k == "udid").count(), 1);
+    }
+
+    #[test]
+    fn generated_seeds_differ_and_reproduce() {
+        let (a, b) = (generated_seed("ipod4", "10B500"), generated_seed("ipod4", "10B500"));
+        assert_ne!(a, b);
+        assert!(a.starts_with("ipod4-10B500-") && is_generated(&a) && is_generated(&b));
+        assert!(!is_generated("ipod4-10B500-default") && !is_generated("x") && !is_generated(&a.to_uppercase()));
+        let id = |s: &str| UnitIdentity::synthesize(s, "16g", Some("MC540")).unwrap().adding_imei(s);
+        let (ia, ib) = (id(&a), id(&b));
+        for k in ["serial-number", "mlb-serial-number", "unique-chip-id", "wifi-mac", "bt-mac", "imei", "udid"] {
+            assert_ne!(ia.get(k), ib.get(k), "{k}");
+        }
+        assert_eq!(id(&a), ia);
+        let imei = ia.get("imei").unwrap();
+        assert!(imei.len() == 15 && imei.starts_with("00") && imei.bytes().all(|c| c.is_ascii_digit()));
+        assert_eq!(luhn(&imei[..14]), imei[14..].parse::<u32>().unwrap());
+        let (imsi, iccid) = (ia.get("imsi").unwrap(), ia.get("iccid").unwrap());
+        assert!(imsi.len() == 15 && imsi.starts_with("00101") && imsi.bytes().all(|c| c.is_ascii_digit()));
+        assert!(iccid.len() == 20 && iccid.starts_with("8900101") && iccid.bytes().all(|c| c.is_ascii_digit()));
+        assert_eq!(luhn(&iccid[..19]), iccid[19..].parse::<u32>().unwrap());
+        assert_ne!(ib.get("imsi"), Some(imsi));
+        assert_ne!(ib.get("iccid"), Some(iccid));
+        assert_eq!(
+            ia.fields.iter().map(|(k, _)| k.as_str()).take(4).collect::<Vec<_>>(),
+            ["serial-number", "imei", "imsi", "iccid"]
+        );
+        // A MAC stays unicast and locally administered (02:…), its Bluetooth twin one more.
+        let mac = ia.get("wifi-mac").unwrap();
+        assert!(mac.starts_with("02:") && u8::from_str_radix(&mac[15..], 16).unwrap() % 2 == 0);
+    }
+
+    /// A fixed seed's IMEI is what devices prepared with it have always had (the standard iPhone 5, 3GS and iPhone 4
+    /// devices' locks).
+    #[test]
+    fn fixed_seed_imei_unchanged() {
+        assert_eq!(imei("iphone5-14G61-default"), "000000000430959");
+        assert_eq!(imei("iphone3gs-9B206-default"), "000000007352297");
+        assert_eq!(imei("iphone4-10B329-default"), "000000000777912");
+        assert_eq!(sim("iphone4-10B329-default"), None);
+        let id = UnitIdentity::synthesize("iphone4-10B329-default", "16g", Some("MC603"))
+            .unwrap()
+            .adding_imei("iphone4-10B329-default");
+        assert!(id.get("imsi").is_none() && id.get("iccid").is_none());
     }
 
     #[test]

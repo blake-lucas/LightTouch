@@ -552,7 +552,7 @@ fn k48_iboot(args: &[String]) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let ipsw = Ipsw::open(&PathBuf::from(required(args, "--ipsw")?)).map_err(|e| e.to_string())?;
     let storage = entry.recipe.as_ref().map(|r| r.storage.clone()).unwrap_or_else(|| "16g".into());
-    // as the K48 recipe: the default seed unless one is given
+    // a fixed seed unless one is given, so the boot files compare across runs (create picks a random one)
     let seed = option(args, "--seed").unwrap_or_else(|| format!("ipad1-{}-default", entry.build));
     let identity = UnitIdentity::synthesize(&seed, &storage, None).map_err(|e| e.to_string())?;
     let boot_args = option(args, "--boot-args").unwrap_or_else(|| kboot::DEFAULT_BOOT_ARGS.into());

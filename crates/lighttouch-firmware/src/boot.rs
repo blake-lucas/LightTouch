@@ -130,9 +130,27 @@ pub fn escape(value: &str) -> String {
     value.replace(',', ",,")
 }
 
-/// The -machine options the device was made for (device.lock.json "machine"), sorted by key.
+/// The lock's "machine" keys that belong to the modem rather than the machine: a phone's SIM (identity::sim), which
+/// every board's modem takes as `-global ios-baseband.<key>=` (Portable/src/Storage.cpp does the same).
+pub const MODEM_KEYS: [&str; 2] = ["imsi", "iccid"];
+
+/// The -machine options the device was made for (device.lock.json "machine"), sorted by key; MODEM_KEYS go to
+/// `modem_globals` instead.
 pub fn options(machine: &std::collections::BTreeMap<String, String>) -> String {
-    machine.iter().map(|(k, v)| format!(",{k}={}", escape(v))).collect()
+    machine
+        .iter()
+        .filter(|(k, _)| !MODEM_KEYS.contains(&k.as_str()))
+        .map(|(k, v)| format!(",{k}={}", escape(v)))
+        .collect()
+}
+
+/// `-global ios-baseband.<key>=<value>` for the MODEM_KEYS among the machine options (-global takes its value verbatim).
+pub fn modem_globals(machine: &std::collections::BTreeMap<String, String>) -> Vec<String> {
+    machine
+        .iter()
+        .filter(|(k, _)| MODEM_KEYS.contains(&k.as_str()))
+        .flat_map(|(k, v)| ["-global".to_string(), format!("ios-baseband.{k}={v}")])
+        .collect()
 }
 
 /// argv for one boot, and the -M machine.
@@ -195,6 +213,7 @@ pub fn ipad(d: &IPad, hardware: &DeviceInfo, serial: &str) -> BootConfig {
             .map(|s| s.to_string())
             .collect();
     argv.extend(["-audio", "driver=none", "-serial", serial].iter().map(|s| s.to_string()));
+    argv.extend(modem_globals(&d.machine_options));
     BootConfig { argv, machine: board.clone() }
 }
 
@@ -283,6 +302,7 @@ pub fn ipod1g(d: &IPod1G, hardware: &DeviceInfo, serial: &str) -> BootConfig {
     if hardware.has_cellular {
         argv.extend(["-netdev".to_string(), "user,id=cell0,lan=off".to_string()]);
     }
+    argv.extend(modem_globals(&d.machine_options));
     BootConfig { argv, machine: hardware.machine.clone() }
 }
 
@@ -350,6 +370,8 @@ pub fn iphone5_net(
         cellular.push("-global".into());
         cellular.push(format!("ios-baseband.imei={imei}"));
     }
+    // The modem is there with or without its network (baseband=on), so its SIM always is.
+    let sim = modem_globals(&d.machine_options);
     let mut argv: Vec<String> = vec![
         "LightTouchMac".into(),
         "-M".into(),
@@ -369,6 +391,7 @@ pub fn iphone5_net(
         argv.extend(["-netdev".to_string(), wifi0]);
         argv.extend(cellular);
     }
+    argv.extend(sim);
     argv.extend(restore.iter().cloned());
     BootConfig { argv, machine: hardware.machine.clone() }
 }
@@ -419,5 +442,21 @@ mod tests {
                 "file:/w/seal.log"
             ]
         );
+    }
+
+    /// A phone's SIM goes to its modem as -global, never into -M (the machines have no such properties).
+    #[test]
+    fn sim_goes_to_the_modem() {
+        let machine: std::collections::BTreeMap<String, String> =
+            [("imei", "001234567890128"), ("imsi", "001011234567890"), ("iccid", "89001011234567890121")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+        assert_eq!(options(&machine), ",imei=001234567890128");
+        assert_eq!(
+            modem_globals(&machine),
+            ["-global", "ios-baseband.iccid=89001011234567890121", "-global", "ios-baseband.imsi=001011234567890"]
+        );
+        assert!(modem_globals(&Default::default()).is_empty());
     }
 }

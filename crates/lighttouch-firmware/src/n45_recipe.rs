@@ -539,6 +539,11 @@ impl Board for N45Board {
         machine.insert("wifi-mac".into(), json!(ident.get("wifi-mac").unwrap_or("")));
         if self.iphone {
             machine.insert("imei".into(), json!(ident.get("imei").unwrap_or("")));
+            for key in ["imsi", "iccid"] {
+                if let Some(value) = ident.get(key) {
+                    machine.insert(key.into(), json!(value));
+                }
+            }
         }
         Ok(json!({
             "inputs": {

@@ -13,6 +13,8 @@ build/firmwarekit/linux/firmwarekit create --catalog Portable/firmware/firmware-
 
 `create` prints one JSON event per line (`begin` with each step's expected seconds, `step`, `progress`, `warning`, `error`, `done`). iOS 4 and later boot the new system with the LightTouch engine (`firmwarekit oneshot`, which loads `LTM_QEMU_DYLIB`, else the `libqemu-arm` library beside it): once to create the data-protection keybag, and on the A4 boards once more so iOS finishes its first-start setup (`it_seal` halts it). The iPod touch 2G's keybag boot runs its boot ROM (iBoot-240.4), which no IPSW carries: pass it with `--bootrom`. On Android the boot asks the system for fast cores and performance hints.
 
+Each prepared device is a unit of its own: without `--seed`, `create` picks a random seed (`<board>-<build>-<32 hex digits>`, kept in the lock's `identity.seed`), and the serial and MLB numbers, ECID, Wi-Fi and Bluetooth MACs, IMEI, SIM (IMSI, ICCID) and UDID all derive from it (`identity.rs`). Nothing derives them again later, so a device keeps its identity for life, and an imported device file keeps the identity it was exported with. `--seed` gives a fixed identity for tests; devices prepared before 0.0.16 have `<board>-<build>-default`, the same for every user.
+
 firmwarekit reads and writes disk images itself: UDIF to raw, then HFS+ extracted to a folder and rebuilt, case-insensitive volumes included. Hard links are kept as they were when unchanged, since Android cannot make them.
 
 Measured on Linux: n72ap-7E18 takes 39 s (no boots), n72ap-8C148 53 s, and n81ap-10B500 about 4½ minutes, against 7 minutes before it installed the preinstalled assets itself and turned off the dead services (interleaved on the same host). On a Poco F3, n72ap-7E18 takes 54 s.
