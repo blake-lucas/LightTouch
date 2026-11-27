@@ -323,6 +323,17 @@ fn run(
     let _ = events.send(Event::Started);
 
     let trace_input = std::env::var_os("LIGHTTOUCH_TRACE_INPUT").is_some();
+    // LIGHTTOUCH_PCM_DUMP=FILE: every frame of guest audio the worker pulls, as raw 44.1 kHz stereo S16LE, whether or
+    // not a host output plays it, to measure levels headless; FILE.times gets "<monotonic ns> <frames so far>" per pull.
+    let mut pcm_dump = std::env::var_os("LIGHTTOUCH_PCM_DUMP").and_then(|path| {
+        let mut times = path.clone();
+        times.push(".times");
+        Some((
+            std::io::BufWriter::new(std::fs::File::create(&path).ok()?),
+            std::io::BufWriter::new(std::fs::File::create(times).ok()?),
+            0u64,
+        ))
+    });
     let mut pcm = vec![0i16; 4096 * 2];
     // The core reports LT_UNSUPPORTED (by a C++ throw) when the session runs without audio: ask once.
     let mut pcm_live = true;
@@ -556,6 +567,13 @@ fn run(
                 Err(e) if e.is(lighttouch_core::sys::LT_UNSUPPORTED) => pcm_live = false,
                 Ok(0) | Err(_) => break,
                 Ok(frames) => {
+                    if let Some((dump, times, total)) = &mut pcm_dump {
+                        use std::io::Write;
+                        let bytes: Vec<u8> = pcm[..frames as usize * 2].iter().flat_map(|v| v.to_le_bytes()).collect();
+                        let _ = dump.write_all(&bytes);
+                        *total += frames as u64;
+                        let _ = writeln!(times, "{} {total}", lighttouch_core::monotonic_ns());
+                    }
                     if let Some(a) = &audio {
                         if status.state == State::Running {
                             a.push(&pcm[..frames as usize * 2]);

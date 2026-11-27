@@ -22,6 +22,8 @@
 //!
 //! With `--install`/`--store`/`--services`, LIGHTTOUCH_SYSLOG=FILE also streams the guest's system log there, and
 //! LIGHTTOUCH_SERVICES_AFTER=SECONDS holds the services off until then (the iPhone 5 boots slowly).
+//! LIGHTTOUCH_PCM_DUMP=FILE saves the guest audio the host gets (raw 44.1 kHz stereo S16LE, with FILE.times mapping
+//! the monotonic clock to frames), to measure levels without a sound card.
 //!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
 //! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
