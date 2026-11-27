@@ -20,7 +20,7 @@ set(LIGHTTOUCH_QEMU_SOURCE "" CACHE PATH "qemu-ios source providing versioned po
 if(NOT EXISTS "${LIGHTTOUCH_QEMU_SOURCE}/contrib/ios-app/qemu-ios-ui.h")
  message(FATAL_ERROR "Set LIGHTTOUCH_QEMU_SOURCE to the portable qemu-ios source")
 endif()
-add_library(lighttouch_runtime STATIC src/Storage.cpp src/Runtime.cpp src/GuestPackage.cpp src/Library.cpp src/Screenshot.cpp src/Transfer.cpp)
+add_library(lighttouch_runtime STATIC src/Storage.cpp src/Runtime.cpp src/GuestPackage.cpp src/Library.cpp src/Screenshot.cpp src/Transfer.cpp src/States.cpp src/Zip.cpp)
 set_target_properties(lighttouch_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lighttouch_runtime PUBLIC include PRIVATE "${LIGHTTOUCH_QEMU_SOURCE}/contrib/ios-app" "${LIGHTTOUCH_QEMU_SOURCE}/contrib/macos-app")
 target_link_libraries(lighttouch_runtime PUBLIC ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})

@@ -6,12 +6,17 @@
 //!                    [--no-game-center]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE] [--frames FILE] [--control]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones] [--microphone]
-//!                [--install-dir APP.app [--afc N]]
+//!                [--install-dir APP.app [--afc N]] [--load-state STATE]
 //! lighttouch fetch <firmware id> <query> --out DIR [--bundle ID]
 //! lighttouch guest <bridge mux.sock>
 //! lighttouch export <record id> <FILE.lighttouch.zip>
 //! lighttouch import <FILE.lighttouch.zip>
+//! lighttouch states <record id>
+//! lighttouch delete-state <record id> <state id>
 //! ```
+//!
+//! Save states: a script line `{"cmd":"save_state","name":"..."}` saves the running guest; `run --load-state ID`
+//! starts from a state (`states` lists them) instead of booting.
 //!
 //! `prepare --ipa` installs apps while the device is prepared (benchmark devices). `run --control` (tools/bench)
 //! takes command JSON lines on stdin as they come and prints every event as a JSON line on stdout; it runs until
@@ -38,7 +43,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "run" | "prepare" | "fetch" | "guest" | "export" | "import")
+    matches!(command, "list" | "run" | "prepare" | "fetch" | "guest" | "export" | "import" | "states" | "delete-state")
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -55,6 +60,7 @@ pub fn main(args: &[String]) -> i32 {
         "guest" => guest(&args[1..]),
         "export" => transfer(&dirs, &args[1..], true),
         "import" => transfer(&dirs, &args[1..], false),
+        "states" | "delete-state" => states(&dirs, &args[0], &args[1..]),
         _ => unreachable!(),
     };
     match result {
@@ -88,6 +94,28 @@ fn guest(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// `states <record id>` lists a record's save states, newest first; `delete-state <record id> <state id>` removes one.
+fn states(dirs: &DataDirs, command: &str, args: &[String]) -> Result<(), String> {
+    let library = Library::open(&dirs.library()).map_err(|e| e.to_string())?;
+    match (command, args) {
+        ("states", [id]) => {
+            for state in library.states(id).map_err(|e| e.to_string())? {
+                println!(
+                    "{}\t{}\t{:.1} MB\t{}\t{}",
+                    state.id,
+                    state.created_ms,
+                    state.bytes as f64 / 1e6,
+                    state.name,
+                    state.app
+                );
+            }
+            Ok(())
+        }
+        ("delete-state", [id, state]) => library.delete_state(id, state).map_err(|e| e.to_string()),
+        _ => Err("states needs a record id; delete-state a record id and a state id".into()),
+    }
 }
 
 /// Export a device to a device file, or import one, printing progress and the time it took.
@@ -203,6 +231,7 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         audio: !args.iter().any(|a| a == "--no-audio"),
         headphones: !args.iter().any(|a| a == "--no-headphones"),
         microphone: args.iter().any(|a| a == "--microphone"),
+        load_state: option(args, "--load-state"),
     };
     let mut child = spawn_worker(&worker_args)?;
     let mut stdin = child.stdin.take().unwrap();

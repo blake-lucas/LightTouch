@@ -147,6 +147,7 @@ impl Session {
             microphone: options.microphone,
             usb: options.usb.clone(),
             network: options.network.clone(),
+            load_state: None,
         };
         // Each start begins a new engine log; the one before stays as its previous generation.
         let mut log = lighttouch_core::logs::CappedLog::start(&options.log_dir, lighttouch_core::logs::ENGINE)
@@ -359,6 +360,10 @@ impl Session {
             }
             Event::Network(status) => self.network = Some(status),
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
+            Event::StateProgress { .. }
+            | Event::StateSaved { .. }
+            | Event::StateFailed { .. }
+            | Event::StateChecked { .. } => {}
             Event::Exit { clean, dirty, message } => {
                 let _ = self.child.wait();
                 self.phase = Phase::Ended { clean, dirty, message };
