@@ -2,7 +2,7 @@
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
 //! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device (`LIGHTTOUCH_UI_FULLSCREEN=1` full screen). `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
-//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
+//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_STATES=1` the States menu, `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
 //! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
@@ -140,6 +140,7 @@ pub fn start(app: &mut App) {
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {
         app.model.error = Some(error);
     }
+    app.states_ui.open = std::env::var_os("LIGHTTOUCH_UI_STATES").is_some();
     match std::env::var("LIGHTTOUCH_UI_DIALOG").as_deref() {
         Ok("stop") => app.dialog = Some(super::Dialog::Stop),
         Ok("controls") => app.dialog = Some(super::Dialog::Controls),

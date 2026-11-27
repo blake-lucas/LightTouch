@@ -11,6 +11,8 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct StatesUi {
     thumbnails: HashMap<PathBuf, Option<egui::TextureHandle>>,
+    /// Open the menu at the next frame (devshot's LIGHTTOUCH_UI_STATES).
+    pub open: bool,
 }
 
 /// Whether the header shows the States button: the setting is on and a device is on screen.
@@ -23,6 +25,9 @@ pub fn header_button(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     let busy = app.model.state_job().is_some() || app.model.state_load_pending();
     let r = widgets::icon_button_sized(ui, &p, icons::FLOPPY, "States", 40.0, true);
+    if std::mem::take(&mut app.states_ui.open) {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&r));
+    }
     if busy {
         // A ring around the button while a state is saved or loaded.
         let fraction = app.model.state_job().map_or(0.0, |j| j.fraction());
@@ -185,7 +190,8 @@ pub fn load_dialog(app: &mut App, ui: &mut Ui, id: &str, name: &str) -> bool {
     ui.label(widgets::muted(
         &p,
         format!(
-            "{device} goes back to that moment: what it has done since is replaced, as if it never happened. Save a state first to keep it."
+            "{device} goes back to that moment: what it has done since is replaced, as if it never happened. \
+             Save a state first to keep it."
         ),
     ));
     ui.add_space(16.0);
