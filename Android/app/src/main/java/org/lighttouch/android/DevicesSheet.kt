@@ -58,7 +58,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("devices_sheet")) {
         SheetSystemBars()
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
-            Text("Devices", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+            // No title: the sheet is plainly the device list, and a row dragged to the top has the room.
             if (host.active) Text("Stop ${host.selected?.name ?: "the running device"} to switch to or add another.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
@@ -69,7 +69,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
             val shown = drag.order?.let { order -> order.mapNotNull { id -> devices.firstOrNull { it.id == id } } } ?: devices
             val shownIds by rememberUpdatedState(shown.map { it.id })
             val haptics = LocalHapticFeedback.current
-            LazyColumn(Modifier.padding(top = 8.dp).weight(1f, fill = false), state = listState) {
+            LazyColumn(Modifier.weight(1f, fill = false), state = listState, contentPadding = PaddingValues(top = 8.dp)) {
                 itemsIndexed(shown, key = { _, device -> device.id }) { _, device ->
                     val lifted = drag.id == device.id
                     // The drag consumes every pointer event once the press is long, so the row's tap (select), its ⋮
@@ -169,11 +169,11 @@ private class DeviceDrag(private val list: LazyListState) {
         return true
     }
 
-    /** Follow the finger by [dy]; once the row's middle is over another row, it takes that row's place. */
+    /** Follow the finger by [dy], within the list; once the row's middle is over another row, it takes its place. */
     fun by(dy: Float) {
-        moved += dy
         val rows = list.layoutInfo.visibleItemsInfo
         val current = rows.firstOrNull { it.key == id } ?: return
+        moved = top(start + moved + dy, current.size) - start
         val middle = (start + moved + current.size / 2f).toInt()
         val target = rows.firstOrNull { it.key != id && middle in it.offset..(it.offset + it.size) } ?: return
         // The list keeps its first row in place by key: hold the scroll still when that row is part of the swap.
@@ -183,7 +183,16 @@ private class DeviceDrag(private val list: LazyListState) {
     }
 
     /** How far the lifted row is drawn from its laid-out place: under the finger. */
-    val offset: Float get() = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }?.let { start + moved - it.offset } ?: 0f
+    val offset: Float get() = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }?.let { top(start + moved, it.size) - it.offset } ?: 0f
+
+    /** [y] for a row [size] tall, kept whole inside the list (the list clips what it draws): from its top padding
+     *  to the last row's foot (a list shorter than the sheet's room reports a viewport past it). */
+    private fun top(y: Float, size: Int): Float {
+        val layout = list.layoutInfo
+        val first = layout.viewportStartOffset.toFloat()
+        val end = minOf(layout.viewportEndOffset, layout.visibleItemsInfo.lastOrNull()?.let { it.offset + it.size } ?: layout.viewportEndOffset)
+        return y.coerceIn(first, maxOf(first, (end - size).toFloat()))
+    }
 
     fun clear() { id = null; order = null; moved = 0f }
 }
