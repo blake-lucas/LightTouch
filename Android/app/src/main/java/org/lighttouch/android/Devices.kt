@@ -24,6 +24,15 @@ data class DeviceSummary(
     }
 }
 
+/** This list with the item at [from] moved to [to] (clamped to the ends), the rest in their order: the devices sheet's
+ *  drag to reorder. Unchanged when [from] is out of range. */
+internal fun <T> List<T>.moved(from: Int, to: Int): List<T> {
+    if (from !in indices) return this
+    val list = toMutableList()
+    list.add(to.coerceIn(0, list.size - 1), list.removeAt(from))
+    return list
+}
+
 internal fun shortProductName(productType: String): String = when (productType) {
     "iPod1,1" -> "iPod touch"; "iPod2,1" -> "iPod touch 2G"; "iPod3,1" -> "iPod touch 3G"; "iPod4,1" -> "iPod touch 4G"
     "iPhone1,1" -> "iPhone"; "iPhone1,2" -> "iPhone 3G"; "iPhone2,1" -> "iPhone 3GS"; "iPhone3,1" -> "iPhone 4"

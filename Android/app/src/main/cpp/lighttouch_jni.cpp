@@ -775,6 +775,13 @@ JNI(rename) jstring JNICALL Java_org_lighttouch_android_Native_rename(JNIEnv *en
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_rename(library,record.value,label.value,&error);
     return string(env,result(status,error));
 }
+// Move a device to [index] in the library's order (lt_library_move): "" or the error.
+JNI(move) jstring JNICALL Java_org_lighttouch_android_Native_move(JNIEnv *env,jobject,jstring root,jstring id,jint index) {
+    std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);
+    if(status==LT_OK)status=lt_library_move(library,record.value,index<0?0u:uint32_t(index),&error);
+    return string(env,result(status,error));
+}
 JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *env,jobject,jstring root,jstring id) {
     std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);

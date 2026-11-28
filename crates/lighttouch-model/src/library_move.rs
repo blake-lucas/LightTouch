@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// What the library root holds that is the library's: anything else found there is the user's and stays.
-const LIBRARY_ENTRIES: [&str; 4] = ["records", "selected", ".prepared", DOWNLOADS];
+const LIBRARY_ENTRIES: [&str; 5] = ["records", "selected", ".order", ".prepared", DOWNLOADS];
 /// Downloads beside a library the user moved (`DataDirs::downloads`).
 const DOWNLOADS: &str = ".downloads";
 /// The core's library lock (Library.cpp) and each device's lease (`records/ID/state/.lease`), held while a

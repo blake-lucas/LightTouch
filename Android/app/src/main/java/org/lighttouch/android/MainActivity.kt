@@ -754,6 +754,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             handler.post { if (result.isEmpty()) notice = "Renamed to $name" else error = result; refreshDevices() }
         }, "device-rename").start()
     }
+    override fun moveDevice(id: String, index: Int) {
+        val worker = engine ?: return
+        val from = records.indexOfFirst { it.getString("id") == id }
+        if (from < 0 || index == from) return
+        // Shown at once; the library's order follows (a refusal reloads the list as it is).
+        records = records.moved(from, index)
+        Thread({
+            val result = try { worker.moveRecord(id, index) } catch (e: RemoteException) { e.message ?: "Reorder failed" }
+            if (result.isNotEmpty()) handler.post { error = "Couldn't reorder your devices: $result"; refreshDevices() }
+        }, "device-move").start()
+    }
     override fun deleteDevice(id: String) {
         val worker = engine ?: return
         busy = true

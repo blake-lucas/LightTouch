@@ -63,6 +63,8 @@ interface IEngine {
     String debugSelectTcgIrCache(boolean enabled);
     String rename(String recordId, String name);
     String remove(String recordId);
+    /** Move a device to [index] in the device list (the library's order, kept across restarts): "" or the error. */
+    String moveRecord(String recordId, int index);
     Bundle frameStats(long sinceSequence);
     void setPresentScale(int mode);
     void setPresentVisible(boolean visible);

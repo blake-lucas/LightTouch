@@ -148,6 +148,15 @@ impl Library {
         check(unsafe { sys::lt_library_rename(self.raw, id.as_ptr(), name.as_ptr(), &mut error) }, &error)
     }
 
+    /// Move a record to `index` in the list (the last place if past it). The order is the library's, so both apps
+    /// and every later `records()` see it; new records go last and deleted ones drop out.
+    pub fn move_to(&self, id: &str, index: usize) -> Result<()> {
+        let id = cstring(id)?;
+        let index = u32::try_from(index).unwrap_or(u32::MAX);
+        let mut error = sys::lt_error::new();
+        check(unsafe { sys::lt_library_move(self.raw, id.as_ptr(), index, &mut error) }, &error)
+    }
+
     /// The record's carrier settings, or the defaults (`LT_UNSUPPORTED` for a device without a modem).
     pub fn carrier(&self, id: &str) -> Result<crate::carrier::CarrierSettings> {
         let id = cstring(id)?;

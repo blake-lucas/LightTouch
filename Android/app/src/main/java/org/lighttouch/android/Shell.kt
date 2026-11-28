@@ -81,6 +81,8 @@ interface GuestHost {
     fun selectDevice(id: String)
     fun renameDevice(id: String, name: String)
     fun deleteDevice(id: String)
+    /** Move a device to [index] in the list (dragged in the devices sheet); kept in the library. */
+    fun moveDevice(id: String, index: Int)
     fun addDevice()
     /** A device export or import running (with its progress), else null. */
     val transfer: TransferState?
