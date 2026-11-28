@@ -69,6 +69,8 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
             val shown = drag.order?.let { order -> order.mapNotNull { id -> devices.firstOrNull { it.id == id } } } ?: devices
             val shownIds by rememberUpdatedState(shown.map { it.id })
             val haptics = LocalHapticFeedback.current
+            // Add device is the list's last item, so a row lifted at the end of the list is drawn (with its shadow)
+            // over it rather than clipped at the list's edge; the top padding is that room above the first row.
             LazyColumn(Modifier.weight(1f, fill = false), state = listState, contentPadding = PaddingValues(top = 8.dp)) {
                 itemsIndexed(shown, key = { _, device -> device.id }) { _, device ->
                     val lifted = drag.id == device.id
@@ -110,32 +112,34 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                         onExport = { onDismiss(); host.exportDevice(device) })
                     }
                 }
-            }
-            // Add device, with a ⋮ for the other way in: a device exported by LightTouch on another phone or computer
-            // (allowed while one runs, so the ⋮ stays live when Add device is dimmed).
-            val canImport = !host.busy && host.transfer == null
-            var addMenu by remember { mutableStateOf(false) }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = !host.busy && !host.active) { onDismiss(); host.addDevice() }.padding(start = 12.dp, top = 12.dp, bottom = 12.dp)
-                .testTag("add_device"),
-                verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).alpha(if (host.active) 0.38f else 1f), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text("Add device", style = MaterialTheme.typography.titleSmall)
-                        Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                Box {
-                    IconButton(onClick = { addMenu = true }, modifier = Modifier.testTag("add_device_more")) {
-                        Icon(Icons.Filled.MoreVert, "More ways to add a device")
-                    }
-                    DropdownMenu(addMenu, { addMenu = false }) {
-                        DropdownMenuItem(text = { Text("Import device") }, leadingIcon = { Icon(LtIcons.Download, null) }, enabled = canImport,
-                            onClick = { addMenu = false; onDismiss(); host.importDevice() }, modifier = Modifier.testTag("import_device"))
+                // Add device, with a ⋮ for the other way in: a device exported by LightTouch on another phone or computer
+                // (allowed while one runs, so the ⋮ stays live when Add device is dimmed).
+                item(key = AddDeviceKey) {
+                    val canImport = !host.busy && host.transfer == null
+                    var addMenu by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
+                        .clickable(enabled = !host.busy && !host.active) { onDismiss(); host.addDevice() }.padding(start = 12.dp, top = 12.dp, bottom = 12.dp)
+                        .testTag("add_device"),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f).alpha(if (host.active) 0.38f else 1f), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                            Spacer(Modifier.width(16.dp))
+                            Column {
+                                Text("Add device", style = MaterialTheme.typography.titleSmall)
+                                Text("Prepared from an IPSW", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Box {
+                            IconButton(onClick = { addMenu = true }, modifier = Modifier.testTag("add_device_more")) {
+                                Icon(Icons.Filled.MoreVert, "More ways to add a device")
+                            }
+                            DropdownMenu(addMenu, { addMenu = false }) {
+                                DropdownMenuItem(text = { Text("Import device") }, leadingIcon = { Icon(LtIcons.Download, null) }, enabled = canImport,
+                                    onClick = { addMenu = false; onDismiss(); host.importDevice() }, modifier = Modifier.testTag("import_device"))
+                            }
+                        }
                     }
                 }
             }
@@ -152,9 +156,15 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     }
 }
 
+/** The device list's last item, Add device. */
+private const val AddDeviceKey = "add_device"
+
 /** A device row lifted by a long press and dragged to a new place in the list: the order shown while it moves (the
  *  others make room) and how far the row is drawn from where the list lays it out. */
 private class DeviceDrag(private val list: LazyListState) {
+    /** The laid-out device rows (the list's items but Add device). */
+    private val rows get() = list.layoutInfo.visibleItemsInfo.filter { it.key != AddDeviceKey }
+
     var id by mutableStateOf<String?>(null)
         private set
     var order by mutableStateOf<List<String>?>(null)
@@ -164,17 +174,19 @@ private class DeviceDrag(private val list: LazyListState) {
 
     /** Lift [id] (shown in the order [ids]); false when it isn't laid out. */
     fun begin(id: String, ids: List<String>): Boolean {
-        val item = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id } ?: return false
+        val item = rows.firstOrNull { it.key == id } ?: return false
         this.id = id; order = ids; start = item.offset; moved = 0f
         return true
     }
 
-    /** Follow the finger by [dy], within the list; once the row's middle is over another row, it takes its place. */
+    /** Follow the finger by [dy], within the list; once the row's middle is over another row, it takes its place.
+     *  [moved] is the finger's whole travel, kept apart from where the row is drawn, so a finger that went past the
+     *  list's end has to come back to the row before it moves again. */
     fun by(dy: Float) {
-        val rows = list.layoutInfo.visibleItemsInfo
+        val rows = rows
         val current = rows.firstOrNull { it.key == id } ?: return
-        moved = top(start + moved + dy, current.size) - start
-        val middle = (start + moved + current.size / 2f).toInt()
+        moved += dy
+        val middle = (top(start + moved, current.size) + current.size / 2f).toInt()
         val target = rows.firstOrNull { it.key != id && middle in it.offset..(it.offset + it.size) } ?: return
         // The list keeps its first row in place by key: hold the scroll still when that row is part of the swap.
         if (current.index == list.firstVisibleItemIndex || target.index == list.firstVisibleItemIndex)
@@ -183,14 +195,14 @@ private class DeviceDrag(private val list: LazyListState) {
     }
 
     /** How far the lifted row is drawn from its laid-out place: under the finger. */
-    val offset: Float get() = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }?.let { top(start + moved, it.size) - it.offset } ?: 0f
+    val offset: Float get() = rows.firstOrNull { it.key == id }?.let { top(start + moved, it.size) - it.offset } ?: 0f
 
     /** [y] for a row [size] tall, kept whole inside the list (the list clips what it draws): from its top padding
      *  to the last row's foot (a list shorter than the sheet's room reports a viewport past it). */
     private fun top(y: Float, size: Int): Float {
         val layout = list.layoutInfo
         val first = layout.viewportStartOffset.toFloat()
-        val end = minOf(layout.viewportEndOffset, layout.visibleItemsInfo.lastOrNull()?.let { it.offset + it.size } ?: layout.viewportEndOffset)
+        val end = minOf(layout.viewportEndOffset, rows.lastOrNull()?.let { it.offset + it.size } ?: layout.viewportEndOffset)
         return y.coerceIn(first, maxOf(first, (end - size).toFloat()))
     }
 
