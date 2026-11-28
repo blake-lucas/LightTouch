@@ -4,6 +4,7 @@
 pub mod carrier;
 pub mod crash;
 pub mod details;
+pub mod device_order;
 pub mod diagnostics;
 pub mod gamepad;
 pub mod inspector;
@@ -587,6 +588,18 @@ impl Model {
 
     fn library(&self) -> Result<&Library, String> {
         self.library.as_ref().ok_or_else(|| "The device library is unavailable".to_string())
+    }
+
+    /// Move a device to the gap `gap` of the list (`device_order::gap_at`: 0 is above the first, `devices.len()` below
+    /// the last), running or not. Saved in the library, so the order survives restarts and both apps share it.
+    pub fn move_device(&mut self, id: &str, gap: usize) {
+        let Some(from) = self.devices.iter().position(|d| d.id == id) else { return };
+        let Some(to) = device_order::destination(from, gap, self.devices.len()) else { return };
+        device_order::move_item(&mut self.devices, from, to);
+        if let Err(e) = self.library().and_then(|l| l.move_to(id, to).map_err(|e| e.to_string())) {
+            self.error = Some(format!("Couldn't reorder your devices: {e}"));
+            self.refresh();
+        }
     }
 
     /// Select a device, which is the one on screen. A device running on screen keeps running in the background, and

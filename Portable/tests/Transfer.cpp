@@ -207,6 +207,14 @@ int main() {
     lt_record_info third{sizeof(third), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
     assert(import_from(b, root / "device.zip", nullptr, third, error) == LT_OK);
     assert(std::string(third.display_name) == "Transfer test (3)");
+    // Imported devices go to the end of the list, in the order they arrived (their ids are random).
+    {
+        lt_record_info listed{sizeof(listed), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+        const char *arrived[] = {first.id, second.id, third.id};
+        assert(count(b) == 3);
+        for (uint32_t i = 0; i < 3; ++i)
+            assert(lt_library_record_at(b, i, &listed, &error) == LT_OK && std::string(listed.id) == arrived[i]);
+    }
 
     // The same files, byte for byte, but for what stays behind; sparse files stay sparse.
     const fs::path copy = root / "b/records" / first.id;

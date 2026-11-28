@@ -306,6 +306,12 @@ unsafe extern "C" {
         display_name: *const c_char,
         error: *mut lt_error,
     ) -> lt_status;
+    pub fn lt_library_move(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        index: u32,
+        error: *mut lt_error,
+    ) -> lt_status;
     pub fn lt_library_remove(library: *mut lt_library, record_id: *const c_char, error: *mut lt_error) -> lt_status;
     pub fn lt_library_adopt_prepared(
         library: *mut lt_library,

@@ -1179,8 +1179,10 @@ void import_device(lt_library *l, const lt_transfer_import_config *c, Observer &
         atomic_write(stage / "record.json", record_json(metadata, id, name));
         owner.reset();
         fs::remove(stage / ".owner");
+        auto before = records(l);
         fs::rename(stage, l->root / "records" / id);
         sync_dir(l->root / "records");
+        add_to_order(l, before, id);
         const fs::path directory = l->root / "records" / id;
         // The admission cache names files by path: written again for where they are now (no file is read).
         try {

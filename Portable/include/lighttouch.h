@@ -59,6 +59,10 @@ lt_status lt_library_selected(lt_library *, lt_record_info *, lt_error *);
 lt_status lt_library_device_open(lt_library *, const char *record_id, uint32_t allow_dirty, lt_device **, lt_error *);
 /* Rename a record (1..127 bytes of UTF-8). Allowed while the device runs. */
 lt_status lt_library_rename(lt_library *, const char *record_id, const char *display_name, lt_error *);
+/* Move a record to [index] in the list (clamped to the last place), running or not. The order is the library's
+ * (its `order` file): lt_library_record_at follows it, new records go last, removed ones drop out, and IDs it names
+ * that aren't records are ignored. */
+lt_status lt_library_move(lt_library *, const char *record_id, uint32_t index, lt_error *);
 /* Permanently delete a stopped record: base, writable state and assets. LT_BUSY while its device
  * is open. If it was selected, the first remaining record (if any) becomes selected. */
 lt_status lt_library_remove(lt_library *, const char *record_id, lt_error *);

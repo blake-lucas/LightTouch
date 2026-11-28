@@ -431,6 +431,39 @@ int main() {
                                        nullptr, nullptr};
         lt_record_info phone_record{sizeof(phone_record), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
         assert(lt_library_import(l, &phone, &phone_record, &e) == LT_OK);
+        // The list's order is the library's: new records last, moves kept across opens, and an order file naming
+        // records that aren't there (or junk) never breaks it.
+        auto listed = [&] {
+            std::vector<std::string> ids;
+            uint32_t n = 0;
+            assert(lt_library_count(l, &n, &e) == LT_OK);
+            for (uint32_t i = 0; i < n; ++i) {
+                lt_record_info r{sizeof(r), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
+                assert(lt_library_record_at(l, i, &r, &e) == LT_OK);
+                ids.push_back(r.id);
+            }
+            return ids;
+        };
+        const std::string a = first.id, b = second_record.id, c = phone_record.id;
+        assert((listed() == std::vector<std::string>{a, b, c}));
+        assert(lt_library_move(l, c.c_str(), 0, &e) == LT_OK);
+        assert((listed() == std::vector<std::string>{c, a, b}));
+        assert(lt_library_move(l, a.c_str(), 99, &e) == LT_OK);
+        assert((listed() == std::vector<std::string>{c, b, a}));
+        assert(lt_library_move(l, b.c_str(), 0, &e) == LT_OK);
+        lt_library_close(l);
+        assert(lt_library_open(&lc, &l, &e) == LT_OK);
+        assert((listed() == std::vector<std::string>{b, c, a}));
+        assert(lt_library_move(l, "0123456789abcdef0123456789abcdef", 0, &e) == LT_INVALID);
+        assert(lt_library_move(l, "../escape", 0, &e) == LT_INVALID);
+        put(fs::path(libroot) / "order", "not an id\n0123456789abcdef0123456789abcdef\n" + a + "\r\n" + a + "\n\n");
+        assert((listed() == std::vector<std::string>{a, b, c}));
+        put(fs::path(libroot) / "order", std::string("\xff\0garbage", 9));
+        std::vector<std::string> by_id{a, b, c};
+        std::sort(by_id.begin(), by_id.end());
+        assert(listed() == by_id);
+        assert(lt_library_move(l, c.c_str(), 1, &e) == LT_OK);
+        assert(listed()[1] == c && listed().size() == 3);
         assert(lt_library_carrier(l, phone_record.id, &carrier, &e) == LT_OK);
         assert(std::string(carrier.carrier) == "Light Touch" && carrier.bars == 5);
         snprintf(carrier.carrier, sizeof carrier.carrier, "Carrier, \"quoted\"");
@@ -462,6 +495,11 @@ int main() {
         lt_device_close(d);
         assert(lt_library_remove(l, phone_record.id, &e) == LT_OK);
         assert(lt_library_count(l, &count, &e) == LT_OK && count == 2);
+        {
+            std::ifstream order(fs::path(libroot) / "order");
+            std::string text((std::istreambuf_iterator<char>(order)), {});
+            assert(text.find(c) == std::string::npos && text.find(a) != std::string::npos);
+        }
     }
     assert(lt_library_device_open(l, second_record.id, 0, &d, &e) == LT_OK);
     assert(lt_library_remove(l, second_record.id, &e) == LT_BUSY);

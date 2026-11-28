@@ -6,6 +6,7 @@
 #include <array>
 #include "Os.hpp"
 #include <memory>
+#include <sstream>
 namespace lt {
 std::string quote(const std::string &s) {
     std::string out = "\"";
@@ -131,7 +132,44 @@ std::vector<std::string> records(lt_library *l) {
         ids.push_back(id);
     }
     std::sort(ids.begin(), ids.end());
-    return ids;
+    // The user's order first (`order`, one ID per line), then any record it doesn't name. The file never makes the
+    // list fail: a line that isn't a record here (deleted, junk, repeated) is skipped, and an unreadable file is no
+    // order at all.
+    std::vector<std::string> ordered;
+    try {
+        if (fs::exists(l->root / "order")) {
+            std::istringstream lines(read_file(l->root / "order", 1 << 20));
+            for (std::string line; std::getline(lines, line);) {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                auto at = std::lower_bound(ids.begin(), ids.end(), line);
+                if (at != ids.end() && *at == line &&
+                    std::find(ordered.begin(), ordered.end(), line) == ordered.end())
+                    ordered.push_back(line);
+            }
+        }
+    } catch (const std::exception &) {
+        ordered.clear();
+    }
+    for (const auto &id : ids)
+        if (std::find(ordered.begin(), ordered.end(), id) == ordered.end())
+            ordered.push_back(id);
+    return ordered;
+}
+void save_order(lt_library *l, const std::vector<std::string> &ids) {
+    std::string text;
+    for (const auto &id : ids)
+        text += id + "\n";
+    atomic_write(l->root / "order", text);
+}
+void add_to_order(lt_library *l, std::vector<std::string> before, const std::string &id) {
+    // Best effort: the record is already in place, and a record the file misses is still listed (last but for
+    // others it misses, in ID order).
+    try {
+        before.push_back(id);
+        save_order(l, before);
+    } catch (const std::exception &) {
+    }
 }
 std::string selected(lt_library *l) {
     if (!fs::exists(l->root / "selected"))
@@ -233,8 +271,10 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         sync_dir(stage / "assets");
         sync_dir(stage / "state");
         sync_dir(stage);
+        auto before = records(l);
         fs::rename(stage, l->root / "records" / id);
         sync_dir(l->root / "records");
+        add_to_order(l, before, id);
         if (adopt) {
             // Best effort: without it the first start reads the base once, as after any import.
             try {
@@ -319,8 +359,12 @@ static void remove_record(lt_library *l, const std::string &id) {
                 LT_IO);
     }
     sync_dir(l->root / "records");
+    auto rest = records(l);
+    try {
+        save_order(l, rest);
+    } catch (const std::exception &) {
+    }
     if (selected(l) == id) {
-        auto rest = records(l);
         if (rest.empty())
             fs::remove(l->root / "selected");
         else
@@ -490,6 +534,19 @@ lt_status lt_library_rename(lt_library *l, const char *id, const char *name, lt_
         lt::LibraryLock lock(l);
         lt::require(id && name, "record ID/name missing");
         lt::rename_record(l, id, name);
+    });
+}
+lt_status lt_library_move(lt_library *l, const char *id, uint32_t index, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id, "record ID missing");
+        lt::record_id(id);
+        auto ids = lt::records(l);
+        auto at = std::find(ids.begin(), ids.end(), std::string(id));
+        lt::require(at != ids.end(), "no such device", LT_INVALID);
+        ids.erase(at);
+        ids.insert(ids.begin() + std::min<size_t>(index, ids.size()), id);
+        lt::save_order(l, ids);
     });
 }
 lt_status lt_library_remove(lt_library *l, const char *id, lt_error *e) {
