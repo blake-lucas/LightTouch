@@ -27,6 +27,7 @@
 //!
 //! With `--install`/`--store`/`--services`, LIGHTTOUCH_SYSLOG=FILE also streams the guest's system log there, and
 //! LIGHTTOUCH_SERVICES_AFTER=SECONDS holds the services off until then (the iPhone 5 boots slowly).
+//! LIGHTTOUCH_LOCKDOWN=FILE saves lockdown's values (serial, UDID, ECID, MACs, IMEI…) as an XML property list.
 //! LIGHTTOUCH_PCM_DUMP=FILE saves the guest audio the host gets (raw 44.1 kHz stereo S16LE, with FILE.times mapping
 //! the monotonic clock to frames), to measure levels without a sound card.
 //!
@@ -548,6 +549,16 @@ fn probe_services(
         Err(e) => return say(format!("target: {e}")),
     };
     say(format!("{} iOS {} {} family {}", target.product_type, target.ios, target.arch, target.family));
+    // LIGHTTOUCH_LOCKDOWN=FILE: lockdown's values as iOS reports them (the device identity checks compare these).
+    if let Some(path) = std::env::var_os("LIGHTTOUCH_LOCKDOWN") {
+        match guest.lockdown_values() {
+            Ok(xml) => match std::fs::write(&path, xml) {
+                Ok(()) => say(format!("lockdown values in {}", Path::new(&path).display())),
+                Err(e) => say(format!("lockdown values: {e}")),
+            },
+            Err(e) => say(format!("lockdown values: {e}")),
+        }
+    }
     match guest.installed() {
         Ok(apps) => {
             say(format!("{} user apps", apps.len()));

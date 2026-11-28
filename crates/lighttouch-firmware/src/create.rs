@@ -5,8 +5,8 @@
 //!   create = verify -> decrypt -> identity + board.boot_files -> board.volumes (the shared bake in system_edits)
 //!            -> board.store -> [board.keybag if data protection] -> [board.seal if needs_seal] -> lock
 //!
-//! Shared here: the IPSW sha1 and Restore.plist checks, the decrypt cache, the seed name
-//! ("<board.seed_prefix>-<build>-default"), the step and progress events, packing the store into the NAND
+//! Shared here: the IPSW sha1 and Restore.plist checks, the decrypt cache, the seed (`--seed`, else a random
+//! "<board.seed_prefix>-<build>-<hex>"), the step and progress events, packing the store into the NAND
 //! container (nand_disk: the work store's chip files become nand/nand.qcow2), the store listing hashes
 //! (listing_sha256; built_listing_sha256 before any boot, opt-in) and the lock, whose board-specific keys are merged
 //! in from `board.lock`. Outputs keep their ordinary permissions: the lock's hashes are what vouch for them.
@@ -127,7 +127,7 @@ pub fn filled(what: &str) -> Error {
 pub trait Board {
     /// "armv7" or "armv6": guest helper names and the dyld shared cache path.
     fn arch(&self) -> &str;
-    /// The default seed's prefix ("ipad1", "ipod2g"); the lock's identity.seed keeps it.
+    /// The seed's prefix ("ipad1", "ipod2g"); the lock's identity.seed keeps the whole seed.
     fn seed_prefix(&self) -> String;
     fn boot_step(&self) -> String;
     fn volumes_step(&self) -> String;
@@ -328,7 +328,8 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
         }
 
         step(&c); // identity.json + the board's boot files
-        c.seed = c.o.seed.clone().unwrap_or_else(|| format!("{}-{}-default", board.seed_prefix(), e.build));
+        // Without --seed every device is a unit of its own (identity::generated_seed); the lock keeps the seed.
+        c.seed = c.o.seed.clone().unwrap_or_else(|| crate::identity::generated_seed(&board.seed_prefix(), &e.build));
         let seed = c.seed.clone();
         let identity = c.file("identity.json");
         c.udid = board.identity(&mut c, &seed, &identity)?;

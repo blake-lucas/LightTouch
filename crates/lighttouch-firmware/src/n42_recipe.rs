@@ -68,8 +68,10 @@ impl N42Board {
     pub fn machine_options(&self) -> BTreeMap<String, String> {
         let mut m: BTreeMap<String, String> =
             BASE_MACHINE_OPTIONS.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        if let Some(imei) = self.ident.as_ref().and_then(|i| i.get("imei")) {
-            m.insert("imei".into(), imei.to_string());
+        for key in ["imei", "imsi", "iccid"] {
+            if let Some(value) = self.ident.as_ref().and_then(|i| i.get(key)) {
+                m.insert(key.into(), value.to_string());
+            }
         }
         m
     }

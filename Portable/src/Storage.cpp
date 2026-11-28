@@ -1818,6 +1818,8 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         if (!package.empty())
             option("guest-package", lt::guest_offer(d, package.c_str()));
         std::string imei;
+        // The SIM a preparation gave a phone (firmwarekit identity::sim): the modem's, not the machine's, properties.
+        std::vector<std::string> sim;
         if (const auto *m = d->lock.find("machine")) {
             lt::require(m->kind == lt::Json::Object, "invalid machine metadata");
             for (const auto &v : m->object) {
@@ -1826,14 +1828,23 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                 lt::require(v.second.kind == lt::Json::String || v.second.kind == lt::Json::Number ||
                                 v.second.kind == lt::Json::Boolean,
                             "invalid machine option value");
-                static const std::set<std::string> safe_options = {"wifi-mac", "bt-mac", "ecid", "aes-uid",
-                                                                   "rtc-epoch", "imei"};
+                static const std::set<std::string> safe_options = {"wifi-mac",  "bt-mac", "ecid", "aes-uid",
+                                                                   "rtc-epoch", "imei",   "imsi", "iccid"};
                 // The iPhone 5's: its PPN store, its cameras and a boot without the verbose handoff (N42Board).
-                static const std::set<std::string> a6_options = {"ppn", "camera", "quiet-boot", "imei"};
+                static const std::set<std::string> a6_options = {"ppn",  "camera", "quiet-boot",
+                                                                 "imei", "imsi",   "iccid"};
                 lt::require(a6 ? a6_options.count(v.first) : safe_options.count(v.first),
                             "unsupported prepared machine property: " + v.first, LT_UNSUPPORTED);
                 if (a6 && v.first == "imei") {
                     imei = v.second.kind == lt::Json::String ? v.second.string() : v.second.text;
+                    continue;
+                }
+                if (v.first == "imsi" || v.first == "iccid") {
+                    lt::require(v.second.kind == lt::Json::String && !v.second.string().empty() &&
+                                    v.second.string().size() <= 20 &&
+                                    v.second.string().find_first_not_of("0123456789") == std::string::npos,
+                                "invalid prepared SIM: " + v.first);
+                    sim.insert(sim.end(), {"-global", "ios-baseband." + v.first + "=" + v.second.string()});
                     continue;
                 }
                 // FirmwareKit leaves a property the unit has no value for empty: the machine's default then.
@@ -1925,6 +1936,8 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         // The SIM keeps its PIN, PUK and tries left with the device's own state, as a card in the tray does.
         if (route.modem)
             d->args.insert(d->args.end(), {"-global", "ios-baseband.sim-file=" + (d->state / "sim").string()});
+        if (lt::carrier::board_has_modem(board))
+            d->args.insert(d->args.end(), sim.begin(), sim.end());
         // The fake network the device was set up with (Carrier.hpp): saved with its record, the defaults otherwise.
         if (lt::carrier::board_has_modem(board)) {
             const auto globals = lt::carrier::globals(lt::carrier::load(d->carrier));

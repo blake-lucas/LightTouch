@@ -29,7 +29,11 @@ lighttouch run REC --recover                                # after an unclean s
   Engines from different checkouts can sit side by side, one folder per arm.
 - **GL:** a VM without a GPU renders with llvmpipe, so GL-heavy games are host-GPU-bound there. Use it for CPU
   counts, BQL and correctness, not game frame rates. A real GPU host is in the local notes, if this network has one.
-- **Logs:** the worker's stderr (engine log), the record's `logs/` and `guest-serial.log` (kernel panics land there).
+- **Logs:** the worker's stderr (engine log), the record's `logs/` and `state/serial.log` (the guest kernel's
+  console: kernel panics, Wi-Fi joins).
+- **What the guest reports about itself:** `LIGHTTOUCH_LOCKDOWN=FILE lighttouch run REC --services` saves lockdown's
+  values (serial, UDID, ECID, MACs, IMEI, ICCID, activation state) as an XML plist once the guest attaches; strip
+  NULs before parsing (the iPad's `HardwarePlatform` has them). `--shot` is blank once the display has gone to sleep.
 
 For long sessions driven from another program, use `bench.py`'s `Desktop` class (`tools/bench/bench.py`) or write
 JSON lines to `run --control` yourself.

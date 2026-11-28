@@ -134,17 +134,19 @@ impl K48Board {
     fn die_id(&self) -> String {
         self.ident.as_ref().and_then(|i| i.die_id()).map(|d| d.join(":")).unwrap_or_default()
     }
-    /// What every boot of the device carries (the lock's "machine"): the modem's IMEI, the recipe's pinned clock and
-    /// K48's BCM4329 CIS address.
+    /// What every boot of the device carries (the lock's "machine"): the modem's IMEI and SIM, the recipe's pinned
+    /// clock and the Wi-Fi card's CIS address. The S5L8920 boards (iPod touch 3G, iPhone 3GS) leave the address out:
+    /// iOS uses the device tree's MAC there, never the card's, and LightTouch 0.0.15's engine has no such property on
+    /// those boards, so a device prepared now still starts in it.
     fn machine_options(&self) -> BTreeMap<String, String> {
         let mut m = BTreeMap::new();
         if let Some(i) = &self.ident {
-            if let Some(imei) = i.get("imei") {
-                m.insert("imei".into(), imei.to_string());
-            }
-            if self.board == Hardware::K48 {
-                if let Some(mac) = i.get("wifi-mac") {
-                    m.insert("wifi-mac".into(), mac.to_string());
+            for key in ["imei", "imsi", "iccid", "wifi-mac"] {
+                if key == "wifi-mac" && self.s5l8920() {
+                    continue;
+                }
+                if let Some(value) = i.get(key) {
+                    m.insert(key.into(), value.to_string());
                 }
             }
         }
