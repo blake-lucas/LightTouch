@@ -68,6 +68,7 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
+        override fun moveRecord(recordId: String, index: Int): String = Native.move(File(filesDir, "library").absolutePath, recordId, index)
         override fun carrier(recordId: String): Bundle = Native.carrierGet(File(filesDir, "library").absolutePath, recordId).let { v ->
             Bundle().apply {
                 putString("error", v[0]); putString("carrier", v[1]); putString("mccMnc", v[2])

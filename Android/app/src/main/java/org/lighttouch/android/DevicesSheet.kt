@@ -15,7 +15,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,6 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -50,15 +62,53 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
             if (host.active) Text("Stop ${host.selected?.name ?: "the running device"} to switch to or add another.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-            LazyColumn(Modifier.padding(top = 8.dp).weight(1f, fill = false)) {
-                items(host.devices, key = { it.id }) { device ->
+            // A long press on a row lifts it to drag it to another place in the list (kept in the library).
+            val listState = rememberLazyListState()
+            val drag = remember(listState) { DeviceDrag(listState) }
+            val devices = host.devices
+            val shown = drag.order?.let { order -> order.mapNotNull { id -> devices.firstOrNull { it.id == id } } } ?: devices
+            val shownIds by rememberUpdatedState(shown.map { it.id })
+            val haptics = LocalHapticFeedback.current
+            LazyColumn(Modifier.padding(top = 8.dp).weight(1f, fill = false), state = listState) {
+                itemsIndexed(shown, key = { _, device -> device.id }) { _, device ->
+                    val lifted = drag.id == device.id
+                    // The drag consumes every pointer event once the press is long, so the row's tap (select), its ⋮
+                    // (outside this area) and the sheet's drag-to-dismiss never see it; before that a scroll or the
+                    // sheet's drag takes the gesture and the press is no longer long.
+                    val handle = Modifier.pointerInput(device.id) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val press = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!drag.begin(device.id, shownIds)) return@awaitEachGesture
+                            press.consume()
+                            var dropped = false
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == press.id }
+                                    val dy = change?.positionChange()?.y ?: 0f
+                                    event.changes.forEach { it.consume() }
+                                    if (change == null || !change.pressed) break
+                                    drag.by(dy)
+                                }
+                                dropped = true
+                            } finally {
+                                val to = drag.order?.indexOf(device.id) ?: -1
+                                if (dropped && to >= 0) host.moveDevice(device.id, to)
+                                drag.clear()
+                            }
+                        }
+                    }
+                    Box(if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = drag.offset } else Modifier.animateItem()) {
                     // A running device's record is marked in use, which is not a crash to recover from.
-                    DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
+                    DeviceRow(device, lifted = lifted, handle = handle, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
                         needsRecovery = device.dirty && !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
                         onDetails = { host.openDetails(device) }, onRename = { renaming = device }, onDelete = { deleting = device },
                         exportable = !(host.active && device.selected) && !host.busy && host.transfer == null,
                         onExport = { onDismiss(); host.exportDevice(device) })
+                    }
                 }
             }
             // Add device, with a ⋮ for the other way in: a device exported by LightTouch on another phone or computer
@@ -102,15 +152,53 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     }
 }
 
+/** A device row lifted by a long press and dragged to a new place in the list: the order shown while it moves (the
+ *  others make room) and how far the row is drawn from where the list lays it out. */
+private class DeviceDrag(private val list: LazyListState) {
+    var id by mutableStateOf<String?>(null)
+        private set
+    var order by mutableStateOf<List<String>?>(null)
+        private set
+    private var start = 0
+    private var moved by mutableFloatStateOf(0f)
+
+    /** Lift [id] (shown in the order [ids]); false when it isn't laid out. */
+    fun begin(id: String, ids: List<String>): Boolean {
+        val item = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id } ?: return false
+        this.id = id; order = ids; start = item.offset; moved = 0f
+        return true
+    }
+
+    /** Follow the finger by [dy]; once the row's middle is over another row, it takes that row's place. */
+    fun by(dy: Float) {
+        moved += dy
+        val rows = list.layoutInfo.visibleItemsInfo
+        val current = rows.firstOrNull { it.key == id } ?: return
+        val middle = (start + moved + current.size / 2f).toInt()
+        val target = rows.firstOrNull { it.key != id && middle in it.offset..(it.offset + it.size) } ?: return
+        // The list keeps its first row in place by key: hold the scroll still when that row is part of the swap.
+        if (current.index == list.firstVisibleItemIndex || target.index == list.firstVisibleItemIndex)
+            list.requestScrollToItem(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
+        order = order?.moved(current.index, target.index)
+    }
+
+    /** How far the lifted row is drawn from its laid-out place: under the finger. */
+    val offset: Float get() = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }?.let { start + moved - it.offset } ?: 0f
+
+    fun clear() { id = null; order = null; moved = 0f }
+}
+
 @Composable
-private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
+private fun DeviceRow(device: DeviceSummary, lifted: Boolean, handle: Modifier, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
                       exportable: Boolean, onExport: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    val rowColor = if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
+    val rowColor = if (device.selected || lifted) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).shadow(if (lifted) 8.dp else 0.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
         .background(rowColor)
         .clickable(enabled = switchable && !device.selected, onClick = onSelect).padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
         .testTag("device_row"), verticalAlignment = Alignment.CenterVertically) {
+        // Long-pressed here, the row lifts to be dragged (DeviceDrag); the ⋮ stays outside.
+        Row(Modifier.weight(1f).then(handle), verticalAlignment = Alignment.CenterVertically) {
         Box {
             Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                 Icon(LtIcons.Phone, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -126,6 +214,7 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
             Text(device.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(device.subtitle, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         }
         if (device.selected) Icon(Icons.Filled.Check, "Selected", tint = MaterialTheme.colorScheme.primary)
         Box {

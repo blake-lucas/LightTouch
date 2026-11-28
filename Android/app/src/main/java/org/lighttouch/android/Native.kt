@@ -21,6 +21,8 @@ internal object Native {
     external fun select(libraryRoot: String, id: String): String
     external fun rename(libraryRoot: String, id: String, name: String): String
     external fun remove(libraryRoot: String, id: String): String
+    /** Move a device to [index] in the library's order, which the device list follows: "" or the error. */
+    external fun move(libraryRoot: String, id: String, index: Int): String
     /** A device's carrier settings: [error, carrier, mccMnc, registered, simPresent, bars, latitude, longitude,
      *  lastCaller, lastSender] ("1"/"0" for flags; error "" when it worked). */
     external fun carrierGet(libraryRoot: String, id: String): Array<String>
