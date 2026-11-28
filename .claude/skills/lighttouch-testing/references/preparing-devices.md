@@ -28,8 +28,9 @@ target/release/lighttouch list                       # records: id, name, board,
 - **Lean by design (`CLAUDE.md`):** no backups, retries or verification boots. If a preparation fails, prepare
   again. "keybag boot: halted without the keybag" after `[effaceable:ERR ] unable to write any units` (issue 36:
   the iPhone 4 on iOS 6/7, mostly on Windows) was the SPI NOR reading busy while the host flushed its file; since
-  engine bd85199519 only the write counts. If it comes back, save `work/keybag-1.log` from the job folder and report
-  it. To reproduce a slow flush, sleep in the engine's `nor_flush_co` (200 ms broke the old engine).
+  engine bd85199519 and 9f05c85200 only the write counts, and the flush has its own descriptor. If it comes back,
+  save `work/keybag-1.log` from the job folder and report it. To reproduce a slow flush, sleep in the engine's
+  `nor_sync` (50 ms broke the old engine).
 - **Jailbroken devices:** `--jailbreak`.
 
 `tools/bench/bench.py prepare [--config FW] [--game BUNDLE]` wraps this. It reads `$LT_BENCH_WORK/ipa/<FW>/*.ipa`
