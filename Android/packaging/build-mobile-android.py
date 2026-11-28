@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Cross-build the private guest app-services executables for Android arm64-v8a.
+"""Cross-build the private guest USB bridge for Android arm64-v8a.
 
-Outputs (OUTPUT/arm64-v8a), both static, stripped PIE executables named so the
-APK carries them as native libraries and the app can exec them from
-nativeLibraryDir (which requires extracted native libs):
+Output (OUTPUT/arm64-v8a): a static, stripped PIE executable named so the APK
+carries it as a native library and the app can exec it from nativeLibraryDir
+(which requires extracted native libs):
 
   libusbmuxd_qemu.so   usbmuxd-qemu daemon (samhenrigold/usbmuxd QEMU backend)
-  liblt_appservice.so  Android/native-services/lt_appservice.c
+
+The app service helper beside it, liblt_appservice.so, is Rust
+(crates/lighttouch-services; scripts/build.sh appservice-android).
 
 Every source is hash-pinned by build-support/dependencies.json (the daemon by
 git revision). OpenSSL, libusb, libplist, libimobiledevice-glue, libusbmuxd,
 libtatsu and libimobiledevice are built static. libtatsu is configured against
 Android/packaging/curl-stub (no network code at all): only libimobiledevice's
-tools use TSS and nothing in either executable references libtatsu, which this
+tools use TSS and nothing in the executable references libtatsu, which this
 script checks. Allowed system libraries: libc, libm, libdl, liblog.
 
   build-mobile-android.py OUTPUT [--ndk DIR] [--source-cache DIR ...] [--jobs N]
   build-mobile-android.py OUTPUT --matches [--ndk DIR]
 
 --matches exits 0 if OUTPUT's libraries and daemon were built from the current
-recipe (the helper is relinked whenever its source changes), else 1: a stale
+recipe, else 1: a stale
 OUTPUT must be rebuilt from scratch, apart from OUTPUT/sources.
 
 Archives are taken from OUTPUT/sources, then from --source-cache directories
@@ -57,7 +59,6 @@ DAEMON_PATCHES = (  # applied in this order
     # 32760-byte transactions: twice the data per guest turnaround (docs/STORAGE.md, "USB uploads").
     ('large-transactions', APP / 'build-support/patches/usbmuxd-qemu-large-transactions.patch'),
 )
-HELPER = APP / 'Android/native-services/lt_appservice.c'
 CURL_STUB = (HERE / 'curl-stub/curl/curl.h', HERE / 'curl-stub/curl_stub.c')
 DEFAULT_CACHE = Path.home() / 'Documents/LightTouch-Development/port-workspace/builds'
 
@@ -148,12 +149,9 @@ def main():
                   plist_patch_sha256=sha(PLIST_PATCH),
                   daemon_patches={name: sha(path) for name, path in DAEMON_PATCHES},
                   curl_stub_sha256={p.name: sha(p) for p in CURL_STUB},
-                  helper_source_sha256=sha(HELPER),
                   compiler=subprocess.check_output([str(cc), '--version'], text=True).splitlines()[0])
     stamp = output / 'build-recipe.json'
-    # The helper is the last link step and feeds no library, so editing it reuses the output.
-    library_inputs = lambda r: {k: v for k, v in r.items() if k != 'helper_source_sha256'}
-    current = stamp.exists() and library_inputs(json.loads(stamp.read_text())) == library_inputs(recipe)
+    current = stamp.exists() and json.loads(stamp.read_text()) == recipe
     if args.matches:
         raise SystemExit(0 if current else 1)
     if stamp.exists() and not current:
@@ -283,17 +281,10 @@ def main():
     if executable.read_bytes()[:4] != b'\x7fELF':
         raise RuntimeError('Refuse to package a libtool build-tree wrapper')
 
-    # The helper.
-    pc = subprocess.check_output(['pkg-config', '--static', '--cflags', '--libs', 'libimobiledevice-1.0', 'libplist-2.0'],
-                                 env=env, text=True).split()
-    helper = build / 'lt_appservice'
-    run([cc] + flags.split() + ['-Wall', '-Wextra', '-Wno-unused-parameter', '-Werror=implicit-function-declaration',
-                                '-fPIE', '-pie', HELPER, '-o', helper] + ldflags.split() + pc + ['-lm'], build)
-
     results = {}
     readelf = tools / 'llvm-readelf'
     nm = tools / 'llvm-nm'
-    for source, name in ((executable, 'libusbmuxd_qemu.so'), (helper, 'liblt_appservice.so')):
+    for source, name in ((executable, 'libusbmuxd_qemu.so'),):
         unstripped = build / (name + '.unstripped')
         shutil.copyfile(source, unstripped)
         # Nothing from libtatsu or the curl stub may reach a shipped executable.

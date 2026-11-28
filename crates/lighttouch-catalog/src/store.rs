@@ -4,6 +4,7 @@
 //! archive integrity, not who published the app.
 use crate::download::agent;
 use crate::target::{Target, requires_newer, version};
+use crate::throttle;
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::{Read, Write};
@@ -160,25 +161,40 @@ fn encode(text: &str) -> String {
     out
 }
 
-fn get(url: &str) -> Result<ureq::http::Response<ureq::Body>, StoreError> {
+/// One request, after its turn at the gate (`throttle`). `patient` ones (images, loaded in the background) wait out a
+/// pause the server asks for and then try once more; the rest fail with how long the pause has left.
+fn get(url: &str, patient: bool) -> Result<ureq::http::Response<ureq::Body>, StoreError> {
     if !url.starts_with("https://") || url[8..].split('/').next().is_none_or(|h| h.is_empty() || h.contains('@')) {
         return fail("The catalog supplied an invalid HTTPS address.");
     }
-    let response = agent(Duration::from_secs(30))
-        .get(url)
-        .call()
-        .map_err(|e| StoreError::Failed(format!("Couldn't reach Legacy Store. Check your connection. ({e})")))?;
-    let status = response.status().as_u16();
-    if status != 200 {
+    let mut tries = if patient { 2 } else { 1 };
+    loop {
+        tries -= 1;
+        let _permit = throttle::enter(patient).map_err(|left| StoreError::Status(429, throttle::slow_down(left)))?;
+        let response = agent(Duration::from_secs(30))
+            .get(url)
+            .call()
+            .map_err(|e| StoreError::Failed(format!("Couldn't reach Legacy Store. Check your connection. ({e})")))?;
+        let status = response.status().as_u16();
+        if status == 200 {
+            return Ok(response);
+        }
+        let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let pause = throttle::answered(status, retry_after.as_deref());
+        if pause.is_some() && tries > 0 {
+            continue;
+        }
         let body = response.into_body().with_config().limit(4096).read_to_string().unwrap_or_default();
-        let message = match status {
-            400 if body.contains("device must be one of") => "Legacy Store doesn't support this device yet.".into(),
-            503 => "The Internet Archive is busy; try again later.".into(),
+        let message = match (status, pause) {
+            (_, Some(left)) => throttle::slow_down(left),
+            (400, _) if body.contains("device must be one of") => {
+                "Legacy Store doesn't support this device yet.".into()
+            }
+            (503, _) => "The Internet Archive is busy; try again later.".into(),
             _ => format!("Legacy Store couldn't answer the request (HTTP {status})."),
         };
         return Err(StoreError::Status(status, message));
     }
-    Ok(response)
 }
 
 fn url(path: &str, query: &[(&str, &str)]) -> String {
@@ -203,7 +219,7 @@ fn fetch(url: &str, cached: bool) -> Result<Value, StoreError> {
             return Ok(value.clone());
         }
     }
-    let text = get(url)?
+    let text = get(url, false)?
         .into_body()
         .with_config()
         .limit(JSON_LIMIT)
@@ -400,7 +416,7 @@ pub fn download(
     std::fs::create_dir_all(&dir).map_err(|e| StoreError::Failed(format!("Couldn't create a download folder: {e}")))?;
     let result = (|| {
         let partial = dir.join("download.partial");
-        let response = get(&current.download_url)?;
+        let response = get(&current.download_url, false)?;
         let mut body = response.into_body().into_reader();
         let mut out = std::fs::File::create(&partial).map_err(|e| StoreError::Failed(e.to_string()))?;
         let mut digest = md5::Context::new();
@@ -443,7 +459,7 @@ pub fn download(
 /// An app icon's bytes (PNG), or `None` if it can't be fetched.
 pub fn icon(url: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    get(url).ok()?.into_body().into_reader().take(1 << 20).read_to_end(&mut bytes).ok()?;
+    get(url, true).ok()?.into_body().into_reader().take(1 << 20).read_to_end(&mut bytes).ok()?;
     Some(bytes)
 }
 
@@ -763,7 +779,7 @@ pub fn lookup(bundle_id: &str, target: &Target) -> Result<Option<Known>, StoreEr
 /// An image's bytes (a screenshot), or None if it can't be fetched.
 pub fn image(url: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    get(url).ok()?.into_body().into_reader().take(4 << 20).read_to_end(&mut bytes).ok()?;
+    get(url, true).ok()?.into_body().into_reader().take(4 << 20).read_to_end(&mut bytes).ok()?;
     Some(bytes)
 }
 

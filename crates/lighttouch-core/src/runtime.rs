@@ -1,7 +1,7 @@
 //! One device session: the leased device and its engine runtime (`lt_device_*`, `lt_runtime_*`). Only the worker
 //! process uses these; the engine may start once per process.
 use crate::ffi::{Error, Result, chars, check, cpath, cstring, opt_cpath, ptr};
-use crate::library::Library;
+use crate::library::{Library, PhaseFn, SaveState, phase_trampoline};
 use lighttouch_sys as sys;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_int, c_void};
@@ -121,6 +121,17 @@ pub struct BootOptions {
     pub headphones: bool,
     /// Guest networking; `None` boots with egress blocked and no way to turn it on until a restart.
     pub network: Option<NetworkBoot>,
+    /// A save state of the record to start from instead of booting (its headphones setting wins).
+    pub load_state: Option<String>,
+}
+
+/// Loading a save state at start (`lt_runtime_state_progress`): restoring its storage, then loading the machine.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StateProgress {
+    pub active: bool,
+    pub phase: String,
+    pub done: u64,
+    pub total: u64,
 }
 
 /// How the guest reaches the network. The engine forwards the proxy address to `proxy_socket` from boot whatever the
@@ -256,6 +267,7 @@ impl Runtime {
         let package = opt_cpath(options.guest_package.as_deref())?;
         let serial = opt_cpath(options.serial_log.as_deref())?;
         let socket = opt_cpath(options.network.as_ref().map(|n| n.proxy_socket.as_path()))?;
+        let load_state = options.load_state.as_deref().map(cstring).transpose()?;
         let mut config = sys::lt_runtime_config::new();
         config.engine_library = engine.as_ptr();
         config.device = device.raw;
@@ -270,6 +282,7 @@ impl Runtime {
             config.boot.network_local = network.local_network as u32;
             config.boot.network_socket = ptr(&socket);
         }
+        config.load_state = load_state.as_ref().map_or(std::ptr::null(), |s| s.as_ptr());
         let mut raw = std::ptr::null_mut();
         let mut error = sys::lt_error::new();
         check(unsafe { sys::lt_runtime_create(&config, &mut raw, &mut error) }, &error)?;
@@ -285,6 +298,40 @@ impl Runtime {
 
     pub fn start(&self) -> Result<()> {
         self.call(|r, e| unsafe { sys::lt_runtime_start(r, e) })
+    }
+
+    /// Save the running guest as a new state of its record (blocking; the guest stops meanwhile). `progress` sees
+    /// phase "saving" with bytes done and an estimated total, and cancels by returning false.
+    pub fn save_state(&self, name: Option<&str>, app: &str, progress: &mut PhaseFn<'_>) -> Result<SaveState> {
+        let name = name.map(cstring).transpose()?;
+        let app = cstring(app)?;
+        let mut config = sys::lt_state_save_config::new();
+        config.name = name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
+        config.app = app.as_ptr();
+        let mut info = Box::new(sys::lt_state_info::new());
+        let mut observer: &mut PhaseFn<'_> = progress;
+        let opaque = &mut observer as *mut &mut PhaseFn<'_> as *mut c_void;
+        self.call(|r, e| unsafe {
+            sys::lt_runtime_save_state(r, &config, Some(phase_trampoline), opaque, &mut *info, e)
+        })?;
+        Ok(SaveState::from_info(&info))
+    }
+
+    /// Whether a state of this record would load in a fresh worker; the reason for the user otherwise.
+    pub fn check_state(&self, state: &str) -> Result<()> {
+        let state = cstring(state)?;
+        self.call(|r, e| unsafe { sys::lt_runtime_check_state(r, state.as_ptr(), e) })
+    }
+
+    /// End the engine without shutting the guest down, to load a state over it.
+    pub fn discard(&self) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_discard(r, e) })
+    }
+
+    pub fn state_progress(&self) -> Result<StateProgress> {
+        let mut p = sys::lt_state_progress::new();
+        self.call(|r, e| unsafe { sys::lt_runtime_state_progress(r, &mut p, e) })?;
+        Ok(StateProgress { active: p.active != 0, phase: chars(&p.phase), done: p.done, total: p.total })
     }
 
     pub fn poll(&self) -> Result<Status> {

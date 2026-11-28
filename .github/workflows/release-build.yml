@@ -249,7 +249,7 @@ jobs:
           key=$( { echo "$ANDROID_NDK_VERSION"; cat release-$VER/engine/contrib/portable/{dependencies.json,crypto-dependencies.json,build-deps.py,build-crypto-deps.py,cache.py,libgpg-error-android-lock.patch} \
                     release-$VER/engine/contrib/ffmpeg/*.patch release-$VER/app/build-support/dependencies.json \
                     release-$VER/app/build-support/patches/* release-$VER/app/Android/packaging/build-mobile-android.py \
-                    release-$VER/app/Android/native-services/* release-$VER/app/Linux/packaging/patches/* \
+                    release-$VER/app/Linux/packaging/patches/* \
                     release-$VER/app/Android/packaging/patches/* release-$VER/app/Android/packaging/curl-stub/curl_stub.c release-$VER/app/Android/packaging/curl-stub/curl/curl.h; } | sha256sum | cut -c1-24)
           echo "key=$key" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v5

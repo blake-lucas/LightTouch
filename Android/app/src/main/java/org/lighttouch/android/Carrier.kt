@@ -261,7 +261,7 @@ internal fun CarrierDockButton(host: GuestHost, modifier: Modifier = Modifier) {
     var dialog by remember { mutableStateOf<CarrierDialog?>(null) }
     val inCall = host.carrier.status?.inCall == true
     Box(modifier) {
-        DockButton(LtIcons.Signal, "Carrier", { menu = true }, Modifier.fillMaxWidth(), enabled = host.status in listOf("running", "paused"),
+        DockButton(LtIcons.Signal, "Carrier", { menu = true }, Modifier.fillMaxWidth(), enabled = host.shownStatus in listOf("running", "paused"),
             tint = if (inCall) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, tag = "carrier_button")
         DropdownMenu(menu, { menu = false }) { CarrierMenuItems(host, { menu = false }) { dialog = it } }
     }
@@ -313,7 +313,7 @@ internal fun CarrierScreen(host: GuestHost, onBack: () -> Unit) {
                 }
                 // The calls and texts themselves are the dock button's (one control per action): this shows how they stand.
                 SettingsGroup("This session") {
-                    if (host.status !in listOf("running", "paused")) Text("Start the device to see its calls and texts here.",
+                    if (host.shownStatus !in listOf("running", "paused")) Text("Start the device to see its calls and texts here.",
                         style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
                     else {
                         val status = carrier.status

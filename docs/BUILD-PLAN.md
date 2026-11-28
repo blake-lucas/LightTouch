@@ -44,7 +44,7 @@ PRs get the cheap checks (Gradle preflight, `cargo test`, `portable-tests`, `and
 
 | # | What | Today | Rust side | Removes | Effort |
 |---|---|---|---|---|---|
-| 1 | Android app-services helper | `lt_appservice.c` (1.2k lines) on libimobiledevice | `lighttouch-services` already has info, list, install, uninstall, crash log; needs syslog and an SSLv3 path for iPhone OS 1.x | libimobiledevice, libusbmuxd, libtatsu, curl stub for Android | S–M |
+| 1 | Android app-services helper | done (0.0.16): `lighttouch-services`' `lt_appservice` replaced `lt_appservice.c` | still no SSLv3 path for iPhone OS 1.x (neither app has one; no 1.x device boots yet) | the C helper; libimobiledevice stays for the daemon's pairing | — |
 | 2 | QEMU usbmuxd daemon (all platforms) | C daemon + patches; Windows `Windows/usbmux/`; macOS borrowed from another app | client and pairing exist; the daemon side is new (`qemu-ios/docs/tcp-usb-protocol.md`) | `build-mobile-android.py` and its 7 C packages, Linux shared libs, Windows/macOS bridge builds | L |
 | 3 | Kotlin that mirrors Rust | ~1.25k lines: Legacy Store client, IPA preflight, firmware catalog, install queue, guest tools | `lighttouch-catalog`, `lighttouch-model` | duplicate logic | M–L, needs a JNI library pattern |
 | 4 | Portable library and storage | `Storage.cpp`, `Library.cpp`, `NandDisk.hpp` (~2.8k lines) | `nand_disk.rs` already duplicates `NandDisk.hpp` | duplicated writers | L |

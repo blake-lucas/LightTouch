@@ -9,6 +9,7 @@
 #include "Base64.hpp"
 #include "GuestNetwork.hpp"
 #include "Carrier.hpp"
+#include "States.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
 #include <atomic>
@@ -146,6 +147,12 @@ struct Engine {
     // Optional: the vibration motor (engines before API 2.2 lack it).
     decltype(&qemu_ios_ui_vibrator) vibrator = nullptr;
     void (*storage_sync_hold)(bool) = nullptr;  // qemu_ios_storage_sync_hold; typed here so older headers build
+    // Optional: save states (engines before them lack all five).
+    decltype(&qemu_ios_state_save) state_save = nullptr;
+    decltype(&qemu_ios_state_load) state_load = nullptr;
+    decltype(&qemu_ios_state_resume) state_resume = nullptr;
+    decltype(&qemu_ios_state_ram_bytes) state_ram_bytes = nullptr;
+    const char *(*build_id)(void) = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -236,6 +243,15 @@ struct Engine {
             vibrator = reinterpret_cast<decltype(vibrator)>(lt::os::library_symbol(library, "qemu_ios_ui_vibrator"));
             storage_sync_hold = reinterpret_cast<decltype(storage_sync_hold)>(
                 lt::os::library_symbol(library, "qemu_ios_storage_sync_hold"));
+            state_save = reinterpret_cast<decltype(state_save)>(lt::os::library_symbol(library, "qemu_ios_state_save"));
+            state_load = reinterpret_cast<decltype(state_load)>(lt::os::library_symbol(library, "qemu_ios_state_load"));
+            state_resume =
+                reinterpret_cast<decltype(state_resume)>(lt::os::library_symbol(library, "qemu_ios_state_resume"));
+            state_ram_bytes = reinterpret_cast<decltype(state_ram_bytes)>(
+                lt::os::library_symbol(library, "qemu_ios_state_ram_bytes"));
+            build_id = reinterpret_cast<decltype(build_id)>(lt::os::library_symbol(library, "qemu_ios_build_id"));
+            if (!state_save || !state_load || !state_resume || !state_ram_bytes || !build_id)
+                state_save = nullptr, state_load = nullptr, state_resume = nullptr, state_ram_bytes = nullptr;
         } catch (...) {
             lt::os::library_close(library);
             library = nullptr;
@@ -339,8 +355,23 @@ struct lt_runtime {
     std::string modem_last_raw, modem_before_write;
     uint64_t modem_write_ns = 0;
     std::string fault;
+    // Save states (States.cpp): the guest package and headphones this boot runs with, which a state records; the
+    // state being loaded (lt_runtime_config.load_state), its loader thread and progress; and a save or load under way,
+    // during which the publisher leaves the engine's run state alone (the engine stops the guest itself).
+    std::string guest_package_sha256;
+    uint32_t headphones = 0;
+    std::unique_ptr<lt::states::Load> load;
+    // The saved storage's bytes, counted ahead of the machine's in a load's progress.
+    uint64_t load_storage_bytes = 0;
+    std::thread loader;
+    std::mutex progress_mutex;
+    lt_state_progress progress{sizeof(lt_state_progress), LT_ABI_VERSION, 0, 0, {}, 0, 0};
+    std::atomic<bool> state_busy{false};
+    std::mutex save_mutex;
     explicit lt_runtime(lt_device *d) : device(d) {}
     ~lt_runtime() {
+        if (loader.joinable())
+            loader.join();
         if (guest.joinable())
             guest.join();
         if (publisher.joinable())
@@ -365,6 +396,124 @@ struct lt_runtime {
             lt::os::close(debug_qmp_fd);
         }
 #endif
+    }
+    void set_progress(const std::string &phase, uint64_t done, uint64_t total, bool active) {
+        std::lock_guard<std::mutex> lock(progress_mutex);
+        progress.active = active;
+        snprintf(progress.phase, sizeof progress.phase, "%s", phase.c_str());
+        progress.done = done;
+        progress.total = total;
+    }
+    // One bar for the whole load, which never goes back: the saved storage first, then the machine.
+    static int load_observer(void *opaque, const char *phase, uint64_t done, uint64_t total) {
+        auto *r = static_cast<lt_runtime *>(opaque);
+        if (strcmp(phase, "restoring") == 0) {
+            const auto *machine = r->load->reader->find("machine.state");
+            r->load_storage_bytes = total;
+            r->set_progress(phase, done, total + (machine ? machine->size : 0), true);
+        } else {
+            r->set_progress(phase, r->load_storage_bytes + done, r->load_storage_bytes + total, true);
+        }
+        return 0;
+    }
+    void load_failed(const std::string &why) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (fault.empty())
+                fault = "The save state could not be loaded: " + why;
+        }
+        worker_failed = true;
+        set_progress("", 0, 0, false);
+    }
+    // Before the engine opens the device's storage: the state's in its place.
+    bool restore_storage() {
+        try {
+            lt::states::Observer observer{&lt_runtime::load_observer, this};
+            lt::states::restore_storage(*load, device, observer);
+            return true;
+        } catch (const std::exception &e) {
+            load_failed(e.what());
+            state_busy = false;
+            return false;
+        }
+    }
+    // The machine, into the engine started stopped (-S), once it is ready; then the guest runs.
+    void load_machine() {
+        std::string why;
+        while (!done && !engine->ready())
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (done) {
+            load_failed("the engine ended before it could load");
+            state_busy = false;
+            return;
+        }
+        // The zip's reader pushes the stream; the engine pulls it: a bounded queue between them.
+        struct Pipe {
+            std::mutex m;
+            std::condition_variable cv;
+            std::deque<std::vector<uint8_t>> chunks;
+            size_t offset = 0;
+            bool finished = false, aborted = false;
+            std::string error;
+        } pipe;
+        std::thread producer([&] {
+            try {
+                lt::states::Observer observer{&lt_runtime::load_observer, this};
+                lt::states::read_machine(
+                    *load,
+                    [&](const uint8_t *p, size_t n) {
+                        std::unique_lock<std::mutex> lock(pipe.m);
+                        pipe.cv.wait(lock, [&] { return pipe.aborted || pipe.chunks.size() < 8; });
+                        if (pipe.aborted)
+                            throw lt::Failure(LT_CANCELLED, "cancelled");
+                        pipe.chunks.emplace_back(p, p + n);
+                        pipe.cv.notify_all();
+                    },
+                    observer);
+            } catch (const std::exception &e) {
+                std::lock_guard<std::mutex> lock(pipe.m);
+                if (pipe.error.empty() && !pipe.aborted)
+                    pipe.error = e.what();
+            }
+            std::lock_guard<std::mutex> lock(pipe.m);
+            pipe.finished = true;
+            pipe.cv.notify_all();
+        });
+        auto read = [](void *opaque, void *buffer, size_t size) -> long {
+            auto &p = *static_cast<Pipe *>(opaque);
+            std::unique_lock<std::mutex> lock(p.m);
+            p.cv.wait(lock, [&] { return !p.chunks.empty() || p.finished; });
+            if (p.chunks.empty())
+                return p.error.empty() ? 0 : -EIO;
+            auto &front = p.chunks.front();
+            const size_t n = std::min(size, front.size() - p.offset);
+            memcpy(buffer, front.data() + p.offset, n);
+            p.offset += n;
+            if (p.offset == front.size()) {
+                p.chunks.pop_front();
+                p.offset = 0;
+                p.cv.notify_all();
+            }
+            return long(n);
+        };
+        char error[256] = {};
+        const int result = engine->state_load(read, &pipe, error, sizeof error);
+        {
+            std::lock_guard<std::mutex> lock(pipe.m);
+            pipe.aborted = true;
+            pipe.cv.notify_all();
+        }
+        producer.join();
+        if (result < 0) {
+            load_failed(!pipe.error.empty() ? pipe.error : error);
+            state_busy = false;
+            engine->cancel();
+            engine->quit();
+            return;
+        }
+        state_busy = false;
+        engine->state_resume(true);
+        set_progress("", 0, 0, false);
     }
     // Without verdicts the guest's loader reverts any package it was not told is good after two
     // boots and refuses it from then on (GuestPackageJudge).
@@ -399,7 +548,7 @@ struct lt_runtime {
         lt::GuestPackageJudge package_judge;
         while (!done) {
             try {
-                if (engine->ready()) {
+                if (engine->ready() && !state_busy) {
                     const bool actual_paused = engine->paused();
                     lt::VmPauseControl::Action pause_action = lt::VmPauseControl::Action::none;
                     bool shutdown_ready = false;
@@ -673,6 +822,24 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
             lt::require(std::string(boot.machine) == facts.machine, "machine does not match prepared base");
         else
             boot.machine = facts.machine;
+        // What a save state records of this boot, and a state to load checked against it before anything changes.
+        {
+            const std::string package = boot.guest_package_path && *boot.guest_package_path
+                                            ? std::string(boot.guest_package_path)
+                                            : lt::prepared_guest_package(c->device);
+            runtime->guest_package_sha256 = package.empty() ? "" : lt::digest_file(package);
+        }
+        if (c->load_state) {
+            lt::require(runtime->engine->state_load, "This version of the engine can't load save states",
+                        LT_UNSUPPORTED);
+            runtime->load =
+                lt::states::open(c->device, c->load_state, runtime->engine->build_id(), runtime->guest_package_sha256);
+            boot.headphones = runtime->load->headphones;
+            std::lock_guard<std::mutex> lock(runtime->progress_mutex);
+            runtime->progress.active = 1;
+            snprintf(runtime->progress.phase, sizeof runtime->progress.phase, "restoring");
+        }
+        runtime->headphones = boot.headphones;
         int argc = 0;
         const char *const *argv = nullptr;
         lt_error nested{sizeof(nested), 1, 0, {}};
@@ -680,6 +847,10 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::require(status == LT_OK, nested.message, status);
         for (int i = 0; i < argc; i++)
             runtime->argv.push_back(const_cast<char *>(argv[i]));
+        // A state loads into a machine that has not run: the engine starts stopped and loads before its first
+        // instruction (lt_runtime_start).
+        if (runtime->load)
+            runtime->argv.push_back(const_cast<char *>("-S"));
         runtime->argv.push_back(nullptr);
         if (const char *log = getenv("LT_LOG_ARGV"); log && *log) {
             // The engine's command line, one argument a line, for reproducing a boot outside the app.
@@ -818,9 +989,16 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
             if (r->engine->attach)
                 r->engine->attach(&lt_runtime::engine_frame, r);
             r->publisher_running = true;
+            if (r->load)
+                r->state_busy = true;
             r->publisher = std::thread([r] { r->publish(); });
             r->guest = std::thread([r] {
                 lt::prefer_fast_cores();
+                if (r->load && !r->restore_storage()) {
+                    r->exit_code = -1;
+                    r->done = true;
+                    return;
+                }
                 int result = r->engine->main(int(r->argv.size() - 1), r->argv.data());
                 if (r->engine->storage_failed())
                     r->storage_failed = true;
@@ -829,6 +1007,8 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
                 r->exit_code = result;
                 r->done = true;
             });
+            if (r->load)
+                r->loader = std::thread([r] { r->load_machine(); });
         } catch (const std::exception &x) {
             r->exit_code = -1;
             r->storage_failed = true;
@@ -1107,6 +1287,110 @@ lt_status lt_runtime_modem_status(lt_runtime *r, char *out, uint32_t capacity, l
         memcpy(out, json.c_str(), json.size() + 1);
     });
 }
+lt_status lt_runtime_save_state(lt_runtime *r, const lt_state_save_config *c, lt_import_phase_fn fn, void *opaque,
+                                lt_state_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::abi(c);
+        lt::abi(out);
+        lt::require(r && r->started && !r->done && !r->stopping, "The device isn't running", LT_AGAIN);
+        lt::require(r->engine->state_save, "This version of the engine can't save states", LT_UNSUPPORTED);
+        lt::require(r->engine->ready() && !r->state_busy, "The device is still starting", LT_AGAIN);
+        std::unique_lock<std::mutex> once(r->save_mutex, std::try_to_lock);
+        lt::require(once.owns_lock(), "A save is already under way", LT_BUSY);
+        lt::states::SaveRequest request;
+        request.name = c->name ? c->name : "";
+        request.app = c->app ? c->app : "";
+        request.engine = r->engine->build_id();
+        request.guest_package_sha256 = r->guest_package_sha256;
+        request.headphones = r->headphones;
+        request.machine_estimate = r->engine->state_ram_bytes();
+        // The screen as the user last saw it, for the thumbnail.
+        {
+            std::vector<uint8_t> pixels;
+            lt_frame_info f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
+            const auto acquired =
+                lt::acquire_frame(pixels, 0, f, [&](void *p, size_t capacity, uint64_t since, lt_frame_info &info) {
+                    QemuIosPortableFrame meta{sizeof(meta), 1, 0, 0, 0, 0, 0, 0, 0};
+                    const int result = r->engine->frame(p, capacity, since, &meta);
+                    if (result == QEMU_IOS_NO_FRAME)
+                        return lt::FrameCopy::no_frame;
+                    if (result != QEMU_IOS_OK && result != QEMU_IOS_BUFFER_SMALL)
+                        return lt::FrameCopy::not_ready;
+                    info = {sizeof(info), 1,           meta.width,        meta.height,        meta.stride,
+                            meta.format,  meta.serial, meta.timestamp_ns, meta.required_bytes};
+                    return result == QEMU_IOS_OK ? lt::FrameCopy::copied : lt::FrameCopy::small;
+                });
+            if (acquired == lt::FrameAcquire::copied && f.width && f.height && f.stride >= f.width * 4) {
+                request.picture.width = f.width;
+                request.picture.height = f.height;
+                request.picture.bgra.resize(size_t(f.width) * f.height * 4);
+                for (uint32_t y = 0; y < f.height; ++y)
+                    memcpy(&request.picture.bgra[size_t(y) * f.width * 4], &pixels[size_t(y) * f.stride],
+                           size_t(f.width) * 4);
+            }
+        }
+        request.machine = [r](const std::function<void(const void *, size_t)> &sink) {
+            struct Writer {
+                const std::function<void(const void *, size_t)> *sink;
+                std::string error;
+            } writer{&sink, {}};
+            auto write = [](void *opaque, const void *p, size_t n) -> int {
+                auto &w = *static_cast<Writer *>(opaque);
+                try {
+                    (*w.sink)(p, n);
+                    return 0;
+                } catch (const std::exception &x) {
+                    w.error = x.what();
+                    return -EIO;
+                }
+            };
+            char error[256] = {};
+            r->state_busy = true;
+            const int result = r->engine->state_save(write, &writer, error, sizeof error);
+            if (result < 0)
+                throw lt::Failure(LT_ENGINE, writer.error.empty()
+                                                 ? std::string("The state could not be saved: ") + error
+                                                 : writer.error);
+        };
+        request.resume = [r] {
+            r->engine->state_resume(false);
+            r->state_busy = false;
+        };
+        lt::states::Observer observer{fn, opaque};
+        try {
+            lt::states::save(r->device, request, observer, out);
+        } catch (...) {
+            r->state_busy = false;
+            throw;
+        }
+    });
+}
+lt_status lt_runtime_check_state(lt_runtime *r, const char *state, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && state, "state ID missing");
+        lt::require(r->engine->state_load, "This version of the engine can't load save states", LT_UNSUPPORTED);
+        lt::states::open(r->device, state, r->engine->build_id(), r->guest_package_sha256);
+    });
+}
+lt_status lt_runtime_discard(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->started, "runtime not active", LT_AGAIN);
+        if (r->done)
+            return;
+        std::lock_guard<std::mutex> lock(r->mutex);
+        r->stopping = true;
+        r->engine->cancel();
+        r->engine->quit();
+    });
+}
+lt_status lt_runtime_state_progress(lt_runtime *r, lt_state_progress *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        std::lock_guard<std::mutex> lock(r->progress_mutex);
+        *out = r->progress;
+    });
+}
 lt_status lt_runtime_destroy(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r, "null runtime");
@@ -1120,6 +1404,10 @@ lt_status lt_runtime_copy_frame(lt_runtime *r, void *p, uint64_t capacity, uint6
         lt::require(r && p && seq, "invalid frame output");
         lt::abi(out);
         lt::require(capacity <= SIZE_MAX, "frame capacity overflow");
+        // While a state loads, the machine isn't the state's yet: whatever its display shows (a boot logo) never
+        // reaches the screen, which keeps the last frame until the state's first one.
+        if (r->load && r->state_busy)
+            throw lt::Failure(LT_AGAIN, "a state is loading");
         QemuIosPortableFrame f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
         int result = r->engine->frame(p, size_t(capacity), *seq, &f);
         if (result == QEMU_IOS_NO_FRAME)
@@ -1136,6 +1424,8 @@ lt_status lt_runtime_frame_metadata(lt_runtime *r, uint64_t since, lt_frame_info
     const auto status = lt::guard(e, [&] {
         lt::require(r, "invalid frame metadata runtime");
         lt::abi(out);
+        if (r->load && r->state_busy)
+            return; // not ready: as lt_runtime_copy_frame
         const auto result = lt::read_frame_metadata(r->shared, since, *out);
         lt::require(result != lt::MetadataRead::invalid, "invalid published frame metadata", LT_ENGINE);
         ready = result == lt::MetadataRead::fresh;

@@ -5,13 +5,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+# Android's app-service helper (liblt_appservice.so in the APK): one request per process, JSON lines on stdout.
+name = "lt_appservice"
+path = "src/bin/lt_appservice.rs"
+
 [features]
+default = ["bridge"]
+# Starting the USB bridge daemon (the desktop app's worker); the Android helper only talks to the app's daemon.
+bridge = ["dep:lighttouch-core"]
 # Build OpenSSL from source (packaged builds); otherwise the system library is used.
-vendored-openssl = ["openssl/vendored", "lighttouch-core/vendored-openssl"]
+vendored-openssl = ["openssl/vendored", "lighttouch-core?/vendored-openssl"]
 
 [dependencies]
 lighttouch-catalog = { path = "../lighttouch-catalog" }
-lighttouch-core = { path = "../lighttouch-core" }
+lighttouch-core = { path = "../lighttouch-core", optional = true }
 openssl = "0.10"
 plist = "1"
 serde_json = "1"

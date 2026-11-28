@@ -10,7 +10,8 @@
 #   android        build/android/LightTouch-debug.apk (+ engine, android-usb) arm64 debug APK (LT_ANDROID_ENGINE /
 #                                                             LT_ANDROID_USB: prebuilt ones; LT_APP_ID_SUFFIX/LT_APP_LABEL:
 #                                                             a side-by-side install)
-#   android-usb    build/android/usb/arm64-v8a/                the APK's USB bridge (usbmuxd-qemu) and app service helper
+#   android-usb    build/android/usb/arm64-v8a/                the APK's USB bridge (usbmuxd-qemu)
+#   appservice-android build/appservice/android/               the APK's app service helper (lighttouch-services, Rust)
 #   linux-usb      build/linux/usb/                            usbmuxd-qemu and its libraries for the desktop app
 #                                                             (LIGHTTOUCH_USBMUXD), built in the release's Debian 11 image
 #   windows-usb    build/windows/usb/{bin,licenses}            the Windows bridge (lighttouch-usbmuxd.exe and its DLLs),
@@ -153,7 +154,7 @@ build_android_engine() {
 build_android_usb() {
     local o="$OBJ/android-usb" ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
     local s="$REPO/Android/packaging/build-mobile-android.py"
-    log "android-usb (usbmuxd-qemu and the app service helper, arm64-v8a)"
+    log "android-usb (usbmuxd-qemu, arm64-v8a)"
     if [ -e "$o/build-recipe.json" ] && ! python3 "$s" "$o" --ndk "$ndk" --matches; then
         echo "the bridge's recipe changed: rebuilding $o"
         find "$o" -mindepth 1 -maxdepth 1 ! -name sources -exec rm -rf {} +
@@ -232,7 +233,7 @@ build_android() {
     local engine="${LT_ANDROID_ENGINE:-$OUT/android/engine}"
     if [ -n "${LT_ANDROID_ENGINE:-}" ]; then need "$engine/arm64-v8a/libqemu-arm.so" "LT_ANDROID_ENGINE engine"
     else build_android_engine; fi
-    # LT_ANDROID_USB=DIR (libusbmuxd_qemu.so and liblt_appservice.so, an android-usb output) packages that bridge.
+    # LT_ANDROID_USB=DIR (libusbmuxd_qemu.so, an android-usb output) packages that bridge.
     local usb="${LT_ANDROID_USB:-$OUT/android/usb/arm64-v8a}"
     if [ -n "${LT_ANDROID_USB:-}" ]; then need "$usb/libusbmuxd_qemu.so" "LT_ANDROID_USB bridge"
     else build_android_usb; fi
@@ -243,6 +244,7 @@ build_android() {
     # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (cargo is
     # incremental), or the APK carries whatever firmwarekit was last built.
     build_firmwarekit_android
+    build_appservice_android
     # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
     # prepares); without them the APK still builds, but new devices get no guest tools and preparation cannot run.
     local tools="${LT_GUEST_TOOLS:-$OUT/firmware-tools}" guest=()
@@ -256,7 +258,7 @@ build_android() {
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
         -PnetworkDeps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" \
-        -PengineRoot="$engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
+        -PengineRoot="$engine" -PfirmwareKitDir="$OUT/firmwarekit/android" -PappServiceDir="$OUT/appservice/android" \
         -PengineNoticeArm64="$engine/arm64-v8a/notices" \
         -PappIdSuffix="${LT_APP_ID_SUFFIX:-}" -PappLabel="${LT_APP_LABEL:-LightTouch}" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
@@ -312,6 +314,24 @@ build_firmwarekit_android() {
     ls -la "$OUT/firmwarekit/android"
 }
 
+# The app service helper (liblt_appservice.so in the APK: installs, app lists, crash reports, the guest's log) is the
+# desktop's lighttouch-services crate as a program, with OpenSSL built from source for the NDK (openssl-src).
+build_appservice_android() {
+    log "app service helper (android arm64)"
+    (cd "$REPO" && ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" PATH="$NDK_BIN:$PATH" \
+        CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang" AR_aarch64_linux_android="$NDK_BIN/llvm-ar" \
+        RANLIB_aarch64_linux_android="$NDK_BIN/llvm-ranlib" \
+        CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android29-clang" \
+        cargo build --release --locked --target aarch64-linux-android -p lighttouch-services --no-default-features \
+            --features vendored-openssl --bin lt_appservice 2>&1 | tail -3)
+    rm -rf "$OUT/appservice/android"; mkdir -p "$OUT/appservice/android"
+    "$NDK_BIN/llvm-strip" -o "$OUT/appservice/android/lt_appservice" "$REPO/target/aarch64-linux-android/release/lt_appservice"
+    python3 "$REPO/crates/lighttouch-firmware/stage-notices.py" "$OUT/appservice/android/licenses" --target aarch64-linux-android \
+        --package lighttouch-services --no-default-features --features vendored-openssl \
+        --source-reference "${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}"
+    ls -la "$OUT/appservice/android"
+}
+
 mac() { [ -n "$LT_MAC" ] || { echo "$1 builds on a Mac: set LT_MAC=user@host (docs/BUILDING.md)" >&2; exit 1; }; }
 
 build_guest_package() {
@@ -362,13 +382,13 @@ clean=0; targets=()
 for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
-    -h|--help) sed -n 2,31p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,32p "$0"; exit 0 ;;
     all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|android-engine|android|android-test|android-usb|linux-usb|windows-usb|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    linux-engine|android-engine|android|android-test|android-usb|linux-usb|windows-usb|portable-tests|firmwarekit|firmwarekit-android|appservice-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
-[ ${#targets[@]} -gt 0 ] || { sed -n 2,31p "$0"; exit 2; }
+[ ${#targets[@]} -gt 0 ] || { sed -n 2,32p "$0"; exit 2; }
 for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in

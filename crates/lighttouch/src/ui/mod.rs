@@ -2,6 +2,7 @@
 //! another toolkit could replace this module.
 mod carrier;
 mod controller;
+mod details;
 mod device_frame;
 mod devshot;
 mod fullscreen;
@@ -18,6 +19,7 @@ mod screen_scaling;
 mod settings;
 mod setup;
 mod sidebar;
+mod states;
 mod storage;
 mod store;
 pub mod theme;
@@ -49,6 +51,8 @@ pub enum Page {
     /// Prepare from an IPSW (its step lives in `App::prepare`).
     Prepare,
     Store,
+    /// A device's Details page (`App::details` holds which, and its facts).
+    Details,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +90,15 @@ pub enum Dialog {
     Library(lighttouch_model::library_move::Choice),
     /// The folder chosen for the devices isn't there (shown at start).
     MissingLibrary,
+    /// Save states (states.rs): load one over the running device, delete one.
+    LoadState {
+        id: String,
+        name: String,
+    },
+    DeleteState {
+        id: String,
+        name: String,
+    },
 }
 
 pub struct App {
@@ -101,9 +114,11 @@ pub struct App {
     pub setup: setup::SetupState,
     pub prepare: prepare::PrepareState,
     pub licenses: licenses::LicenseState,
+    pub details: Option<details::DetailsState>,
     pub inspector: Option<inspector::InspectorState>,
     pub controller: controller::ControllerUi,
     pub carrier: carrier::CarrierUi,
+    pub states_ui: states::StatesUi,
     pub screen_scaling: screen_scaling::ScreenScalingState,
     /// Where the device page last put the device's room within the page: left, top, right and bottom insets in
     /// points. The Screen scaling preview predicts the device view from it.
@@ -410,9 +425,11 @@ impl App {
             setup: setup::SetupState::default(),
             prepare,
             licenses: licenses::LicenseState::default(),
+            details: None,
             inspector: None,
             controller: controller::ControllerUi::default(),
             carrier: carrier::CarrierUi::default(),
+            states_ui: Default::default(),
             screen_scaling: Default::default(),
             device_view_insets: None,
             paused_for_hidden: false,
@@ -892,6 +909,8 @@ impl App {
                         }
                     });
                 }
+                Dialog::LoadState { id, name } => close = states::load_dialog(self, ui, &id, &name),
+                Dialog::DeleteState { id, name } => close = states::delete_dialog(self, ui, &id, &name),
                 Dialog::CarrierCall { mut number } => {
                     if carrier::call_dialog(self, ui, &mut number) {
                         close = true;
@@ -1024,9 +1043,11 @@ impl eframe::App for App {
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),
                     Page::Store => store::show(self, ui),
+                    Page::Details => details::show(self, ui),
                 }
             });
         }
+        states::panel(self, &ctx);
         self.dialogs(&ctx);
         self.notices(&ctx);
         controller::window(self, &ctx);

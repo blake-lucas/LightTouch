@@ -197,6 +197,23 @@ QemuIosSnapshotStatus qemu_ios_snapshot_status(char *errbuf, unsigned long errle
  * (qemu_ios_set_foreground(true) is the only other thing that restarts it). */
 void qemu_ios_snapshot_resume(void);
 
+/*
+ * Save states: the whole machine to a stream the host writes where it likes, and back (qemu-ios-ui.c, "save states").
+ * Blocking; call from a host thread, never the engine's. 0, or a negative errno with the reason in err.
+ *
+ * _save stops the guest and leaves it stopped, so the host can copy the device's storage while it agrees with the
+ * saved RAM; _resume then restarts it if it was running (always: even if it was not). _load goes into a machine
+ * started with -S over the saved storage, before it has run, and leaves it stopped for _resume(true).
+ * _ram_bytes: the machine's RAM in bytes, for a save's progress estimate (zero pages take almost no stream).
+ * write returns 0 or a negative errno; read returns the bytes read (0 at the end) or a negative errno.
+ */
+typedef int (*QemuIosStateWrite)(void *opaque, const void *buf, size_t len);
+typedef long (*QemuIosStateRead)(void *opaque, void *buf, size_t len);
+int qemu_ios_state_save(QemuIosStateWrite write, void *opaque, char *err, unsigned long errlen);
+int qemu_ios_state_load(QemuIosStateRead read, void *opaque, char *err, unsigned long errlen);
+void qemu_ios_state_resume(bool always);
+uint64_t qemu_ios_state_ram_bytes(void);
+
 /* Portable extension 1.0. Existing qemu_ios API 2.2 remains unchanged.
  * Caller owns all structs/buffers. Calls may originate on the host thread;
  * queued input executes on the engine thread. One engine per process. */

@@ -1,8 +1,9 @@
 //! Developer hook for checking the UI where nothing can capture the screen (over ssh on macOS or Windows):
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
-//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
+//! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store, screen-scaling, scaling-full for its full screen preview, details for
+//! the selected device's Details) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device (`LIGHTTOUCH_UI_FULLSCREEN=1` full screen). `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
-//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_ERROR=text` shows an error,
+//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog (`controls` the Controls one), `LIGHTTOUCH_UI_STATES=1` the States panel, `LIGHTTOUCH_UI_ERROR=text` shows an error,
 //! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
 //! it starts preparing, on the device page, or on its own page with `LIGHTTOUCH_UI_PAGE=prepare`; with
 //! `LIGHTTOUCH_UI_PICK=file` it is chosen as from the file dialog). `LIGHTTOUCH_UI_EXPORT=file.zip` exports the logs (Settings › Diagnostics) as the window is
@@ -83,6 +84,12 @@ pub fn start(app: &mut App) {
     if std::env::var_os("LIGHTTOUCH_UI_FULLSCREEN").is_some() {
         app.fullscreen = true;
     }
+    // LIGHTTOUCH_UI_PAGE=details opens the selected device's Details.
+    if std::env::var("LIGHTTOUCH_UI_PAGE").is_ok_and(|p| p == "details")
+        && let Some(device) = app.model.devices.iter().find(|d| d.selected).cloned()
+    {
+        super::details::open(app, &device);
+    }
     // LIGHTTOUCH_UI_PAGE=scaling-full opens Screen scaling's full screen preview.
     if std::env::var("LIGHTTOUCH_UI_PAGE").is_ok_and(|p| p == "scaling-full") {
         app.screen_scaling.fullscreen = Some(Instant::now());
@@ -140,6 +147,7 @@ pub fn start(app: &mut App) {
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {
         app.model.error = Some(error);
     }
+    app.states_ui.open = std::env::var_os("LIGHTTOUCH_UI_STATES").is_some();
     match std::env::var("LIGHTTOUCH_UI_DIALOG").as_deref() {
         Ok("stop") => app.dialog = Some(super::Dialog::Stop),
         Ok("controls") => app.dialog = Some(super::Dialog::Controls),
@@ -181,7 +189,15 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
             }
         }
     }
+    states_tick(app);
+    // LIGHTTOUCH_UI_SHOT_RESTORING=FRACTION: the shot is taken once a state's load passes that far (its overlay).
+    let restoring_at = std::env::var("LIGHTTOUCH_UI_SHOT_RESTORING").ok().and_then(|v| v.parse::<f32>().ok());
+    let restored = app.model.restoring().is_some()
+        && app.model.state_job().is_some_and(|j| j.total > 0 && Some(j.fraction()) >= restoring_at);
     let Some(shot) = &mut app.dev_shot else { return };
+    if restoring_at.is_some() && !shot.requested {
+        shot.at = if restored { Instant::now() } else { Instant::now() + Duration::from_secs(3600) };
+    }
     if shot.install.is_some() && app.model.store.guest_ready() {
         let path = shot.install.take().unwrap();
         eprintln!("install: queueing {}", path.display());
@@ -223,4 +239,33 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
         });
     }
     ctx.request_repaint_after(Duration::from_millis(100));
+}
+
+/// LIGHTTOUCH_UI_SAVE_AT=SECONDS saves the running device once it has run that long (as the States menu does);
+/// LIGHTTOUCH_UI_LOAD_AT=SECONDS then loads the newest state into it while it runs. Progress and outcomes go to stderr.
+fn states_tick(app: &mut App) {
+    static SAVED: AtomicBool = AtomicBool::new(false);
+    static LOADED: AtomicBool = AtomicBool::new(false);
+    let at = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<u64>().ok()).map(Duration::from_secs);
+    let ran = app.model.session.as_ref().map(|s| s.started_at.elapsed());
+    if let (Some(save), Some(ran)) = (at("LIGHTTOUCH_UI_SAVE_AT"), ran)
+        && ran > save
+        && app.model.can_save_state()
+        && !SAVED.swap(true, Ordering::AcqRel)
+    {
+        eprintln!("states: saving");
+        app.model.save_state(None);
+    }
+    if let (Some(load), Some(ran)) = (at("LIGHTTOUCH_UI_LOAD_AT"), ran)
+        && ran > load
+        && SAVED.load(Ordering::Acquire)
+        && app.model.can_load_state()
+        && !LOADED.swap(true, Ordering::AcqRel)
+    {
+        let newest = app.model.states().first().map(|s| s.id.clone());
+        eprintln!("states: loading {newest:?} into the running device");
+        if let Some(id) = newest {
+            app.model.load_state(&id);
+        }
+    }
 }

@@ -50,6 +50,25 @@ impl Phase {
     }
 }
 
+/// A save state being saved or loaded (`Session::state_job`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateJob {
+    /// Loading at start (restoring the storage, then the machine), or saving.
+    pub loading: bool,
+    pub done: u64,
+    pub total: u64,
+}
+
+impl StateJob {
+    pub fn fraction(&self) -> f32 {
+        if self.total == 0 { 0.0 } else { (self.done as f64 / self.total as f64).min(1.0) as f32 }
+    }
+
+    pub fn label(&self) -> &'static str {
+        if self.loading { "Loading state" } else { "Saving state" }
+    }
+}
+
 pub struct Session {
     pub record_id: String,
     pub name: String,
@@ -109,6 +128,15 @@ pub struct Session {
     stop_requested: Option<Instant>,
     /// Force stop: the worker was killed on purpose, so its exit is not a crash.
     forced: bool,
+    /// A save state being saved, or loaded as this session starts, with its progress.
+    pub state_job: Option<StateJob>,
+    /// A save that finished (taken by the model), or why one failed.
+    pub state_saved: Option<lighttouch_core::library::SaveState>,
+    pub state_failed: Option<String>,
+    /// The worker's answer to `check_state`: the state, and why it wouldn't load.
+    pub state_checked: Option<(String, Option<String>)>,
+    /// Ended on purpose to load a state over it (`discard`): its exit is not a crash.
+    pub discarded: bool,
 }
 
 pub struct StartOptions {
@@ -125,6 +153,8 @@ pub struct StartOptions {
     pub extra_env: Vec<(String, String)>,
     pub usb: Option<lighttouch_core::protocol::UsbArgs>,
     pub network: Option<NetworkArgs>,
+    /// A save state of the record to start from instead of booting.
+    pub load_state: Option<String>,
 }
 
 impl Session {
@@ -147,6 +177,7 @@ impl Session {
             microphone: options.microphone,
             usb: options.usb.clone(),
             network: options.network.clone(),
+            load_state: options.load_state.clone(),
         };
         // Each start begins a new engine log; the one before stays as its previous generation.
         let mut log = lighttouch_core::logs::CappedLog::start(&options.log_dir, lighttouch_core::logs::ENGINE)
@@ -157,7 +188,13 @@ impl Session {
                 "LightTouch {} ({}): {} {} ({}) at {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
                 env!("CARGO_PKG_VERSION"),
                 lighttouch_core::COMMIT,
-                if options.recover { "recovering" } else { "starting" },
+                if options.load_state.is_some() {
+                    "loading a save state of"
+                } else if options.recover {
+                    "recovering"
+                } else {
+                    "starting"
+                },
                 options.name,
                 &options.record_id[..8.min(options.record_id.len())],
                 t.year,
@@ -247,11 +284,37 @@ impl Session {
             last_acceleration: None,
             stop_requested: None,
             forced: false,
+            state_job: options.load_state.as_ref().map(|_| StateJob { loading: true, done: 0, total: 0 }),
+            state_saved: None,
+            state_failed: None,
+            state_checked: None,
+            discarded: false,
         };
         if options.muted {
             session.send(&Command::Mute { muted: true });
         }
         Ok(session)
+    }
+
+    /// Save the running guest as a new state of its record (`None`: named after the date and time). The answer comes
+    /// as `state_saved` or `state_failed`, with `state_job` meanwhile.
+    pub fn save_state(&mut self, name: Option<String>) {
+        if matches!(self.phase, Phase::Running | Phase::Paused) && self.state_job.is_none() {
+            self.state_job = Some(StateJob { loading: false, done: 0, total: 0 });
+            self.send(&Command::SaveState { name });
+        }
+    }
+
+    /// Ask whether a state of this record would load (`state_checked` answers).
+    pub fn check_state(&mut self, id: &str) {
+        self.state_checked = None;
+        self.send(&Command::CheckState { id: id.to_string() });
+    }
+
+    /// End the device at once, without shutting iOS down, to load a state over it.
+    pub fn discard(&mut self) {
+        self.discarded = true;
+        self.send(&Command::Discard);
     }
 
     fn send(&mut self, command: &Command) {
@@ -307,8 +370,16 @@ impl Session {
                 self.stats.cpu(status.cpu_ns);
                 self.stats.storage(status.storage);
                 self.status = Some(status);
+                // A save stops the guest for a moment, and a load starts it stopped: neither is the user's pause.
+                let loading = self.state_job.as_ref().is_some_and(|j| j.loading);
+                let saving = self.state_job.as_ref().is_some_and(|j| !j.loading);
+                if loading && status.state == State::Running {
+                    self.state_job = None;
+                }
                 if self.phase.active() {
                     self.phase = match status.state {
+                        State::Paused if loading => Phase::Starting,
+                        State::Paused if saving => self.phase.clone(),
                         State::Starting => Phase::Starting,
                         State::Running if self.stop_requested.is_some() => Phase::Stopping,
                         State::Running => Phase::Running,
@@ -359,6 +430,18 @@ impl Session {
             }
             Event::Network(status) => self.network = Some(status),
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
+            Event::StateProgress { phase, done, total } => {
+                self.state_job = Some(StateJob { loading: phase != "saving", done, total })
+            }
+            Event::StateSaved { state } => {
+                self.state_job = None;
+                self.state_saved = Some(state);
+            }
+            Event::StateFailed { message } => {
+                self.state_job = None;
+                self.state_failed = Some(message);
+            }
+            Event::StateChecked { id, problem } => self.state_checked = Some((id, problem)),
             Event::Exit { clean, dirty, message } => {
                 let _ = self.child.wait();
                 self.phase = Phase::Ended { clean, dirty, message };

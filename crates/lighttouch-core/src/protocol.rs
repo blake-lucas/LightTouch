@@ -1,6 +1,7 @@
 //! The worker protocol: one JSON object per line. Commands go to the worker's stdin, events come from its stdout,
 //! and its stderr is the session log. Frames travel separately through shared memory (`frames`).
 use crate::carrier::{ModemAction, ModemStatus};
+use crate::library::SaveState;
 use crate::network::NetworkConfig;
 use crate::runtime::{BoardInfo, Contact, State, StorageCounters};
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,9 @@ pub struct WorkerArgs {
     /// Guest networking; `None` boots offline and reports nothing about it.
     #[serde(default)]
     pub network: Option<NetworkArgs>,
+    /// A save state of the record to start from instead of booting (the device's storage becomes the state's).
+    #[serde(default)]
+    pub load_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +127,18 @@ pub enum Command {
     Modem {
         action: ModemAction,
     },
+    /// Save the running guest as a new state of its record (`None`: named after the date and time). Answered by
+    /// `StateProgress` events, then `StateSaved` or `StateFailed`.
+    SaveState {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Would this state of the record load in a fresh worker? Answered by `StateChecked`.
+    CheckState {
+        id: String,
+    },
+    /// End the engine at once without shutting iOS down, to load a state over this session; the worker then exits.
+    Discard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +190,24 @@ pub enum Event {
     /// The modem's state (devices with one), sent when it changes.
     Modem {
         status: ModemStatus,
+    },
+    /// A save (`SaveState`) or a load at start (`WorkerArgs::load_state`) under way: "saving", "restoring" (the
+    /// storage) or "loading" (the machine), with bytes done and an estimated total.
+    StateProgress {
+        phase: String,
+        done: u64,
+        total: u64,
+    },
+    StateSaved {
+        state: SaveState,
+    },
+    StateFailed {
+        message: String,
+    },
+    /// The answer to `CheckState`: `None` when it would load, else why not, for the user.
+    StateChecked {
+        id: String,
+        problem: Option<String>,
     },
     /// The worker is about to exit. `clean` means iOS confirmed shutdown and the state is clean.
     Exit {

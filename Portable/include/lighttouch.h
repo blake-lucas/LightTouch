@@ -252,6 +252,10 @@ typedef struct {
     const char *engine_library;
     lt_device *device;
     lt_boot_config boot;
+    /* A save state of the device's record (lt_state_info.id) to start from instead of booting, or NULL. Checked at
+     * create (LT_INVALID with a sentence for the user when it doesn't match); lt_runtime_start then puts its storage in
+     * place of the device's and loads it (lt_runtime_state_progress). boot.headphones is the state's own. */
+    const char *load_state;
 } lt_runtime_config;
 /* One start per OS process; create negotiates engine ABI before any start.
  * Engine runs on owned background thread. A stopped runtime cannot restart:
@@ -509,6 +513,52 @@ lt_status lt_runtime_guest_status(lt_runtime *, uint32_t *status, lt_error *);
 lt_status lt_runtime_guest_request(lt_runtime *, const lt_guest_request *, uint64_t *request_id, lt_error *);
 lt_status lt_runtime_guest_poll(lt_runtime *, uint64_t request_id, lt_guest_result *, lt_error *);
 lt_status lt_runtime_guest_cancel(lt_runtime *, uint64_t request_id, lt_error *);
+/* Save states (States.cpp): a running device's whole machine (memory, every device, its GL state) and its storage at
+ * that moment, kept with its record (records/<id>/states/<state id>/: state.json, thumbnail.png, state.zip), and
+ * started from later instead of a cold boot. A state loads only into its own record, over the prepared base, guest
+ * package and engine build it was saved with, on the same kind of host (a computer, or Android). Loading replaces the
+ * device's storage with the saved one: what the guest wrote since is gone. Deleting the record deletes its states. */
+typedef struct {
+    uint32_t size, version;
+    char id[40], name[128], app[64]; /* app: who saved it ("LightTouch 0.0.16 (Android)") */
+    int64_t created_ms;              /* Unix time */
+    uint64_t bytes;                  /* on disk */
+    uint32_t thumbnail_width, thumbnail_height;
+    char thumbnail_path[1024]; /* the screen when it was saved (PNG), "" without one */
+} lt_state_info;
+/* The record's states, newest first: up to capacity of them into out, and how many there are into count. */
+lt_status lt_library_states(lt_library *, const char *record_id, lt_state_info *out, uint32_t capacity, uint32_t *count,
+                            lt_error *);
+/* Rename a state (1..127 bytes of UTF-8), or delete it. Allowed while the device runs. */
+lt_status lt_library_rename_state(lt_library *, const char *record_id, const char *state_id, const char *name,
+                                  lt_error *);
+lt_status lt_library_delete_state(lt_library *, const char *record_id, const char *state_id, lt_error *);
+typedef struct {
+    uint32_t size, version;
+    const char *name; /* NULL or "": the date and time */
+    const char *app;  /* who saves it, for the state's manifest */
+} lt_state_save_config;
+/* Save the running guest as a new state of its record. The guest stops while its memory and storage are written, then
+ * runs on (a paused guest stays paused). The observer sees phase "saving" with bytes done and an estimated total; a
+ * nonzero return cancels. Blocking: call it off the UI thread. LT_AGAIN before the engine is ready. */
+lt_status lt_runtime_save_state(lt_runtime *, const lt_state_save_config *, lt_import_phase_fn, void *, lt_state_info *,
+                                lt_error *);
+/* Whether a state of this runtime's record would load in a fresh process (lt_runtime_config.load_state): LT_INVALID
+ * with the reason for the user otherwise. A frontend asks before ending a running device to load one. */
+lt_status lt_runtime_check_state(lt_runtime *, const char *state_id, lt_error *);
+/* End the engine at once, without shutting the guest down (the device stays marked unclean), to load a state over it:
+ * then destroy the runtime as after any stop. */
+lt_status lt_runtime_discard(lt_runtime *, lt_error *);
+/* Loading a state (lt_runtime_config.load_state): active while it restores the storage (phase "restoring") and then
+ * the machine ("loading"), with bytes done and total; 0 once the guest runs, or the load failed (lt_runtime_poll
+ * reports the reason). */
+typedef struct {
+    uint32_t size, version;
+    uint32_t active, reserved;
+    char phase[32];
+    uint64_t done, total;
+} lt_state_progress;
+lt_status lt_runtime_state_progress(lt_runtime *, lt_state_progress *, lt_error *);
 uint32_t lt_abi_version(void);
 #ifdef __cplusplus
 }

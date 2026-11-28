@@ -5,6 +5,7 @@
 //! services lockdown starts: AFC (`afc`) and the installation proxy (`instproxy`).
 pub mod afc;
 pub mod apps;
+#[cfg(feature = "bridge")]
 pub mod bridge;
 pub mod devinstall;
 pub mod instproxy;

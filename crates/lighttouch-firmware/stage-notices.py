@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Stage the notices of a Rust binary this workspace ships, for an app's licence screen.
 
-    stage-notices.py OUT --target TRIPLE --source-reference URL [--package NAME] [--features LIST]
+    stage-notices.py OUT --target TRIPLE --source-reference URL [--package NAME] [--features LIST] [--no-default-features]
 
 NAME is lighttouch-firmware (firmwarekit, the default: the APK's assets/licenses/firmwarekit and the desktop's
-resources/licenses/firmware) or lighttouch (the desktop app: resources/licenses/frontend). OUT gets the licence and
+resources/licenses/firmware), lighttouch (the desktop app: resources/licenses/frontend) or lighttouch-services (the
+APK's app service helper: assets/licenses/appservice). OUT gets the licence and
 notice files of every crate the binary links for TRIPLE (normal dependencies, from `cargo metadata`) as
 <crate>-<version>-<file>, LightTouch's licence, a NOTICE.txt naming what is compiled in from C, and manifest.json in
 the schema the licence screens read ({"schema": 1, "source_reference", "files": [{"path", "sha256"}]}).
@@ -40,11 +41,20 @@ NOTICES = {
 
 The source is at the reference in manifest.json. The engine, firmwarekit and the USB helper have their own notices.
 """,
+    "lighttouch-services": """The app service helper (liblt_appservice.so; crates/lighttouch-services in LightTouch's source) installs and lists apps in the emulated device, reads its crash reports and its log, over the emulated USB cable. It is written in Rust and is GPL-2.0-or-later (LightTouch-LICENSE). It links, statically:
+
+- the Rust standard library (MIT or Apache-2.0);
+- the crates whose licences follow, as <crate>-<version>-<file>; the openssl-src crate compiles in OpenSSL (Apache-2.0).
+
+The source is at the reference in manifest.json.
+""",
 }
 
 
-def linked(package, target, features):
+def linked(package, target, features, no_default):
     command = ["cargo", "metadata", "--format-version", "1", "--filter-platform", target, "--locked"]
+    if no_default:
+        command.append("--no-default-features")
     if features:
         command += ["--features", features]
     meta = json.loads(subprocess.check_output(command, cwd=HERE))
@@ -85,6 +95,7 @@ def main():
     a.add_argument("--source-reference", required=True)
     a.add_argument("--package", default="lighttouch-firmware", choices=sorted(NOTICES))
     a.add_argument("--features", default="")
+    a.add_argument("--no-default-features", action="store_true")
     args = a.parse_args()
     if args.out.exists():
         shutil.rmtree(args.out)
@@ -92,7 +103,7 @@ def main():
     staged = {"NOTICE.txt": NOTICES[args.package].encode(), "LightTouch-LICENSE": (REPO / "LICENSE").read_bytes()}
     if args.package == "lighttouch-firmware":
         staged["iBoot32Patcher-LICENSE"] = (HERE / "vendor/iBoot32Patcher/LICENSE").read_bytes()
-    for p in linked(args.package, args.target, args.features):
+    for p in linked(args.package, args.target, args.features, args.no_default_features):
         root = Path(p["manifest_path"]).parent
         prefix = re.sub(r"[^A-Za-z0-9._-]", "_", f"{p['name']}-{p['version']}-")  # 300.6.1+3.6.3
         terms = sorted(f for f in root.iterdir() if f.is_file() and TERMS.match(f.name))

@@ -161,7 +161,12 @@ abi_struct!(lt_runtime_status {
     engine_exit: i32,
     frames: u64,
 });
-abi_struct!(lt_runtime_config { engine_library: *const c_char, device: *mut lt_device, boot: lt_boot_config });
+abi_struct!(lt_runtime_config {
+    engine_library: *const c_char,
+    device: *mut lt_device,
+    boot: lt_boot_config,
+    load_state: *const c_char,
+});
 abi_struct!(lt_runtime_diagnostics {
     engine_ready: u32,
     display_sleeping: u32,
@@ -256,6 +261,18 @@ abi_struct!(lt_carrier {
     last_sender: [c_char; 32],
 });
 abi_struct!(lt_guest_request { operation: u32, timeout_ms: u32, argument: *const c_char });
+abi_struct!(lt_state_info {
+    id: [c_char; 40],
+    name: [c_char; 128],
+    app: [c_char; 64],
+    created_ms: i64,
+    bytes: u64,
+    thumbnail_width: u32,
+    thumbnail_height: u32,
+    thumbnail_path: [c_char; 1024],
+});
+abi_struct!(lt_state_save_config { name: *const c_char, app: *const c_char });
+abi_struct!(lt_state_progress { active: u32, reserved: u32, phase: [c_char; 32], done: u64, total: u64 });
 abi_struct!(lt_guest_result {
     request_id: u64,
     state: u32,
@@ -380,6 +397,43 @@ unsafe extern "C" {
     ) -> lt_status;
     pub fn lt_runtime_request_shutdown(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_destroy(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
+    pub fn lt_library_states(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        out: *mut lt_state_info,
+        capacity: u32,
+        count: *mut u32,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_library_rename_state(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        state_id: *const c_char,
+        name: *const c_char,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_library_delete_state(
+        library: *mut lt_library,
+        record_id: *const c_char,
+        state_id: *const c_char,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_save_state(
+        runtime: *mut lt_runtime,
+        config: *const lt_state_save_config,
+        phase: lt_import_phase_fn,
+        opaque: *mut c_void,
+        info: *mut lt_state_info,
+        error: *mut lt_error,
+    ) -> lt_status;
+    pub fn lt_runtime_check_state(runtime: *mut lt_runtime, state_id: *const c_char, error: *mut lt_error)
+    -> lt_status;
+    pub fn lt_runtime_discard(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_state_progress(
+        runtime: *mut lt_runtime,
+        progress: *mut lt_state_progress,
+        error: *mut lt_error,
+    ) -> lt_status;
     pub fn lt_runtime_copy_frame(
         runtime: *mut lt_runtime,
         pixels: *mut c_void,
@@ -583,6 +637,9 @@ mod tests {
             size_of::<lt_export_config>(),
             size_of::<lt_transfer_import_config>(),
             size_of::<lt_vibrator_info>(),
+            size_of::<lt_state_info>(),
+            size_of::<lt_state_save_config>(),
+            size_of::<lt_state_progress>(),
         ];
         let mut c = [0u32; 32];
         let count = unsafe { lt_rust_layout(c.as_mut_ptr(), c.len() as u32) } as usize;

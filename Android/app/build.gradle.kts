@@ -44,7 +44,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     // Guest app-services executables and firmwarekit run from nativeLibraryDir, which holds files only when extracted.
-    packaging { jniLibs { useLegacyPackaging = providers.gradleProperty("mobileServicesArm64").isPresent || providers.gradleProperty("firmwareKitDir").isPresent } }
+    packaging { jniLibs { useLegacyPackaging = listOf("mobileServicesArm64", "firmwareKitDir", "appServiceDir").any { providers.gradleProperty(it).isPresent } } }
 }
 dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
@@ -143,9 +143,9 @@ providers.gradleProperty("guestToolsDir").orNull?.let { input ->
     tasks.named("preBuild").configure { dependsOn(stage) }
 }
 
-// Optional private usbmuxd-qemu daemon and IPA helper (Android/packaging/build-mobile-android.py OUTPUT/arm64-v8a).
+// Optional private usbmuxd-qemu daemon (Android/packaging/build-mobile-android.py OUTPUT/arm64-v8a).
 providers.gradleProperty("mobileServicesArm64").orNull?.let { input ->
-    val executables = listOf("libusbmuxd_qemu.so", "liblt_appservice.so")
+    val executables = listOf("libusbmuxd_qemu.so")
     require(executables.all { file("$input/$it").isFile }) { "mobileServicesArm64 must contain ${executables.joinToString()}" }
     require("arm64-v8a" in providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",")) {
         "mobileServicesArm64 requires arm64-v8a in targetAbis"
@@ -157,6 +157,29 @@ providers.gradleProperty("mobileServicesArm64").orNull?.let { input ->
     }
     android.sourceSets["main"].jniLibs.srcDir(mobileServicesJniLibs)
     tasks.named("preBuild").configure { dependsOn(prepareMobileServices) }
+}
+
+// The app service helper (-PappServiceDir: scripts/build.sh appservice-android): installs, app lists, crash reports and
+// the guest's log over the bridge above, the desktop's crates/lighttouch-services as an executable in nativeLibraryDir,
+// with the notices of what it links.
+providers.gradleProperty("appServiceDir").orNull?.let { input ->
+    val dir = file(input)
+    require(listOf("lt_appservice", "licenses/manifest.json").all { dir.resolve(it).isFile }) {
+        "appServiceDir must hold lt_appservice and licenses/ (scripts/build.sh appservice-android)"
+    }
+    val appServiceJniLibs = layout.buildDirectory.dir("generated/appServiceJniLibs")
+    val appServiceNotices = layout.buildDirectory.dir("generated/appServiceNotices")
+    val stage = tasks.register<Copy>("prepareAppService") {
+        from(dir) { include("lt_appservice"); rename { "liblt_appservice.so" } }
+        into(appServiceJniLibs.map { it.dir("arm64-v8a") })
+    }
+    val notices = tasks.register<Copy>("prepareAppServiceNotices") {
+        from(dir.resolve("licenses"))
+        into(appServiceNotices.map { it.dir("licenses/appservice") })
+    }
+    android.sourceSets["main"].jniLibs.srcDir(appServiceJniLibs)
+    android.sourceSets["main"].assets.srcDir(appServiceNotices)
+    tasks.named("preBuild").configure { dependsOn(stage, notices) }
 }
 
 // The publisher can override these for its complete corresponding-source bundle.

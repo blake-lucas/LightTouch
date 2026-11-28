@@ -24,6 +24,22 @@ Nothing converts an old device (export + import keeps its format). Old 2G page-f
 both hosts; **preparing the device again** gives it a container. There is no migration: the owner decided preparing
 again is the answer (2026-11-23).
 
+## Save states
+
+A device's save states live with it, in `records/ID/states/STATE/` (`Portable/src/States.cpp`): `state.json` (name,
+time, the app and engine that made it, the host kind, board, build, base digest, guest tools digest), `thumbnail.png`
+and `state.zip` (`Portable/src/Zip.hpp`: 1 MiB deflate level-1 chunks compressed and inflated on up to 8 threads,
+ZIP64, zero chunks kept as holes). The zip holds `machine.state` (the engine's stream: RAM, every device, the live GL
+state) and the device's own storage as it was (`state/nand/*`, NOR, SIM, guest verdicts). A save stops the guest,
+streams the machine and copies the storage while it is stopped, then resumes it; a load runs only in a fresh engine
+process, puts the storage back before the engine opens it and loads the machine before the first instruction. A
+state loads only into its own device, on the same host kind (desktop or Android: the GL part differs) with the same
+engine build and guest tools; anything else is refused with a plain message. Export/import carries `states/`;
+deleting the device deletes them. An iPod touch 2G prepared before the NAND container writes a whole copy of its
+base's chip files in place (state/nand with geometry.json nand-xor-blank-v2): its states keep only the 1 MiB chunks
+that differ from the base, which a load reads back from the base (a fresh boot's state went from ~1.8 GB to the size of
+what it changed). A load into a running device shows the state's picture greyed out with one bar and percentage for the whole load (storage, then machine), not a stop and a boot.
+
 ## What the overlay's "write" figure measures
 
 The bytes of NAND pages the engine programmed (page plus spare) over the last second, refreshed four times a second;
@@ -70,8 +86,8 @@ desktop, before the upload change (2026-11-23): upload ~28 s at ~10 MB/s, unpack
 - **Now:** the bridge sends 32760-byte transactions (time inside the bridge's sends during an upload 22.5 → 11.9 s) (`build-support/patches/usbmuxd-qemu-large-transactions.patch`,
   applied by the Android, Linux and Windows bridge builds; macOS ships a different usbmuxd and keeps 16 KiB
   transactions), and the apps upload an
-  IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`,
-  `Android/native-services/lt_appservice.c`). A packet longer than the transfer iOS armed fills it and continues in
+  IPA over 8 AFC sessions at once, each writing its own contiguous part (`lighttouch-services` `apps.rs`, which
+  both apps use: Android runs it as the `lt_appservice` helper). A packet longer than the transfer iOS armed fills it and continues in
   the next, as on a real link (qemu-ios `docs/tcp-usb-protocol.md`); every install verifies the zip's CRCs. With
   sessions writing ahead of the file's end, iOS 3's HFS+ appears to zero-fill the gap: the 2G programs ~58 MB more NAND per
   Asphalt 5 upload (344 vs 286 MB); the A4 boards don't (~294 MB either way). Checked: the app installed this way
@@ -105,6 +121,44 @@ Inside iOS, a plain `fsync` on HFS+ does not make a new file's metadata durable 
 periodic sync does. Kill tests on the desktop 4G (8 MiB `fs-write`, engine `SIGKILL`ed, restarted with Recover, then
 `fs-check`): `F_FULLFSYNC` then a kill 0.4 s later: intact; plain `fsync` then a kill 2 s later: not intact; plain
 `fsync` then 35 s idle: intact; clean stop: intact.
+
+## Space iOS frees
+
+A device's size on the host is its overlay's allocated blocks (both apps show those; export copies only allocated
+ranges). Nothing reaches the host when iOS deletes a file: NAND has no trim. What does is a block **erase**: the
+engine zeroes the erase block in the overlay with unmap (`nand_disk_erase`), so qcow2 frees its clusters and punches
+them out of the file (Linux `fallocate`, macOS `F_PUNCHHOLE`, Windows `FSCTL_SET_ZERO_DATA`). So the overlay shrinks
+exactly when the guest's flash translation layer (FTL) erases, and that differs by iOS:
+
+| Device (Poco F3, 2026-11-26) | Install → uninstall → clean Stop, overlay MiB | Erases |
+| --- | --- | --- |
+| iPod touch 4G 6.1.6, Infinity Blade (610 MB IPA) | 131 → 1866 → 1866 → **319**; again 318 → 1934 → 1936 → **514** (Stop 7 s) | 16 at the uninstall, none in 14 min idle, the rest during iOS's shutdown |
+| same, engine killed after the uninstall | 514 → 2011 → 2014 → killed: 2014 → Recover, Stop (27 s): **287** | the shrink waits for the next clean Stop |
+| same, engine killed inside the Stop's erases | 2074 → killed at 1853 → 1796 → Recover (Jetpack Joyride launches) → Stop (7 s): **406** | a burst ~2–4 s into the Stop |
+| iPhone 3GS 5.1.1, the same IPA (refused after its upload and staging) | 80 → 1827 → 1830 → **482** (Stop 6 s) | during the shutdown |
+| Desktop (Linux), iPod touch 4G 6.1.6, each step its own `lighttouch run`, Infinity Blade | killed mid-install earlier: 1463 → Recover, Stop: **405**; install, Stop: 1385; uninstall, Stop: **284**; boot, Stop: 306 | as on the phone |
+| iPhone 4 6.1.3, Infinity Blade | 114 → 1851 → 1857 → **515** (Stop 7 s); again → **586** | during the shutdown |
+| iPad 5.1.1, Infinity Blade (617 MB IPA) | 42 → 1795 → 1794 → **410** (Stop 6 s) | during the shutdown |
+| iPod touch 3G 4.2.1, Real Racing (143 MB IPA, already installed: replaced, then removed) | 48 → 325 → 307 → **92** (Stop 3 s) | 352 at the install, 288 at the uninstall, the rest during the shutdown |
+| iPod touch 2G 3.1.3, Asphalt 5 (281 MB IPA) | 31 → 810 → 810 → **810**; again 810 → 1567 → **1567** (Stop 3 s) | none |
+| iPhone 5 10.3.4, Infinity Blade | 1148 → 2763 → 2775 → **2778** (Stop 19 s); next boot + 8 min + Stop: 2819; again 2819 → 4426 → 4438 → **4440** (Stop 20 s) | 6–24 a session |
+
+- **yaFTL (A4 boards, iOS 4–6)** erases the superblocks it no longer needs while iOS shuts down, so a clean Stop
+  already gives the space back; after a killed session (Android ending the app) the next clean Stop does.
+  What stays (287–578 MiB after a Stop here, against 131 before the first install; no steady growth) is stale pages in
+  superblocks that still hold live data: 415 MB of the 520 MB overlay after the second 4G cycle, by an offline read of the FTL's page spares. Only yaFTL's
+  own garbage collection moves those, when it runs short of free blocks.
+- **The 2G's FTL (iOS 3.1.3) and the iPhone 5's (iOS 10.3.4)** didn't erase what an uninstall freed, at the
+  uninstall, idle, Stop or the next boot: each install/uninstall cycle adds its full size. Presumably they reuse
+  stale blocks only once their free blocks run out, so the overlay is bounded by the flash size (2G 8 GiB), not
+  by what iOS shows as used. Not measured: the A4-family boards on iOS 3 (the note says "not given back" there).
+  The Details page of both apps says which way a device goes (`freed_space_returns_at_stop`, Android `freedSpaceReturnsAtStop`).
+- **Rewriting the overlay** (a `qemu-img convert`-style compaction) would gain little: freed clusters are already
+  holes, and allocated exceeds referenced by 0–1% on the seven standard devices.
+- Freeing the 2G's and iPhone 5's stale space from the host would mean reading the guest's filesystem and its FTL,
+  then rewriting flash the FTL still counts as valid: one implementation per FTL, and a mistake corrupts the device.
+- Tools: `lighttouch run REC --uninstall BUNDLE` (desktop), the Android bench verbs `install`/`uninstall`/`storage`
+  (`BenchControl.kt`; `storage`'s seventh number is erase operations).
 
 ## Measuring
 

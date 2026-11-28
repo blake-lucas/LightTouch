@@ -35,7 +35,16 @@ fn main() {
     if let Some(zlib) = env::var_os("DEP_Z_INCLUDE") {
         build.include(zlib);
     }
-    for source in ["Storage.cpp", "Runtime.cpp", "GuestPackage.cpp", "Library.cpp", "Screenshot.cpp", "Transfer.cpp"] {
+    for source in [
+        "Storage.cpp",
+        "Runtime.cpp",
+        "GuestPackage.cpp",
+        "Library.cpp",
+        "Screenshot.cpp",
+        "Transfer.cpp",
+        "States.cpp",
+        "Zip.cpp",
+    ] {
         build.file(portable.join("src").join(source));
     }
     // A system OpenSSL in /usr/include is already on the compiler's path; naming it again with -I would put it

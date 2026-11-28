@@ -38,6 +38,9 @@ impl Pair {
 #[derive(Default)]
 pub struct GuestView {
     texture: Scaled,
+    /// This session's guest has drawn something other than black (the boot logo), or started from a save state:
+    /// until then the screen still says Starting iOS.
+    drew: bool,
     rgba: Vec<u8>,
     size: [usize; 2],
     /// The longer side of the screen as last drawn, in physical pixels: Crisp's prescale follows it.
@@ -139,10 +142,21 @@ impl GuestView {
             // A new session: drop the last device's picture.
             self.record = Some(session.record_id.clone());
             self.texture.clear();
+            self.drew = false;
         }
+        // A state's screen is up from its first frame, black or not (an asleep display).
+        if model.restoring().is_some() {
+            self.drew = true;
+        }
+        let Some(session) = &mut model.session else {
+            return false;
+        };
         let fresh = match session.read_frame(&mut self.rgba) {
             Some(meta) => {
                 self.size = [meta.width as usize, meta.height as usize];
+                if !self.drew {
+                    self.drew = lit(&self.rgba, self.size);
+                }
                 true
             }
             None => false,
@@ -162,6 +176,12 @@ impl GuestView {
     pub fn clear(&mut self) {
         self.texture.clear();
         self.record = None;
+        self.drew = false;
+    }
+
+    /// Whether this session's guest has drawn anything yet (see `drew`).
+    pub fn drew(&self) -> bool {
+        self.drew
     }
 
     pub fn has_frame(&self) -> bool {
@@ -685,6 +705,20 @@ impl GuestView {
 /// A finger's place drawn over the guest (the Alt-drag pinch, a controller's pointer): a ring and a light fill in the
 /// inverse of the colour under it, so it shows on any game, with a thin dark and light edge for flat mid-greys.
 /// `pressed` draws it smaller and fuller, as a finger down.
+/// Any light on a 16×16 grid of the frame (as Android's presenter samples it): the boot logo, not the black before.
+fn lit(rgba: &[u8], [w, h]: [usize; 2]) -> bool {
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return false;
+    }
+    (0..16).any(|gy| {
+        (0..16).any(|gx| {
+            let (x, y) = (((gx * 2 + 1) * w / 32).min(w - 1), ((gy * 2 + 1) * h / 32).min(h - 1));
+            let i = (y * w + x) * 4;
+            rgba[i] != 0 || rgba[i + 1] != 0 || rgba[i + 2] != 0
+        })
+    })
+}
+
 pub fn bubble(painter: &egui::Painter, at: Pos2, radius: f32, under: Color32, pressed: bool) {
     let inverse = Color32::from_rgb(255 - under.r(), 255 - under.g(), 255 - under.b());
     let r = if pressed { radius * 0.82 } else { radius };

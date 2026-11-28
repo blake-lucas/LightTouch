@@ -66,7 +66,7 @@ data class StoreCopy(val ipaId: Int, val version: String, val size: Long?, val m
  */
 object LegacyStore {
     private const val BASE = "https://legacystore.app"
-    private const val USER_AGENT = "LightTouchAndroid/0.1 (+https://github.com/blake-lucas/LightTouch)"
+    private val USER_AGENT = "LightTouchAndroid/${BuildConfig.VERSION_NAME} (+https://github.com/blake-lucas/LightTouch)"
     private const val JSON_LIMIT = 8 shl 20
     private const val DOWNLOAD_LIMIT = 2L shl 30
     /** Archived copies whose executable is cut short (no device can load it), each with an intact copy of the same version. */
@@ -99,31 +99,46 @@ object LegacyStore {
         }
     }
 
-    private fun open(url: String): HttpURLConnection {
+    private val throttle = StoreThrottle()
+
+    /**
+     * One request, after its turn at the gate ([StoreThrottle]). [patient] ones (images, loaded in the background)
+     * wait out a pause the server asks for and then try once more; the rest fail with how long the pause has left.
+     */
+    private fun open(url: String, patient: Boolean = false): HttpURLConnection {
         val parsed = URL(url)
         if (parsed.protocol != "https" || parsed.host.isNullOrEmpty() || parsed.userInfo != null) throw StoreError("The catalog supplied an invalid HTTPS address.")
-        val connection = parsed.openConnection() as HttpsURLConnection
-        connection.connectTimeout = 30_000; connection.readTimeout = 30_000
-        connection.setRequestProperty("User-Agent", USER_AGENT)
-        // HttpURLConnection never follows a redirect across protocols, so an https
-        // request cannot be downgraded; the final URL is checked again below.
-        val code = try { connection.responseCode } catch (e: java.net.UnknownHostException) {
-            // GrapheneOS's Network permission and LineageOS's per-app network access both look like no DNS.
-            throw StoreError("Could not reach Legacy Store. Check your connection, and that LightTouch is allowed network access in Android's app settings.")
-        } catch (e: java.io.IOException) {
-            throw StoreError("Could not connect to Legacy Store: ${e.message}")
-        }
-        if (connection.url.protocol != "https") { connection.disconnect(); throw StoreError("The catalog redirected to an insecure address.") }
-        if (code != 200) {
+        var tries = if (patient) 2 else 1
+        while (true) {
+            tries--
+            try { throttle.enter(patient) } catch (e: StoreThrottle.Paused) { throw StoreError(e.message ?: "", 429) }
+            val (connection, code) = try {
+                val connection = parsed.openConnection() as HttpsURLConnection
+                connection.connectTimeout = 30_000; connection.readTimeout = 30_000
+                connection.setRequestProperty("User-Agent", USER_AGENT)
+                // HttpURLConnection never follows a redirect across protocols, so an https
+                // request cannot be downgraded; the final URL is checked again below.
+                val code = try { connection.responseCode } catch (e: java.net.UnknownHostException) {
+                    // GrapheneOS's Network permission and LineageOS's per-app network access both look like no DNS.
+                    throw StoreError("Could not reach Legacy Store. Check your connection, and that LightTouch is allowed network access in Android's app settings.")
+                } catch (e: java.io.IOException) {
+                    throw StoreError("Could not connect to Legacy Store: ${e.message}")
+                }
+                connection to code
+            } finally { throttle.leave() }
+            if (connection.url.protocol != "https") { connection.disconnect(); throw StoreError("The catalog redirected to an insecure address.") }
+            if (code == 200) return connection
+            val pause = throttle.answered(code, connection.getHeaderField("Retry-After"))
             val body = connection.errorStream?.use { it.readNBytes(4096) }?.decodeToString() ?: ""
             connection.disconnect()
+            if (pause != null && tries > 0) continue
             throw StoreError(when {
+                pause != null -> StoreThrottle.slowDown(pause)
                 code == 400 && "device must be one of" in body -> "Legacy Store does not support this device yet."
                 code == 503 -> "The Internet Archive is busy; try again later."
                 else -> "Legacy Store could not answer the request (HTTP $code)."
             }, code)
         }
-        return connection
     }
 
     private fun url(path: String, query: Map<String, String>) = BASE + path + if (query.isEmpty()) "" else "?" + query.entries.joinToString("&") {
@@ -379,7 +394,7 @@ object LegacyStore {
     fun screenshot(url: String): Bitmap? {
         screens.get(url)?.let { return it }
         return runCatching {
-            val connection = open(url)
+            val connection = open(url, patient = true)
             val bytes = try { connection.inputStream.use { it.readNBytes(JSON_LIMIT) } } finally { connection.disconnect() }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
             val options = BitmapFactory.Options().apply { inSampleSize = Integer.highestOneBit((bounds.outWidth / 400).coerceAtLeast(1)) }
@@ -392,7 +407,7 @@ object LegacyStore {
     fun icon(url: String): Bitmap? {
         icons.get(url)?.let { return it }
         return runCatching {
-            val connection = open(url)
+            val connection = open(url, patient = true)
             try { connection.inputStream.use { BitmapFactory.decodeStream(it) } } finally { connection.disconnect() }
         }.getOrNull()?.also { icons.put(url, it) }
     }
