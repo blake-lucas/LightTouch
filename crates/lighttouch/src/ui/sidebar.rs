@@ -30,6 +30,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             let active = app.model.session_active();
             let busy = app.model.busy().is_some();
+            // A preparation runs on its own: the devices stay usable meanwhile (an export, import or move has its own
+            // dialog in front instead).
+            let preparing = matches!(app.model.busy(), Some((lighttouch_model::Activity::Preparing(_), _)));
             // Every running device has its dot: the one on screen and those left running in the background.
             let running_devices = app.model.running();
             // The Prepare page is the device being made (marked on its own row), not the selected one.
@@ -92,10 +95,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 dropped: stopped,
                             });
                         }
-                        if response.clicked() && !busy && !device.selected {
+                        if response.clicked() && (!busy || preparing) && !device.selected {
                             app.model.select(&device.id);
                             app.page = Page::Device;
-                        } else if response.clicked() && device.selected {
+                        } else if response.clicked() && device.selected && (!busy || preparing) {
                             app.page = Page::Device;
                         }
                         response.context_menu(|ui| {
@@ -142,13 +145,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
 
             ui.add_space(6.0);
-            // One device is made at a time; the one being made is listed above, with its progress. Its ⋮ holds the other
-            // way in: a device exported by LightTouch on another computer or phone.
+            // One device is made at a time, while others run; the one being made is listed above, with its progress. Its ⋮
+            // holds the other way in: a device exported by LightTouch on another computer or phone.
             let mut import = false;
             let add = ui
                 .horizontal(|ui| {
-                    let add =
-                        add_row(ui, &p, icons::PLUS, "Add a device", !active && !busy, ui.available_width() - 40.0);
+                    let add = add_row(ui, &p, icons::PLUS, "Add a device", !busy, ui.available_width() - 40.0);
                     let more =
                         widgets::icon_button_sized(ui, &p, icons::MORE, "More ways to add a device", 34.0, !busy);
                     egui::Popup::menu(&more).show(|ui| {
@@ -164,12 +166,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     add
                 })
                 .inner;
-            let running_name = app.model.session.as_ref().filter(|_| active).map(|s| s.name.clone());
-            let add = match (&running_name, busy) {
-                (_, true) => add.on_hover_text("Wait for the device being prepared to finish"),
-                (Some(name), false) => add.on_hover_text(format!("Stop {name} to add another device")),
-                (None, false) => add,
-            };
+            let add = if busy { add.on_hover_text("Wait for the device being prepared to finish") } else { add };
             if add.clicked() && !busy {
                 super::prepare::open(app);
             }

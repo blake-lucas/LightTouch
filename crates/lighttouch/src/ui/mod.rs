@@ -547,8 +547,13 @@ impl App {
         }
         if let Some(finished) = self.model.take_finished() {
             match finished {
-                Finished::DeviceAdded { name, timings, .. } => {
+                Finished::DeviceAdded { id, name, selected, timings } => {
                     if matches!(self.page, Page::Setup(_) | Page::Prepare) {
+                        // Watched to the end: the new device comes on screen to start, and one running there carries
+                        // on in the background. Left to run on its own, it doesn't take the screen from what's there.
+                        if !selected {
+                            self.model.select(&id);
+                        }
                         self.setup.added = Some(name);
                         self.setup.timings = timings;
                         self.page = Page::Setup(setup::Step::Done);
@@ -567,11 +572,7 @@ impl App {
                     if selected {
                         self.page = Page::Device;
                     }
-                    let text = if selected {
-                        format!("{name} is ready")
-                    } else {
-                        format!("Added {name}; stop the running device to switch to it")
-                    };
+                    let text = if selected { format!("{name} is ready") } else { format!("Added {name}") };
                     self.model.notice = Some((text, Instant::now()));
                 }
                 Finished::Failed { activity: activity @ lighttouch_model::Activity::Exporting { .. }, message }
