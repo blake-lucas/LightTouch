@@ -1,5 +1,5 @@
 //! Reordering the device list by dragging: where a dragged row lands. The order itself is the library's (the core's
-//! `order` file, `Library::move_to`), so both apps share it; new devices go last and deleted ones drop out there.
+//! `.order` file, `Library::move_to`), so both apps share it; new devices go last and deleted ones drop out there.
 
 /// The gap a row dropped at `y` goes into: 0 is above the first row, `centers.len()` below the last. `centers` are
 /// the rows' vertical centres, top to bottom, as listed before the move.

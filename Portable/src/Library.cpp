@@ -132,19 +132,18 @@ std::vector<std::string> records(lt_library *l) {
         ids.push_back(id);
     }
     std::sort(ids.begin(), ids.end());
-    // The user's order first (`order`, one ID per line), then any record it doesn't name. The file never makes the
-    // list fail: a line that isn't a record here (deleted, junk, repeated) is skipped, and an unreadable file is no
-    // order at all.
+    // The user's order first (`.order`, one ID per line; hidden, so LightTouch 0.0.15's Settings > Storage still
+    // takes the folder for a library), then any record it doesn't name. The file never makes the list fail: a line
+    // that isn't a record here (deleted, junk, repeated) is skipped, and an unreadable file is no order at all.
     std::vector<std::string> ordered;
     try {
-        if (fs::exists(l->root / "order")) {
-            std::istringstream lines(read_file(l->root / "order", 1 << 20));
+        if (fs::exists(l->root / ".order")) {
+            std::istringstream lines(read_file(l->root / ".order", 1 << 20));
             for (std::string line; std::getline(lines, line);) {
                 if (!line.empty() && line.back() == '\r')
                     line.pop_back();
                 auto at = std::lower_bound(ids.begin(), ids.end(), line);
-                if (at != ids.end() && *at == line &&
-                    std::find(ordered.begin(), ordered.end(), line) == ordered.end())
+                if (at != ids.end() && *at == line && std::find(ordered.begin(), ordered.end(), line) == ordered.end())
                     ordered.push_back(line);
             }
         }
@@ -160,7 +159,7 @@ void save_order(lt_library *l, const std::vector<std::string> &ids) {
     std::string text;
     for (const auto &id : ids)
         text += id + "\n";
-    atomic_write(l->root / "order", text);
+    atomic_write(l->root / ".order", text);
 }
 void add_to_order(lt_library *l, std::vector<std::string> before, const std::string &id) {
     // Best effort: the record is already in place, and a record the file misses is still listed (last but for

@@ -456,9 +456,10 @@ int main() {
         assert((listed() == std::vector<std::string>{b, c, a}));
         assert(lt_library_move(l, "0123456789abcdef0123456789abcdef", 0, &e) == LT_INVALID);
         assert(lt_library_move(l, "../escape", 0, &e) == LT_INVALID);
-        put(fs::path(libroot) / "order", "not an id\n0123456789abcdef0123456789abcdef\n" + a + "\r\n" + a + "\n\n");
-        assert((listed() == std::vector<std::string>{a, b, c}));
-        put(fs::path(libroot) / "order", std::string("\xff\0garbage", 9));
+        put(fs::path(libroot) / ".order", "not an id\n0123456789abcdef0123456789abcdef\n" + a + "\r\n" + a + "\n\n");
+        // a, then the records the file doesn't name in ID order (the IDs are random).
+        assert((listed() == std::vector<std::string>{a, std::min(b, c), std::max(b, c)}));
+        put(fs::path(libroot) / ".order", std::string("\xff\0garbage", 9));
         std::vector<std::string> by_id{a, b, c};
         std::sort(by_id.begin(), by_id.end());
         assert(listed() == by_id);
@@ -496,7 +497,7 @@ int main() {
         assert(lt_library_remove(l, phone_record.id, &e) == LT_OK);
         assert(lt_library_count(l, &count, &e) == LT_OK && count == 2);
         {
-            std::ifstream order(fs::path(libroot) / "order");
+            std::ifstream order(fs::path(libroot) / ".order");
             std::string text((std::istreambuf_iterator<char>(order)), {});
             assert(text.find(c) == std::string::npos && text.find(a) != std::string::npos);
         }
