@@ -55,6 +55,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         let selected = device.selected && !preparing_shown;
                         let row_id = egui::Id::unique(("device-row", &device.id));
                         let shift = making_room.as_ref().map_or(0.0, |m| m.shift(ui, row_id, index));
+                        let lifted = making_room.as_ref().is_some_and(|m| m.from == index);
                         // One bubble for everything the row has to say (egui stacks each hover text as its own).
                         let mut notes = Vec::new();
                         if badge == Some(Badge::Warning) {
@@ -74,6 +75,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             badge,
                             Some(row_id),
                             shift,
+                            lifted,
                             &notes,
                         );
                         rows.push(response.rect);
@@ -209,7 +211,7 @@ fn pending_row(app: &mut App, ui: &mut egui::Ui) {
         None => "Preparing…".to_string(),
     };
     let showing = app.page == page;
-    let response = device_row(ui, &p, &name, &status, showing, Some(Badge::Dot(theme::WARNING)), None, 0.0, &[]);
+    let response = device_row(ui, &p, &name, &status, showing, Some(Badge::Dot(theme::WARNING)), None, 0.0, false, &[]);
     // A thin bar along the row's foot.
     let bar = egui::Rect::from_min_size(
         response.rect.left_bottom() + vec2(54.0, -6.0),
@@ -275,8 +277,10 @@ struct MakingRoom {
 
 fn making_room(ui: &egui::Ui, devices: &[lighttouch_model::Device]) -> Option<MakingRoom> {
     let landing = ui.ctx().data(|d| d.get_temp::<Landing>(landing_id()))?;
-    // A drag that ended without a drop (the window lost the pointer) leaves nothing moved.
-    if !ui.ctx().is_being_dragged(egui::Id::unique(("device-row", &landing.id))) {
+    // Dropped this frame: `drag_feedback` moves it (until then it stays lifted, the others making room). A drag that
+    // ended any other way (the window lost the pointer) leaves nothing moved.
+    let dragged = ui.ctx().is_being_dragged(egui::Id::unique(("device-row", &landing.id)));
+    if !dragged && !ui.input(|i| i.pointer.primary_released()) {
         ui.ctx().data_mut(|d| d.remove::<Landing>(landing_id()));
         return None;
     }
@@ -308,7 +312,7 @@ fn drag_feedback(app: &mut App, ui: &mut egui::Ui, rows: &[egui::Rect], row: Dra
     let centers: Vec<f32> = rows.iter().map(|r| r.center().y).collect();
     let gap = gap_at(&centers, pointer.y);
     if row.dropped {
-        // `making_room` has already let go of the landing: the drag ended this frame.
+        ui.ctx().data_mut(|d| d.remove::<Landing>(landing_id()));
         app.model.move_device(&row.id, gap);
         return;
     }
@@ -357,7 +361,7 @@ enum Badge {
 }
 
 /// A device's row, drawn `shift` points below its place. With an `id` it can be dragged to reorder the list
-/// (`drag_feedback`). Hovered, it shows its name when that was cut short and `notes`, in one bubble.
+/// (`drag_feedback`); `lifted` while it is. Hovered, it shows its name when that was cut short and `notes`, in one bubble.
 fn device_row(
     ui: &mut egui::Ui,
     p: &theme::Palette,
@@ -367,6 +371,7 @@ fn device_row(
     badge: Option<Badge>,
     id: Option<egui::Id>,
     shift: f32,
+    lifted: bool,
     notes: &[&str],
 ) -> egui::Response {
     let (rect, response) = match id {
@@ -376,7 +381,6 @@ fn device_row(
         }
         None => ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click()),
     };
-    let lifted = id.is_some_and(|id| ui.ctx().is_being_dragged(id));
     // A lifted row is drawn under the pointer instead (`drag_feedback`), leaving its place empty.
     let cut = !lifted
         && paint_row(
