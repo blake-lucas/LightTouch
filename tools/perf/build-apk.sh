@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build an arm64-only debug APK from the live LightTouch working tree.
-# Includes the guest USB bridge (usbmuxd-qemu, app-services helper) so the Store can install apps.
+# Includes the guest USB bridge (usbmuxd-qemu) and the app service helper so the Store can install apps.
 # usage: build-apk.sh <engine-dir containing arm64-v8a/{libqemu-arm.so,libc++_shared.so,portable-manifest.json,notices}> <out-name>
 set -euo pipefail
 ENGINE=$(realpath "$1"); NAME=$2
@@ -14,6 +14,7 @@ cd "$SRC/Android"
   '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs=12 -PtargetAbis=arm64-v8a \
   -PportableDir=$SRC/Portable -PqemuSource=/home/blake/git-projects/qemu-ios \
   -PengineRoot=$ENGINE -PengineNoticeArm64=$ENGINE/arm64-v8a/notices -PfirmwareKitDir=$SRC/build/firmwarekit/android \
+  -PappServiceDir=$SRC/build/appservice/android \
   -PsourceRevision=$(git -C $SRC rev-parse HEAD) -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/dev/perf \
   -PbuildRoot=$P/apk/gradle-build \
   -PmobileServicesArm64=$W/mobile-android/arm64-v8a \
