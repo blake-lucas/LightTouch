@@ -26,8 +26,10 @@ target/release/lighttouch list                       # records: id, name, board,
 - **Timings:** on a Ryzen 3700X preparation takes 20 s (2G) to about 2 min (iPhone 4). The iPhone 5 takes about
   10–14 min on Linux, longer on a phone. Ignore boot times that print without a load figure.
 - **Lean by design (`CLAUDE.md`):** no backups, retries or verification boots. If a preparation fails, prepare
-  again. A one-off "keybag boot: halted without the keybag" has been seen once (iPod 4G 6.1.6, 2026-11-25) and went
-  away on a rerun. If it repeats, that is a bug: save `seal.log` from the job folder and report it.
+  again. "keybag boot: halted without the keybag" after `[effaceable:ERR ] unable to write any units` (issue 36:
+  the iPhone 4 on iOS 6/7, mostly on Windows) was the SPI NOR reading busy while the host flushed its file; since
+  engine bd85199519 only the write counts. If it comes back, save `work/keybag-1.log` from the job folder and report
+  it. To reproduce a slow flush, sleep in the engine's `nor_flush_co` (200 ms broke the old engine).
 - **Jailbroken devices:** `--jailbreak`.
 
 `tools/bench/bench.py prepare [--config FW] [--game BUNDLE]` wraps this. It reads `$LT_BENCH_WORK/ipa/<FW>/*.ipa`
