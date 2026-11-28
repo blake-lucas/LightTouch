@@ -37,7 +37,8 @@ pub struct UnitIdentity {
 /// Apple serials leave out I and O.
 const SERIAL_CHARS: &[u8] = b"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 pub const IPAD_REGION: &str = "LL/A";
-/// A type allocation code no manufacturer was ever assigned, so a generated IMEI can't collide with a real phone's.
+/// A fixed seed's type allocation code, which no manufacturer was ever assigned. A generated seed's IMEI keeps only its
+/// reporting body, "00" (`imei`).
 pub const SYNTHETIC_TAC: &str = "00000000";
 
 /// Wi-Fi iPad 1 model numbers by storage (the only NAND geometry modeled is 16 GB).
@@ -104,8 +105,9 @@ pub fn is_generated(seed: &str) -> bool {
 }
 
 /// The IMEI: the Luhn digit after fourteen. A fixed seed's are the synthetic TAC and six digits from the seed (as
-/// devices prepared before random seeds have it); a generated seed's keep the TAC's test reporting body "00" and take
-/// the other twelve from the seed, since six digits (a million IMEIs) would repeat among a thousand phones.
+/// devices prepared before random seeds have it); a generated seed's keep the TAC's reporting body "00", where test
+/// IMEIs sit (GSMA's test IMEI is 004999010640000), and take the other twelve from the seed, since six digits (a
+/// million IMEIs) would repeat among a thousand phones.
 pub fn imei(seed: &str) -> String {
     let h = sha256(&format!("imei:{seed}"));
     let digits = |n: usize| h[..n].iter().map(|b| (b % 10).to_string()).collect::<String>();
