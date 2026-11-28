@@ -52,8 +52,27 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         let selected = device.selected && !preparing_shown;
                         let row_id = egui::Id::unique(("device-row", &device.id));
                         let shift = making_room.as_ref().map_or(0.0, |m| m.shift(ui, row_id, index));
-                        let mut response =
-                            device_row(ui, &p, &device.name, &device.subtitle, selected, badge, Some(row_id), shift);
+                        // One bubble for everything the row has to say (egui stacks each hover text as its own).
+                        let mut notes = Vec::new();
+                        if badge == Some(Badge::Warning) {
+                            notes.push(
+                                "Needs recovery: it didn't shut down cleanly. The next start checks its storage first.",
+                            );
+                        }
+                        if active && !device.selected && !running {
+                            notes.push("The device on screen keeps running in the background");
+                        }
+                        let response = device_row(
+                            ui,
+                            &p,
+                            &device.name,
+                            &device.subtitle,
+                            selected,
+                            badge,
+                            Some(row_id),
+                            shift,
+                            &notes,
+                        );
                         rows.push(response.rect);
                         if response.drag_started_by(egui::PointerButton::Primary) {
                             let grab = response.interact_pointer_pos().map_or(0.0, |at| at.y - response.rect.top());
@@ -72,14 +91,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 badge,
                                 dropped: stopped,
                             });
-                        }
-                        if badge == Some(Badge::Warning) {
-                            response = response.on_hover_text(
-                                "Needs recovery: it didn't shut down cleanly. The next start checks its storage first.",
-                            );
-                        }
-                        if active && !device.selected && !running {
-                            response = response.on_hover_text("The device on screen keeps running in the background");
                         }
                         if response.clicked() && !busy && !device.selected {
                             app.model.select(&device.id);
@@ -201,7 +212,7 @@ fn pending_row(app: &mut App, ui: &mut egui::Ui) {
         None => "Preparing…".to_string(),
     };
     let showing = app.page == page;
-    let response = device_row(ui, &p, &name, &status, showing, Some(Badge::Dot(theme::WARNING)), None, 0.0);
+    let response = device_row(ui, &p, &name, &status, showing, Some(Badge::Dot(theme::WARNING)), None, 0.0, &[]);
     // A thin bar along the row's foot.
     let bar = egui::Rect::from_min_size(
         response.rect.left_bottom() + vec2(54.0, -6.0),
@@ -349,7 +360,7 @@ enum Badge {
 }
 
 /// A device's row, drawn `shift` points below its place. With an `id` it can be dragged to reorder the list
-/// (`drag_feedback`).
+/// (`drag_feedback`). Hovered, it shows its name when that was cut short and `notes`, in one bubble.
 fn device_row(
     ui: &mut egui::Ui,
     p: &theme::Palette,
@@ -359,6 +370,7 @@ fn device_row(
     badge: Option<Badge>,
     id: Option<egui::Id>,
     shift: f32,
+    notes: &[&str],
 ) -> egui::Response {
     let (rect, response) = match id {
         Some(id) => {
@@ -382,7 +394,8 @@ fn device_row(
         );
     let response =
         response.on_hover_cursor(if lifted { egui::CursorIcon::Grabbing } else { egui::CursorIcon::PointingHand });
-    if cut && !lifted { response.on_hover_text(name) } else { response }
+    let hover: Vec<&str> = cut.then_some(name).into_iter().chain(notes.iter().copied()).collect();
+    if hover.is_empty() || lifted { response } else { response.on_hover_text(hover.join("\n")) }
 }
 
 const ROW_HEIGHT: f32 = 58.0;
